@@ -188,6 +188,29 @@ def test_slope_break_calibration_recovers_shape():
     assert cfg.slope_breaks[0][1] == 0
 
 
+def test_quantile_breaks_never_empty_class():
+    """Lumpy S distributions must not leave a class with an empty interval."""
+    import rasterio
+    from giri_landslide import susceptibility as S
+    from giri_landslide.grid import Grid
+
+    with tempfile.TemporaryDirectory() as tmp:
+        grid = Grid.from_bbox((84.0, 28.0, 84.1, 28.1), 0.001)
+        # Only three distinct positive values -> naive quantiles collapse.
+        rng = np.random.default_rng(0)
+        arr = rng.choice([0.0, 12.0, 12.0, 40.0, 90.0],
+                         size=grid.shape).astype("float32")
+        p = os.path.join(tmp, "idx.tif")
+        with rasterio.open(p, "w", **grid.profile("float32", -9999.0)) as dst:
+            dst.write(arr, 1)
+
+        breaks = S.quantile_breaks(p)
+        cuts = [b for b, _ in breaks[:-1]]
+        assert cuts == sorted(set(cuts)), f"duplicate cuts: {cuts}"
+        labels = [c for _, c in breaks]
+        assert labels == list(range(1, len(breaks) + 1))
+
+
 def test_compare_susceptibility():
     """Difference map should report the class shift between two runs."""
     import rasterio

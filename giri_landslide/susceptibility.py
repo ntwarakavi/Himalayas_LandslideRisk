@@ -101,10 +101,28 @@ def quantile_breaks(index_path: str, n_classes: int = 5,
                 a = a[::stride]
             sample.append(a)
         vals = np.concatenate(sample) if sample else np.array([1.0])
+    if not vals.size:
+        return [(float("inf"), n_classes)]
+
     qs = np.linspace(0, 1, n_classes + 1)[1:-1]
-    cuts = list(np.quantile(vals, qs)) if vals.size else []
-    breaks = []
-    for i, c in enumerate(cuts, start=1):
-        breaks.append((float(c), i))
-    breaks.append((float("inf"), n_classes))
+    cuts = [float(c) for c in np.quantile(vals, qs)]
+
+    # The index S is built from small integer factors, so its distribution is
+    # lumpy: several quantiles can land on the same value, which would leave a
+    # class with an empty interval (a hole in the map legend). Drop duplicate
+    # cuts, and if that leaves too few, spread the cuts evenly over the
+    # *distinct* values instead so all n_classes are populated.
+    strictly_increasing: List[float] = []
+    for c in cuts:
+        if not strictly_increasing or c > strictly_increasing[-1]:
+            strictly_increasing.append(c)
+    if len(strictly_increasing) < n_classes - 1:
+        distinct = np.unique(vals)
+        if distinct.size >= n_classes:
+            idx = np.linspace(0, distinct.size - 1, n_classes + 1)[1:-1]
+            strictly_increasing = sorted({float(distinct[int(i)])
+                                          for i in idx})
+
+    breaks = [(c, i) for i, c in enumerate(strictly_increasing, start=1)]
+    breaks.append((float("inf"), len(breaks) + 1))
     return breaks

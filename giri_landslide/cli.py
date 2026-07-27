@@ -5,7 +5,8 @@
     step3  calibrate      fit the factor weights to real landslides
     step4  susceptibility WHERE is the ground fragile?
     step5  hazard         IF a storm/quake hits, how likely is a landslide?
-    step6  compare        how does that change between two scenarios?
+    step6  validate       does the map hold up on landslides it never saw?
+    step7  compare        how does that change between two scenarios?
 
     run-all               step2 -> step4 -> step5 in one go
     info                  dataset sources and licences
@@ -241,6 +242,43 @@ def _step_hazard(args) -> int:
     return 0
 
 
+def _step_validate(args) -> int:
+    import json
+    from . import inventory, validate
+
+    susc = args.susceptibility or os.path.join(
+        args.out_dir, f"{args.name}_susceptibility.tif")
+    if not os.path.exists(susc):
+        print(f"error: susceptibility map not found: {susc}")
+        return 1
+    print("STEP 6  Validate against a held-out inventory\n")
+    print(f"  map       : {susc}")
+    print(f"  inventory : {args.inventory}")
+
+    import rasterio
+    with rasterio.open(susc) as src:
+        b = src.bounds
+        bbox = (b.left, b.bottom, b.right, b.top)
+    pts = inventory.load_inventory(args.inventory, bbox=bbox)
+    print(f"  {len(pts)} landslides fall inside the map extent\n")
+    if len(pts) == 0:
+        print("  nothing to validate: the inventory does not overlap the map.")
+        return 1
+
+    bg = inventory.background_points(bbox, max(4 * len(pts), 2000), susc)
+    result = validate.validate_susceptibility(susc, pts, bg,
+                                              block=args.block or 1024)
+    print(validate.format_report(result))
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    label = args.name or os.path.basename(susc).replace("_susceptibility.tif", "")
+    path = os.path.join(args.out_dir, f"{label}_validation.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(result.to_dict(), fh, indent=2)
+    print(f"\n  Report -> {path}")
+    return 0
+
+
 def _step_compare(args) -> int:
     os.makedirs(args.out_dir, exist_ok=True)
     print("STEP 6  Compare two scenarios\n")
@@ -309,7 +347,18 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="susceptibility GeoTIFF (default: from --name)")
     _mode(p); _add_common(p)
 
-    p = sub.add_parser("step6-compare", aliases=["compare"],
+    p = sub.add_parser("step6-validate", aliases=["validate"],
+                       help="test a susceptibility map against a held-out "
+                            "inventory (ideally another region)")
+    p.add_argument("--susceptibility",
+                   help="susceptibility GeoTIFF (default: from --name)")
+    p.add_argument("--inventory", required=True,
+                   help="INDEPENDENT inventory not used for calibration")
+    p.add_argument("--name")
+    p.add_argument("--out-dir", dest="out_dir", default="outputs")
+    p.add_argument("--block", type=int)
+
+    p = sub.add_parser("step7-compare", aliases=["compare"],
                        help="difference two susceptibility maps")
     p.add_argument("--baseline", required=True)
     p.add_argument("--scenario", required=True)
@@ -342,7 +391,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "step4-susceptibility": _step_susceptibility,
         "susceptibility": _step_susceptibility,
         "step5-hazard": _step_hazard, "hazard": _step_hazard,
-        "step6-compare": _step_compare, "compare": _step_compare,
+        "step6-validate": _step_validate, "validate": _step_validate,
+        "step7-compare": _step_compare, "compare": _step_compare,
         "run-all": _run_all, "run": _run_all,
     }
     return handlers[cmd](args)

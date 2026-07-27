@@ -387,6 +387,56 @@ the curve. **This is the step that makes a 30 m run defensible.**
 
 ---
 
+## 6b. Validating the map (step 6)
+
+Calibration fit is not evidence the map works elsewhere. `step6-validate` scores
+a susceptibility map against an inventory it was never fitted on:
+
+```bash
+python -m giri_landslide.cli step6-validate \
+    --susceptibility outputs/mymap_susceptibility.tif \
+    --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
+```
+
+The primary measure is the **frequency ratio per class** - the share of
+landslides in a class divided by the share of map area it occupies. A usable map
+has FR rising monotonically from class 1 to 5. AUC is reported too, but it hides
+non-monotonicity, so the ordering check is the one that decides the verdict.
+
+### A worked transfer test, and what it found
+
+Weights and the rock-type table were fitted on the **Gorkha inventory in Nepal**
+(24,794 landslides), then applied unchanged to two Indian regions:
+
+| Region | Landslides | Frequency ratio, class 1 -> 5 | AUC | Verdict |
+|---|---|---|---|---|
+| **Sikkim** | 255 | 0.18 → 0.70 → 0.99 → 1.73 → **5.08** | 0.662 | **fair - passes** |
+| **Arunachal** | 161 | 0.30 → 0.81 → **2.16** → 0.43 → 0.74 | 0.522 | **fails** |
+
+Sikkim works: class 5 covers 2% of the map and holds 10% of the landslides, and
+classes 4-5 together concentrate landslides 2.1x. The model transfers across an
+international border.
+
+Arunachal fails, and the per-factor breakdown says why:
+
+| Arunachal factor | at landslides | at random terrain | difference |
+|---|---|---|---|
+| slope | 2.14 | 1.88 | +0.27 |
+| lithology | 2.73 | 2.05 | +0.68 |
+| vegetation | 4.22 | 2.87 | **+1.35** |
+| **soil moisture** | 1.40 | 2.33 | **-0.92** |
+
+**The soil-moisture factor inverts.** Landslides there sit on *drier*-than-average
+ground, because the wettest parts of that region are the low-lying southern belt
+where there is no relief to fail, while the mapped landslides are in drier inner
+valleys. The Nepal calibration gives soil moisture the second-largest weight
+(1.41), so the model actively penalises the places the landslides actually are -
+while under-weighting vegetation (0.30), the factor that works best there.
+
+**Conclusion: weights do not transfer across the whole HKH.** Calibrate per
+sub-region, and validate on a local inventory before trusting a map. This is
+what step 6 is for.
+
 ## 7. Where everything lands
 
 ```

@@ -74,10 +74,17 @@ def _horn_slope(z: np.ndarray, dx: float, dy: float) -> np.ndarray:
     return np.degrees(np.arctan(rise))
 
 
-def slope_factor(slope_deg_path: str, out_path: str, block: int = 1024) -> str:
-    """Reclassify slope (degrees) into the Sr factor of Table 2."""
+def slope_factor(slope_deg_path: str, out_path: str, block: int = 1024,
+                 breaks=None) -> str:
+    """Reclassify slope (degrees) into the Sr factor.
+
+    ``breaks`` defaults to the manuscript's Table 2; pass a calibrated table to
+    match a different DEM resolution.
+    """
+    breaks = breaks or C.SLOPE_BREAKS_DEG
+
     def fn(arr: np.ndarray) -> np.ndarray:
-        cls = reclassify_continuous(arr, C.SLOPE_BREAKS_DEG, inclusive=False)
+        cls = reclassify_continuous(arr, breaks, inclusive=False)
         return np.where(np.isnan(cls), FACTOR_NODATA, cls)
 
     return map_raster(slope_deg_path, out_path, fn, "uint8", FACTOR_NODATA,

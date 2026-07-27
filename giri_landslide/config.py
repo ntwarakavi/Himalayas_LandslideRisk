@@ -271,6 +271,11 @@ class Config:
     # Calibration inputs -----------------------------------------------------
     inventory_path: Optional[str] = None   # landslide inventory CSV/GeoJSON
     calibrated_config: Optional[str] = None
+    # Slope reclassification table. None -> the manuscript's Table 2
+    # (SLOPE_BREAKS_DEG), which was calibrated on ~90 m slope statistics. Fit
+    # your own with `cli calibrate --fit-slope-breaks`, which is what makes a
+    # run at a different DEM resolution defensible.
+    slope_breaks: Optional[List[Tuple[float, int]]] = None
 
     block_size: int = 1024
     data_dir: str = "data/raw"
@@ -338,10 +343,9 @@ class Config:
                 raw[key] = tuple(raw[key])
         if "weights" in raw and isinstance(raw["weights"], dict):
             raw["weights"] = Weights(**raw["weights"])
-        if "susceptibility_breaks" in raw and raw["susceptibility_breaks"]:
-            raw["susceptibility_breaks"] = [
-                (float(b), int(c)) for b, c in raw["susceptibility_breaks"]
-            ]
+        for key in ("susceptibility_breaks", "slope_breaks"):
+            if raw.get(key):
+                raw[key] = [(float(b), int(c)) for b, c in raw[key]]
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in raw.items() if k in known})
 

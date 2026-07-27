@@ -91,6 +91,7 @@ Each is a deliberate trade-off:
 | **WorldClim 30s** (~1 km, 1 GB) | coarser products smear orographic rainfall gradients across whole ranges | `--worldclim-res 10m` |
 | **5-fold cross-validated calibration** | a single hold-out split is noisy and often optimistic on small, clustered inventories | — |
 | **Density-matched background sampling** | controls the accessibility bias of citizen-science inventories | — |
+| **Manuscript slope table (Table 2)** | calibrated on ~90 m statistics; reusing it at 30 m inflates high-susceptibility area 13× | `calibrate --fit-slope-breaks` fits your own |
 
 First robust run downloads ~2.2 GB, then caches everything in `data/raw/`.
 
@@ -117,8 +118,17 @@ python -m giri_landslide.cli run --mode download \
 
 Scenarios `ssp126|ssp245|ssp370|ssp585`; periods 2021-2040 … 2081-2100. Only the
 *susceptibility* side changes — the triggering return period keeps its
-present-day meaning, following the manuscript. See
-[`docs/RUNNING_LOCALLY.md`](docs/RUNNING_LOCALLY.md) §5 for measured
+present-day meaning, following the manuscript.
+
+`compare` maps the difference between two runs (the manuscript's Fig. 8):
+
+```bash
+python -m giri_landslide.cli compare --name ssp585_vs_present \
+    --baseline outputs/base_susceptibility.tif \
+    --scenario outputs/hkh_ssp585_2061_2080_susceptibility.tif
+```
+
+See [`docs/RUNNING_LOCALLY.md`](docs/RUNNING_LOCALLY.md) §5 for measured
 present-vs-future deltas and the like-for-like comparison caveat.
 
 ## Open datasets used
@@ -170,7 +180,7 @@ fine-scale signal.
 | `inventory.py` | load/download/synthesize a landslide inventory; sampling |
 | `calibrate.py` | logistic-regression weight calibration + ROC AUC |
 | `pipeline.py` | orchestration; writes every intermediate for resume/inspect |
-| `cli.py` | `run` / `download` / `calibrate` / `info` commands |
+| `cli.py` | `run` / `download` / `calibrate` / `compare` / `info` commands |
 
 Because each stage reads and writes grid-aligned GeoTIFFs, you can stop after any
 step, inspect the intermediate rasters in `data/work/`, tweak a table in

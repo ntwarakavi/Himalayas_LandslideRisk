@@ -6,6 +6,7 @@ No network required - everything uses the synthetic demo generator.
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -147,6 +148,63 @@ def test_calibration_recovers_signal():
         cal = C.Config.from_json(report["calibrated_config"])
         assert cal.weight_mode == "exponent"
         assert cal.classification == "quantile"
+
+
+def test_slope_break_calibration_recovers_shape():
+    """Frequency-ratio fit should peak where landslides are over-represented."""
+    rng = np.random.default_rng(0)
+    # Background terrain spans 0-60 deg; landslides concentrate near 30 deg.
+    background = rng.uniform(0, 60, 4000)
+    presence = np.clip(rng.normal(30, 4, 1200), 0, 60)
+    breaks, diag = calibrate.calibrate_slope_breaks(presence, background)
+
+    assert 24.0 <= diag["peak_fr_slope_deg"] <= 36.0, diag["peak_fr_slope_deg"]
+    # Flat ground must stay at factor 0 regardless of the data.
+    assert breaks[0][1] == 0 and breaks[0][0] >= 6.0
+    # Breaks must be ascending and end at infinity.
+    bounds = [b for b, _ in breaks]
+    assert bounds == sorted(bounds) and bounds[-1] == float("inf")
+    # The fitted table must be usable as a config value.
+    cfg = C.Config(slope_breaks=breaks)
+    assert cfg.slope_breaks[0][1] == 0
+
+
+def test_compare_susceptibility():
+    """Difference map should report the class shift between two runs."""
+    import rasterio
+    from giri_landslide.grid import Grid
+
+    with tempfile.TemporaryDirectory() as tmp:
+        grid = Grid.from_bbox((84.0, 28.0, 84.1, 28.1), 0.01)
+        base = np.full(grid.shape, 2, dtype="uint8")
+        scen = base.copy()
+        scen[:, :5] = 4                       # left half gains 2 classes
+        paths = []
+        for name, arr in (("base", base), ("scen", scen)):
+            p = os.path.join(tmp, f"{name}.tif")
+            with rasterio.open(p, "w", **grid.profile("uint8", 255)) as dst:
+                dst.write(arr, 1)
+            paths.append(p)
+
+        out = pipeline.compare_susceptibility(paths[0], paths[1],
+                                              os.path.join(tmp, "cmp"))
+        assert os.path.exists(out["change"])
+        stats = json.load(open(out["summary"]))
+        assert stats["class_change_histogram"]["2"] == 50
+        assert stats["pct_increased"] == 50.0
+        assert stats["pct_decreased"] == 0.0
+
+        # Mismatched grids must be rejected, not silently compared.
+        other = Grid.from_bbox((84.0, 28.0, 84.1, 28.1), 0.005)
+        p3 = os.path.join(tmp, "other.tif")
+        with rasterio.open(p3, "w", **other.profile("uint8", 255)) as dst:
+            dst.write(np.full(other.shape, 2, dtype="uint8"), 1)
+        try:
+            pipeline.compare_susceptibility(paths[0], p3,
+                                            os.path.join(tmp, "bad"))
+            assert False, "expected mismatched grids to raise"
+        except ValueError:
+            pass
 
 
 if __name__ == "__main__":

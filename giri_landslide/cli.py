@@ -134,7 +134,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="fine-tune factor weights against a Himalayan landslide inventory")
     p_cal.add_argument("--mode", choices=["demo", "download", "local"],
                        default="demo")
+    p_cal.add_argument("--fit-slope-breaks", dest="fit_slope_breaks",
+                       action="store_true",
+                       help="also fit the slope reclassification table from "
+                            "the inventory (needed for a defensible run at a "
+                            "DEM resolution other than 90 m)")
     _add_common(p_cal)
+
+    p_cmp = sub.add_parser(
+        "compare",
+        help="difference map between two susceptibility runs "
+             "(e.g. future vs present climate)")
+    p_cmp.add_argument("--baseline", required=True,
+                       help="baseline susceptibility GeoTIFF")
+    p_cmp.add_argument("--scenario", required=True,
+                       help="scenario susceptibility GeoTIFF")
+    p_cmp.add_argument("--name", help="output label (default: derived)")
+    p_cmp.add_argument("--out-dir", dest="out_dir", default="outputs")
+    p_cmp.add_argument("--block", type=int, default=1024)
 
     sub.add_parser("info", help="print dataset source information")
 
@@ -143,6 +160,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "info":
         print(sources.GLIM_SOURCE_INFO)
         print(sources.PGA_SOURCE_INFO)
+        return 0
+
+    if args.command == "compare":
+        import os
+        os.makedirs(args.out_dir, exist_ok=True)
+        label = args.name or "comparison"
+        out = pipeline.compare_susceptibility(
+            args.baseline, args.scenario,
+            os.path.join(args.out_dir, label), block=args.block)
+        print("\nOutputs:")
+        for k, v in out.items():
+            print(f"  {k:12s} {v}")
         return 0
 
     cfg = _build_config(args)
@@ -182,7 +211,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if args.command == "calibrate":
-        report = pipeline.run_calibration(cfg, mode=args.mode)
+        report = pipeline.run_calibration(
+            cfg, mode=args.mode,
+            fit_slope_breaks=getattr(args, "fit_slope_breaks", False))
         res = report["result"]
         print("\nCalibrated exponent weights (factor influence):")
         for k, v in res["weights"].items():
@@ -193,6 +224,13 @@ def main(argv: Optional[List[str]] = None) -> int:
               f"{res['n_background']}")
         for wmsg in res.get("warnings", []):
             print(f"  ! {wmsg}")
+        if res.get("slope_breaks"):
+            print("\nFitted slope classes (degrees -> factor):")
+            lo = 0.0
+            for hi, sc in res["slope_breaks"]:
+                hi_s = "inf" if hi == float("inf") else f"{hi:.1f}"
+                print(f"  {lo:5.1f} - {hi_s:>5s}  ->  {sc}")
+                lo = hi
         print(f"\nCalibrated config : {report['calibrated_config']}")
         print(f"Full report       : {report['report']}")
         print("\nRun the model with the calibrated weights:")

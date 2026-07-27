@@ -171,7 +171,9 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
     slope_deg = _work(cfg, "slope_deg.tif")
     factors.compute_slope_degrees(dem_grid, slope_deg, block=block)
     paths["slope"] = factors.slope_factor(slope_deg, _work(cfg, "f_slope.tif"),
-                                          block=block)
+                                          block=block,
+                                          breaks=cfg.slope_breaks)
+    paths["slope_deg"] = slope_deg
 
     # ---- Vegetation factor ----------------------------------------------
     lc_grid = _work(cfg, "landcover.tif")
@@ -257,7 +259,8 @@ def _susceptibility_stage(cfg: C.Config, factor_paths: Dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 
 def run_calibration(cfg: C.Config, mode: str = "demo",
-                    n_background: Optional[int] = None) -> dict:
+                    n_background: Optional[int] = None,
+                    fit_slope_breaks: bool = False) -> dict:
     """Fine-tune factor weights against a historical Himalayan inventory.
 
     Steps: stage the four factor rasters -> obtain presence points (from
@@ -318,17 +321,139 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
     _log("calibrate", f"held-out AUC = {result.auc:.3f}  "
                       f"weights = {result.weights}")
 
+    # ---- optional: fit the slope reclassification table ------------------
+    slope_breaks = None
+    slope_diag = None
+    if fit_slope_breaks:
+        _log("slope breaks", "fitting from inventory (frequency ratio)")
+        sp = inventory.sample_factors_at_points(presence,
+                                                [factor_paths["slope_deg"]])[:, 0]
+        sb = inventory.sample_factors_at_points(background,
+                                                [factor_paths["slope_deg"]])[:, 0]
+        try:
+            slope_breaks, slope_diag = calibrate.calibrate_slope_breaks(sp, sb)
+            peak = slope_diag.get("peak_fr_slope_deg")
+            _log("slope breaks", f"{len(slope_breaks)} classes, landslides "
+                                 f"most over-represented near {peak}deg")
+        except ValueError as exc:
+            _log("slope breaks", f"skipped ({exc})")
+
     # ---- write calibrated config + report -------------------------------
     cal_cfg = calibrate.apply_to_config(cfg, result)
+    if slope_breaks:
+        cal_cfg.slope_breaks = slope_breaks
     cal_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibrated_config.json")
     cal_cfg.to_json(cal_path)
     report_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibration.json")
+    report = result.to_dict()
+    if slope_diag:
+        report["slope_breaks"] = slope_breaks
+        report["slope_diagnostics"] = slope_diag
     with open(report_path, "w", encoding="utf-8") as fh:
-        json.dump(result.to_dict(), fh, indent=2)
+        json.dump(report, fh, indent=2)
 
     _log("done", f"calibrated config -> {cal_path}")
-    return {"result": result.to_dict(), "calibrated_config": cal_path,
+    return {"result": report, "calibrated_config": cal_path,
             "report": report_path}
+
+
+# ---------------------------------------------------------------------------
+# scenario comparison (present vs future climate)
+# ---------------------------------------------------------------------------
+
+def compare_susceptibility(baseline_path: str, scenario_path: str,
+                           out_prefix: str, block: int = 1024) -> Dict[str, str]:
+    """Difference map: scenario susceptibility class minus baseline class.
+
+    This is the figure the manuscript uses to show climate-change impact
+    (its Fig. 8): where does the susceptibility class move up or down between
+    two runs? Positive values mean the scenario is *more* susceptible.
+
+    Both inputs must be on the same grid (same AOI, same resolution).
+    """
+    from .grid import combine_rasters, iter_blocks
+    from .susceptibility import SUSC_NODATA
+
+    with rasterio.open(baseline_path) as a, rasterio.open(scenario_path) as b:
+        if (a.width, a.height) != (b.width, b.height):
+            raise ValueError(
+                f"grids differ: baseline {a.width}x{a.height} vs scenario "
+                f"{b.width}x{b.height}. Re-run both with the same --bbox/--res.")
+
+    change_path = f"{out_prefix}_susceptibility_change.tif"
+
+    def fn(arrs):
+        base, scen = arrs
+        bad = (base == SUSC_NODATA) | (scen == SUSC_NODATA) | \
+              np.isnan(base) | np.isnan(scen)
+        return np.where(bad, -128, scen - base)
+
+    combine_rasters([baseline_path, scenario_path], change_path, fn,
+                    "int16", -128, block=block)
+
+    # ---- area statistics -------------------------------------------------
+    counts: Dict[str, int] = {}
+    total = 0
+    with rasterio.open(change_path) as src:
+        for win in iter_blocks(src.width, src.height, block):
+            d = src.read(1, window=win)
+            d = d[d != -128]
+            total += d.size
+            for v in np.unique(d):
+                counts[str(int(v))] = counts.get(str(int(v)), 0) + \
+                    int((d == v).sum())
+    inc = sum(n for k, n in counts.items() if int(k) > 0)
+    dec = sum(n for k, n in counts.items() if int(k) < 0)
+    stats = {
+        "pixels_compared": total,
+        "class_change_histogram": dict(sorted(counts.items(),
+                                              key=lambda kv: int(kv[0]))),
+        "pct_increased": round(100.0 * inc / total, 3) if total else 0.0,
+        "pct_decreased": round(100.0 * dec / total, 3) if total else 0.0,
+        "pct_unchanged": round(100.0 * counts.get("0", 0) / total, 3)
+        if total else 0.0,
+        "baseline": baseline_path,
+        "scenario": scenario_path,
+    }
+    stats_path = f"{out_prefix}_change_summary.json"
+    with open(stats_path, "w", encoding="utf-8") as fh:
+        json.dump(stats, fh, indent=2)
+
+    out = {"change": change_path, "summary": stats_path}
+    try:
+        out["quicklook"] = change_quicklook(change_path,
+                                            f"{out_prefix}_change_quicklook.png")
+    except Exception as exc:  # matplotlib optional
+        _log("quicklook", f"skipped ({exc})")
+    _log("compare", f"{stats['pct_increased']}% of pixels more susceptible, "
+                    f"{stats['pct_decreased']}% less")
+    return out
+
+
+def change_quicklook(change_path: str, out_png: str) -> str:
+    """Diverging-colour render of a susceptibility class-change raster."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+
+    with rasterio.open(change_path) as src:
+        d = src.read(1).astype("float32")
+        d[d == -128] = np.nan
+
+    cmap = ListedColormap(["#2166ac", "#67a9cf", "#d1e5f0", "#f7f7f7",
+                           "#fddbc7", "#ef8a62", "#b2182b"])
+    norm = BoundaryNorm([-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5], cmap.N)
+    fig, ax = plt.subplots(figsize=(7, 6))
+    im = ax.imshow(d, cmap=cmap, norm=norm)
+    ax.set_title("Susceptibility class change\n(scenario - baseline)")
+    ax.set_xticks([]); ax.set_yticks([])
+    cb = fig.colorbar(im, ax=ax, fraction=0.046, ticks=[-3, -2, -1, 0, 1, 2, 3])
+    cb.set_label("classes gained (+) / lost (-)")
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+    return out_png
 
 
 # ---------------------------------------------------------------------------

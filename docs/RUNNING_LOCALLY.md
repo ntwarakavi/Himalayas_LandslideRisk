@@ -238,6 +238,28 @@ Two things to take from that:
 > `--worldclim-res 2.5m` so a present-vs-future difference reflects climate,
 > not resampling. The 30″ CMIP6 files exist but are ~22 GB *each*.
 
+### Mapping the change directly
+
+`compare` differences two susceptibility runs — the manuscript's Figure 8:
+
+```bash
+python -m giri_landslide.cli compare \
+    --baseline outputs/base_susceptibility.tif \
+    --scenario outputs/hkh_ssp585_2061_2080_susceptibility.tif \
+    --name ssp585_vs_present
+```
+
+It writes a class-change GeoTIFF (positive = more susceptible), a diverging
+quicklook PNG, and a JSON summary with the share of area that moved up or down.
+For the Himachal AOI: **+0.43 % of pixels under SSP1-2.6** and **+0.24 % under
+SSP5-8.5**, all increases, concentrated on the mountainous northeast — the
+plains do not move because flat ground is pinned at class 1.
+
+> Those percentages look small because the soil-moisture class boundaries are
+> coarse (125/250/500/1000 mm), so a +24 % rainfall change only tips pixels that
+> were already near a boundary. Read the map, not just the headline number: the
+> changes cluster exactly where the terrain is already steep.
+
 > **What does not change with scenario.** Only the *susceptibility* side moves.
 > The triggering return period keeps its present-day meaning — a "100-year
 > storm" is defined against today's climate — because the terrain takes
@@ -288,6 +310,31 @@ python -m giri_landslide.cli run --mode download \
 the HKH but they are very unevenly distributed — thousands in Myanmar and
 Bangladesh, only ~176 in the Indian Himalaya. Calibrating on a few hundred
 clustered points will not give trustworthy weights.
+
+### Fitting the slope classes too (needed for non-90 m runs)
+
+By default the slope table is the manuscript's Table 2, calibrated on ~90 m
+slope statistics. Section 4 showed that reusing it on a 30 m DEM inflates the
+high-susceptibility area 13×. `--fit-slope-breaks` derives the table from your
+own inventory instead, at whatever DEM resolution you are running:
+
+```bash
+python -m giri_landslide.cli calibrate --mode download \
+    --config examples/04_hkh_calibrate.json \
+    --dem-source copernicus30 --res 0.00027778 \
+    --fit-slope-breaks
+```
+
+It uses the **frequency-ratio** method: for each slope bin, compare the share of
+landslides against the share of terrain. Bins where landslides are
+over-represented score high. This reproduces the manuscript's non-monotonic
+shape *only if your data shows it* — very steep terrain that has already shed
+its regolith drops out on its own rather than by assumption. Slopes below 6°
+are always pinned to 0, which is a physical constraint, not a fitted one.
+
+The fitted table is written into the calibrated config as `slope_breaks` and the
+per-bin frequency ratios land in the calibration report so you can sanity-check
+the curve. **This is the step that makes a 30 m run defensible.**
 
 ---
 

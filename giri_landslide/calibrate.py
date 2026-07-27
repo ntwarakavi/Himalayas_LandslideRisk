@@ -233,6 +233,85 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
     )
 
 
+def calibrate_slope_breaks(presence_slopes: np.ndarray,
+                           background_slopes: np.ndarray,
+                           n_bins: int = 24, max_slope: float = 60.0,
+                           flat_cutoff: float = 6.0,
+                           min_per_bin: int = 5) -> Tuple[List, Dict]:
+    """Fit a slope reclassification table from an inventory (frequency ratio).
+
+    For each slope bin the *frequency ratio* is
+
+        FR = (share of landslides in the bin) / (share of terrain in the bin)
+
+    FR > 1 means landslides are over-represented at that steepness. The FR curve
+    is then mapped onto factor scores 0..5 by its own range, which reproduces
+    the manuscript's non-monotonic shape *if the data shows it* - very steep
+    terrain that has already shed its regolith gets a low score automatically,
+    without that behaviour being imposed.
+
+    The physical constraint from the manuscript is preserved: slopes below
+    ``flat_cutoff`` degrees always score 0.
+
+    Returns ``(breaks, diagnostics)`` where ``breaks`` is compatible with
+    ``Config.slope_breaks``.
+    """
+    p = np.asarray(presence_slopes, "float64")
+    b = np.asarray(background_slopes, "float64")
+    p = p[np.isfinite(p)]
+    b = b[np.isfinite(b)]
+    if len(p) < 20 or len(b) < 20:
+        raise ValueError("too few slope samples to fit slope breaks")
+
+    edges = np.linspace(0.0, max_slope, n_bins + 1)
+    hp, _ = np.histogram(p, bins=edges)
+    hb, _ = np.histogram(b, bins=edges)
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        fr = (hp / max(hp.sum(), 1)) / (hb / max(hb.sum(), 1))
+    fr = np.where(hb >= min_per_bin, fr, np.nan)   # ignore unsampled bins
+
+    # Map FR onto 0..5. Bins below the flat cutoff are forced to 0.
+    valid = np.isfinite(fr)
+    scores = np.zeros(n_bins, dtype=int)
+    if valid.any():
+        fmax = float(np.nanmax(fr))
+        if fmax > 0:
+            scaled = np.where(valid, fr / fmax, 0.0)
+            # 0 stays reserved for "no landslides here"; real signal -> 1..5
+            scores = np.clip(np.ceil(scaled * 5.0), 0, 5).astype(int)
+    scores = np.where(edges[:-1] < flat_cutoff, 0, scores)
+    # Unsampled bins inherit the nearest sampled bin below them.
+    last = 0
+    for i in range(n_bins):
+        if valid[i] or edges[i] < flat_cutoff:
+            last = scores[i]
+        else:
+            scores[i] = last
+
+    # Collapse consecutive equal scores into (upper_bound, score) breaks.
+    breaks: List[Tuple[float, int]] = []
+    for i in range(n_bins):
+        if breaks and breaks[-1][1] == int(scores[i]):
+            breaks[-1] = (float(edges[i + 1]), int(scores[i]))
+        else:
+            breaks.append((float(edges[i + 1]), int(scores[i])))
+    breaks[-1] = (float("inf"), breaks[-1][1])
+
+    diagnostics = {
+        "bin_edges": [float(e) for e in edges],
+        "frequency_ratio": [None if not np.isfinite(v) else float(v)
+                            for v in fr],
+        "presence_per_bin": [int(v) for v in hp],
+        "background_per_bin": [int(v) for v in hb],
+        "peak_fr_slope_deg": float(edges[int(np.nanargmax(fr))])
+        if valid.any() else None,
+        "n_presence": int(len(p)),
+        "n_background": int(len(b)),
+    }
+    return breaks, diagnostics
+
+
 def apply_to_config(cfg: C.Config, result: CalibrationResult) -> C.Config:
     """Return a copy of ``cfg`` using the calibrated exponent weights."""
     import copy

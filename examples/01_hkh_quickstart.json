@@ -1,5 +1,5 @@
 {
-  "_comment": "STEP 1 - Fast first real-data run. Small AOI over the Himachal Pradesh front (India) at 250 m. Deliberately opts DOWN from the robust defaults (coarse GLiM grid + 10m WorldClim) so it finishes in minutes with ~120 MB of downloads. Use 02 for a scientifically robust run.",
+  "_comment": "STEP 4+5 QUICKSTART - fast first real run. Small AOI on the Himachal front at 250 m, opting down to the coarse GLiM grid and 10m WorldClim so it finishes in minutes (~120 MB). Use 02 for a scientifically robust run.",
   "name": "hkh_quickstart",
   "bbox": [
     76.0,

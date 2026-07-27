@@ -1,11 +1,11 @@
 {
-  "_comment": "STEP 4 - Fine-tune factor weights against the NASA COOLR inventory. Uses a wide eastern-HKH window (Myanmar/NE India/Bangladesh) where COOLR has thousands of points - a dense, well-spread inventory is essential. Read the AUC and any '!' warnings before trusting the weights.",
+  "_comment": "STEP 3 - calibrate weights. Default AOI is the Gorkha earthquake footprint in Nepal, the best-quality inventory (24,795 satellite-mapped source areas). Pass --inventory to swap: farwest (monsoon), sikkim or east_himalaya (India). Read the AUC and any '!' warnings before trusting the weights.",
   "name": "hkh_calibrated",
   "bbox": [
-    88.0,
-    20.0,
-    99.0,
-    28.0
+    84.1,
+    27.1,
+    86.95,
+    28.75
   ],
   "region_bbox": [
     60.0,

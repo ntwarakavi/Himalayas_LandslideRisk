@@ -1,39 +1,35 @@
 #!/usr/bin/env bash
-# Offline smoke test of the full HKH landslide model - no downloads, no network.
-#
-# Generates synthetic but physically plausible inputs over a Himalayan AOI and
-# runs the complete chain (factors -> susceptibility -> trigger -> hazard) for
-# both triggering mechanisms. Use this to confirm the install works before
-# committing to real downloads.
-#
-# Outputs (in ./outputs): susceptibility + hazard GeoTIFFs, a summary JSON and
-# a two-panel quicklook PNG per scenario.
+# Offline smoke test - synthetic data, no downloads, under a minute.
+# Walks the same steps as a real run so you can see the sequence.
 set -euo pipefail
 cd "$(dirname "$0")"
+AOI="--bbox 83.0 27.5 85.0 29.0"
 
-echo ">> [1/3] Rainfall-triggered scenario (100-yr return period)"
-python -m giri_landslide.cli run --mode demo --name hkh_demo_rainfall \
-    --bbox 83.0 27.5 85.0 29.0 --res 0.005 \
-    --trigger rainfall --return-period 100
+echo ">> STEP 1  what data do we have?"
+python -m giri_landslide.cli step1-check --offline | tail -5
 
-echo
-echo ">> [2/3] Earthquake-triggered scenario (PGA = 0.35 g)"
-python -m giri_landslide.cli run --mode demo --name hkh_demo_earthquake \
-    --bbox 83.0 27.5 85.0 29.0 --res 0.005 \
-    --trigger earthquake --pga 0.35
+echo; echo ">> STEP 3  calibrate weights (synthetic inventory)"
+python -m giri_landslide.cli step3-calibrate --mode demo --name demo_cal \
+    $AOI --res 0.004 | tail -18
 
-echo
-echo ">> [3/3] Weight calibration against a synthetic inventory"
-python -m giri_landslide.cli calibrate --mode demo --name hkh_demo_calibration \
-    --bbox 83.0 27.5 85.0 29.0 --res 0.004
+echo; echo ">> STEP 4  susceptibility"
+python -m giri_landslide.cli step4-susceptibility --mode demo --name demo \
+    $AOI --res 0.005 | tail -8
+
+echo; echo ">> STEP 5  hazard, 100-year storm"
+python -m giri_landslide.cli step5-hazard --mode demo --name demo \
+    $AOI --res 0.005 --return-period 100 | tail -6
+
+echo; echo ">> STEP 4+5  earthquake scenario, 0.35 g"
+EQ="--mode demo --name demo_eq $AOI --res 0.005 --trigger earthquake"
+python -m giri_landslide.cli step4-susceptibility $EQ >/dev/null
+python -m giri_landslide.cli step5-hazard $EQ --pga 0.35 | tail -5
 
 cat <<'EOF'
 
-Offline demo complete. Inspect:
-    outputs/hkh_demo_*_quicklook.png     visual check
-    outputs/hkh_demo_*_summary.json      class histogram + hazard stats
-    outputs/hkh_demo_calibration*.json   fitted weights + held-out AUC
+Done. All synthetic - it proves the code works, not the science.
+  outputs/demo_quicklook.png     susceptibility + hazard
+  outputs/demo_cal_calibration.json  fitted weights and AUC
 
-Everything above used synthetic inputs. For real data see:
-    docs/RUNNING_LOCALLY.md
+Real data:  python -m giri_landslide.cli step1-check
 EOF

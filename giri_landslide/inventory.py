@@ -68,7 +68,7 @@ def load_inventory(path: str,
     ext = os.path.splitext(path)[1].lower()
     if ext in (".geojson", ".json"):
         pts = _load_geojson(path)
-    elif ext in (".shp", ".gdb", ".gpkg"):
+    elif ext in (".shp", ".gdb", ".gpkg", ".kml", ".kmz"):
         pts = _load_vector(path)
     else:
         pts = _load_csv(path, countries)
@@ -119,8 +119,12 @@ def _load_vector(path: str, layer: Optional[str] = None
         from fiona.transform import transform_geom
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError(
-            "reading a shapefile inventory needs 'fiona' (pip install fiona)"
+            "reading a vector inventory needs 'fiona' (pip install fiona)"
         ) from exc
+
+    # KML is read-only and off by default in fiona.
+    for drv in ("KML", "LIBKML"):
+        fiona.drvsupport.supported_drivers.setdefault(drv, "r")
 
     out: List[Tuple[float, float]] = []
     with fiona.open(path, layer=layer) as src:
@@ -226,6 +230,122 @@ def download_coolr_points(data_dir: str,
         json.dump({"type": "FeatureCollection", "features": features}, fh)
     print(f"  COOLR: {len(features)} landslide points -> {dest}")
     return dest
+
+
+def _cached_download(url: str, dest: str, timeout: int = 900) -> Optional[str]:
+    """Download only if ``dest`` is missing. Returns the path or None."""
+    if os.path.exists(dest) and os.path.getsize(dest) > 0:
+        return dest
+    from .sources import download_file
+    return download_file(url, dest, timeout=timeout)
+
+
+def download_gorkha(data_dir: str) -> Optional[str]:
+    """Roback et al. (2018) Gorkha inventory -> path to the source-area shapefile.
+
+    24,795 landslide source areas mapped from WorldView/GeoEye imagery. This is
+    the best available calibration set for earthquake-triggered landsliding in
+    the Himalaya. Cached: nothing is re-downloaded or re-extracted.
+    """
+    import zipfile
+
+    out_dir = os.path.join(data_dir, "inventory", "roback")
+    shp = os.path.join(out_dir, "Roback_Nepal_final_files",
+                       "Source20170209.shp")
+    if os.path.exists(shp):
+        return shp
+    zip_path = os.path.join(data_dir, "inventory", "roback_gorkha.zip")
+    got = _cached_download(
+        "https://www.sciencebase.gov/catalog/file/get/582c74fbe4b04d580bd377e8",
+        zip_path)
+    if not got:
+        return None
+    os.makedirs(out_dir, exist_ok=True)
+    with zipfile.ZipFile(got) as outer:
+        inner_name = "Roback_Nepal_final_files.zip"
+        inner_path = os.path.join(out_dir, inner_name)
+        if not os.path.exists(inner_path):
+            outer.extract(inner_name, out_dir)
+        with zipfile.ZipFile(inner_path) as inner:
+            inner.extractall(out_dir)
+    return shp if os.path.exists(shp) else None
+
+
+def download_farwest_nepal(data_dir: str) -> Optional[str]:
+    """Far-Western Nepal multi-temporal inventory -> polygon shapefile path.
+
+    26,350 satellite-mapped polygons spanning 1992-2018 in a region with no
+    major earthquake, so predominantly monsoon-triggered - the natural
+    counterpart to the Gorkha set for rainfall calibration.
+    Zenodo doi:10.5281/zenodo.4290100 (CC BY 4.0).
+    """
+    import zipfile
+
+    out_dir = os.path.join(data_dir, "inventory", "farwest")
+    shp = os.path.join(out_dir, "LandslideInventory_FarWesternNepal",
+                       "LandslideInventory_FarWesternNepal_Pol.shp")
+    if os.path.exists(shp):
+        return shp
+    zip_path = os.path.join(data_dir, "inventory", "farwest_nepal.zip")
+    got = _cached_download(
+        "https://zenodo.org/api/records/4290100/files/"
+        "LandslideInventory_FarWesternNepal.zip/content", zip_path)
+    if not got:
+        return None
+    os.makedirs(out_dir, exist_ok=True)
+    with zipfile.ZipFile(got) as z:
+        z.extractall(out_dir)
+    return shp if os.path.exists(shp) else None
+
+
+def download_sikkim(data_dir: str) -> Optional[str]:
+    """Southern Sikkim multi-temporal inventory (India) -> polygon shapefile.
+
+    255 landslide polygons and 185 points in the eastern Indian Himalaya.
+    Zenodo doi:10.5281/zenodo.8169506 (CC BY 4.0).
+    """
+    import zipfile
+
+    out_dir = os.path.join(data_dir, "inventory", "sikkim")
+    shp = os.path.join(out_dir,
+                       "Google_Earth_landslides_polygon_21Dec2021.shp")
+    if os.path.exists(shp):
+        return shp
+    zip_path = os.path.join(data_dir, "inventory", "sikkim.zip")
+    got = _cached_download(
+        "https://zenodo.org/api/records/8169506/files-archive", zip_path)
+    if not got:
+        return None
+    os.makedirs(out_dir, exist_ok=True)
+    with zipfile.ZipFile(got) as z:
+        z.extractall(out_dir)
+    return shp if os.path.exists(shp) else None
+
+
+def download_east_himalaya(data_dir: str) -> Optional[str]:
+    """Large Landslide Inventory of the Eastern Himalaya (India) -> KML path.
+
+    420 large landslides across Arunachal Pradesh and the eastern arc.
+    Zenodo doi:10.5281/zenodo.18931430 (CC BY 4.0).
+    """
+    dest = os.path.join(data_dir, "inventory", "east_himalaya_large.kml")
+    return _cached_download(
+        "https://zenodo.org/api/records/18931430/files/"
+        "Large%20Landslide%20Location%20in%20Eastern%20Himalaya.kml/content",
+        dest)
+
+
+#: Inventory key -> (downloader, human label). Used by the CLI and pipeline.
+INVENTORY_FETCHERS = {
+    "gorkha": (download_gorkha,
+               "Roback 2018 Gorkha, Nepal (earthquake, 24,795 polygons)"),
+    "farwest": (download_farwest_nepal,
+                "Far-Western Nepal (monsoon, 26,350 polygons)"),
+    "sikkim": (download_sikkim,
+               "Southern Sikkim, India (255 polygons)"),
+    "east_himalaya": (download_east_himalaya,
+                      "Eastern Himalaya large landslides, India (420 points)"),
+}
 
 
 def download_nasa_glc(data_dir: str,

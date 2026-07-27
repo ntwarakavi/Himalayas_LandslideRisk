@@ -226,6 +226,61 @@ def test_compare_susceptibility():
             pass
 
 
+def test_dataset_registry_is_wellformed():
+    """Every registered dataset must be fetchable or explicitly manual."""
+    from giri_landslide import datasets
+
+    keys = [d.key for d in datasets.REGISTRY]
+    assert len(keys) == len(set(keys)), "duplicate dataset keys"
+    for d in datasets.REGISTRY:
+        assert d.group in (datasets.TERRAIN, datasets.CLIMATE,
+                           datasets.INVENTORY, datasets.TRIGGER), d.key
+        assert d.probe_url or d.manual_url, f"{d.key} has no source"
+        assert d.rel_path and not os.path.isabs(d.rel_path), d.key
+
+
+def test_dataset_cache_detection():
+    """A dataset counts as cached only when its file/dir actually has content."""
+    from giri_landslide import datasets
+
+    ds = datasets.BY_KEY["coolr"]
+    with tempfile.TemporaryDirectory() as tmp:
+        assert ds.cached(tmp) is False
+        target = ds.local_path(tmp)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        open(target, "w").close()            # empty file must not count
+        assert ds.cached(tmp) is False
+        with open(target, "w") as fh:
+            fh.write("{}")
+        assert ds.cached(tmp) is True
+
+        # Offline check never probes the network and reports the cache.
+        rows = datasets.check_all(tmp, probe=False, keys=["coolr"])
+        assert rows[0]["cached"] is True and rows[0]["reachable"] is None
+        assert "CACHED" in datasets.format_report(rows)
+
+
+def test_susceptibility_and_hazard_steps_compose():
+    """Step 4 then step 5 must give the same result as the combined run."""
+    import rasterio
+
+    with tempfile.TemporaryDirectory() as tmp:
+        common = dict(bbox=(84.0, 28.0, 84.2, 28.2), resolution_deg=0.004,
+                      block_size=64, data_dir=os.path.join(tmp, "raw"),
+                      work_dir=os.path.join(tmp, "work"),
+                      out_dir=os.path.join(tmp, "out"))
+        stepwise = C.Config(name="stepwise", **common)
+        s = pipeline.run_susceptibility(stepwise, mode="demo")
+        h = pipeline.run_hazard(stepwise, s["susceptibility"], mode="demo")
+
+        oneshot = C.Config(name="oneshot", **common)
+        combined = pipeline.run(oneshot, mode="demo")
+
+        with rasterio.open(h["hazard_probability"]) as a, \
+                rasterio.open(combined["hazard_probability"]) as b:
+            assert np.array_equal(a.read(1), b.read(1))
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

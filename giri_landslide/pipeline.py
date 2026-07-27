@@ -460,24 +460,53 @@ def change_quicklook(change_path: str, out_png: str) -> str:
 # full run
 # ---------------------------------------------------------------------------
 
-def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
-    """Execute the whole model and return a dict of output raster paths."""
+def run_susceptibility(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
+    """STEP 4 - build the susceptibility map only.
+
+    Answers "where is the ground fragile?" - a property of the landscape that
+    does not depend on any particular storm or earthquake. Writes the four
+    factor rasters plus the 5-class susceptibility map.
+    """
     _ensure_dirs(cfg)
     grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
     _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg "
-                 f"({cfg.trigger}, weights={cfg.weight_mode})")
+                 f"(weights={cfg.weight_mode}, climate={cfg.climate})")
 
     inputs = resolve_inputs(cfg, mode)
     factor_paths = stage_factors(cfg, grid, inputs)
-
     susc_class = _susceptibility_stage(cfg, factor_paths)
 
-    # ---- trigger class ---------------------------------------------------
-    _log("trigger", cfg.trigger)
+    out = {"susceptibility": susc_class,
+           "factor_slope": factor_paths["slope"],
+           "factor_lithology": factor_paths["litho"],
+           "factor_vegetation": factor_paths["veg"],
+           "factor_soil_moisture": factor_paths["soil"]}
+    hist = _class_histogram(susc_class, 1, 5)
+    total = sum(hist.values()) or 1
+    _log("susceptibility", " ".join(f"class{k}={100*v/total:.1f}%"
+                                    for k, v in hist.items()))
+    return out
+
+
+def run_hazard(cfg: C.Config, susc_path: str, mode: str = "demo",
+               inputs: Optional[Dict[str, object]] = None) -> Dict[str, str]:
+    """STEP 5 - turn a susceptibility map into scenario hazard.
+
+    Answers "if a storm/earthquake of THIS severity happens, how likely is a
+    damaging landslide here?" Needs the susceptibility map from step 4 plus a
+    trigger scenario.
+    """
+    _ensure_dirs(cfg)
+    grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
+    if inputs is None:
+        inputs = resolve_inputs(cfg, mode) if cfg.trigger_path else {}
+
+    _log("trigger", f"{cfg.trigger} "
+                    + (f"PGA={cfg.scenario_pga_g}g" if cfg.trigger == "earthquake"
+                       else f"RP={cfg.scenario_return_period_yr}yr"))
     trig_class = _work(cfg, "trigger_class.tif")
     if cfg.trigger == "rainfall":
         if "trigger_raster" in inputs:
-            # interpret supplied raster as normalised 24h rainfall (z)
             grid_z = _work(cfg, "rain_z.tif")
             warp_to_grid(inputs["trigger_raster"], grid, grid_z,
                          Resampling.bilinear, dtype="float32", nodata=-9999.0,
@@ -486,7 +515,7 @@ def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
                                               block=cfg.block_size)
         else:
             triggers.rainfall_class_from_return_period(
-                susc_class, trig_class, cfg.scenario_return_period_yr,
+                susc_path, trig_class, cfg.scenario_return_period_yr,
                 block=cfg.block_size)
     else:
         pga_src = inputs.get("pga") or inputs.get("trigger_raster")
@@ -496,33 +525,46 @@ def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
                          dtype="float32", nodata=-9999.0, block=cfg.block_size)
             triggers.pga_class(grid_pga, trig_class, block=cfg.block_size)
         else:
-            triggers.pga_class_uniform(susc_class, trig_class,
+            triggers.pga_class_uniform(susc_path, trig_class,
                                        cfg.scenario_pga_g,
                                        block=cfg.block_size)
 
-    # ---- hazard ----------------------------------------------------------
     _log("hazard", "applying hazard matrix")
     hazard_path = os.path.join(cfg.out_dir, f"{cfg.name}_hazard_probability.tif")
-    hazard.apply_hazard_matrix(susc_class, trig_class, hazard_path,
+    hazard.apply_hazard_matrix(susc_path, trig_class, hazard_path,
                                cfg.trigger, block=cfg.block_size)
+    stats = raster_stats(hazard_path)
+    _log("hazard", f"probability max={stats['max']:.4f} "
+                   f"mean={stats['mean']:.6f}")
+    return {"trigger_class": trig_class, "hazard_probability": hazard_path}
 
-    outputs = {
-        "susceptibility": susc_class,
-        "trigger_class": trig_class,
-        "hazard_probability": hazard_path,
-    }
 
-    # ---- summary + quicklook --------------------------------------------
-    summary = _summarise(cfg, mode, grid, factor_paths, outputs)
+def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
+    """Steps 4 + 5 together: susceptibility, then scenario hazard.
+
+    A thin composition of :func:`run_susceptibility` and :func:`run_hazard` so
+    the one-shot path and the step-by-step path cannot drift apart.
+    """
+    _ensure_dirs(cfg)
+    grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
+
+    inputs = resolve_inputs(cfg, mode)
+    factor_paths = stage_factors(cfg, grid, inputs)
+    susc_class = _susceptibility_stage(cfg, factor_paths)
+
+    outputs = {"susceptibility": susc_class}
+    outputs.update(run_hazard(cfg, susc_class, mode=mode, inputs=inputs))
+
     summary_path = os.path.join(cfg.out_dir, f"{cfg.name}_summary.json")
     with open(summary_path, "w", encoding="utf-8") as fh:
-        json.dump(summary, fh, indent=2)
+        json.dump(_summarise(cfg, mode, grid, factor_paths, outputs), fh,
+                  indent=2)
     outputs["summary"] = summary_path
     try:
-        outputs["quicklook"] = quicklook(susc_class, hazard_path,
-                                         os.path.join(cfg.out_dir,
-                                                      f"{cfg.name}_quicklook.png"))
-    except Exception as exc:  # matplotlib optional
+        outputs["quicklook"] = quicklook(
+            susc_class, outputs["hazard_probability"],
+            os.path.join(cfg.out_dir, f"{cfg.name}_quicklook.png"))
+    except Exception as exc:                      # matplotlib optional
         _log("quicklook", f"skipped ({exc})")
 
     _log("done", f"outputs in {cfg.out_dir}")

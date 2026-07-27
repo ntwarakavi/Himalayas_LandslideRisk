@@ -1,269 +1,324 @@
-# GIRI Landslide Hazard Model (open-source, local, modular)
+# Hindu Kush Himalaya Landslide Model
 
-An end-to-end, **open-source** Python implementation of the global landslide
-susceptibility and scenario-based hazard methodology developed by the Norwegian
-Geotechnical Institute for the **Global Infrastructure Resilience Index (GIRI)**
-of the Coalition for Disaster Resilient Infrastructure (CDRI):
+An open-source implementation of the **GIRI landslide model** (Palau, Nadim,
+Paulsen & Storrøsten, 2023, NGI / CDRI —
+[manuscript](https://giri.unepgrid.ch/sites/default/files/2023-06/20230615-NGI_manuscript_GIRI_landlside_hazard_model.pdf)),
+scoped to the **Hindu Kush Himalaya**: Afghanistan, Pakistan, India, Nepal,
+Bhutan, Bangladesh, China and Myanmar.
 
-> Palau, R. M., Nadim, F., Paulsen, E., Storrøsten, E. (2023).
-> *A new model for global landslide susceptibility assessment and scenario-based
-> hazard assessment.* NGI / GIRI.
-> [manuscript PDF](https://giri.unepgrid.ch/sites/default/files/2023-06/20230615-NGI_manuscript_GIRI_landlside_hazard_model.pdf)
-
-The pipeline runs **piece by piece on a modest local computer**: it downloads
-only the open-data tiles that intersect your area of interest (AOI) and
-processes everything in memory-bounded blocks, so a laptop can produce a
-90 m-resolution hazard map for a region without ever loading a global array.
-
-**Regional scope.** This build is **restricted to the Hindu Kush Himalaya (HKH)**
-as defined by ICIMOD — the mountain arc spanning **Afghanistan, Pakistan, India,
-Nepal, Bhutan, Bangladesh, China and Myanmar**, region bounds
-`(60°E, 16°N) – (105°E, 39°N)`. Any AOI is automatically clipped to this region,
-and historical inventories are filtered to it (bbox + country list). Change
-`region_bbox` / `HKH_COUNTRIES` in a config to adjust.
-
-**Data-driven weight calibration.** The factor weights can be **fine-tuned
-against a historical Himalayan landslide inventory** (NASA Global Landslide
-Catalog / COOLR, or your own) by logistic regression — see
-[Calibrating the weights](#calibrating-the-weights-with-historical-himalayan-data) below.
-
-Every run writes a two-panel quicklook (`outputs/*_quicklook.png`) — left:
-5-class susceptibility (green→red); right: scenario landslide probability. On
-real HKH data the model resolves the mountain front sharply: plains and river
-valleys as class 1, steep hillslopes as class 4–5.
+It runs on a normal laptop. Data is downloaded only for your area of interest,
+processed in tiles, and **never re-downloaded once cached**.
 
 ---
 
-## What the model does
+## First: what the model actually produces
+
+These three words get used interchangeably in casual talk. They are different
+things, and the model produces the first two.
+
+### 1. Susceptibility — *"where is the ground fragile?"*
+
+A property of the **landscape**. It does not change from day to day. It asks:
+if something were to shake or soak this hillside, how ready is it to fail?
+
+Built from four things: **how steep** the ground is, **what rock** is under it,
+**what is growing** on it, and **how wet** it usually gets. Output is a map with
+5 classes, Very Low → Very High.
+
+> A steep, deforested slope on weak sandstone is *highly susceptible* — even
+> though nothing is happening there today.
+
+### 2. Hazard — *"if a storm or earthquake hits, how likely is a landslide?"*
+
+Susceptibility **plus a trigger of a stated size**. This is a probability, and
+it is always tied to a specific scenario you choose — a 100-year storm, or a
+0.35 g earthquake.
+
+> That same slope has a *5% chance* of failing in a 1-in-100-year storm.
+
+Hazard is **conditional**. The model does not forecast the storm; you specify
+it. Change the scenario, get a different hazard map.
+
+### 3. Risk — *"what would it cost?"* — **not implemented**
+
+Risk = hazard × **exposure** × **vulnerability**. It needs to know what is in
+harm's way — roads, buildings, people — and how badly each is damaged.
+
+> That slope sits above 2 km of highway carrying 5,000 vehicles a day, so the
+> expected annual loss is £X.
+
+**This model stops at hazard.** Despite the repository name, the exposure layer
+is not built yet. See [What is missing](#what-is-missing).
 
 ```
- DEM ───► slope ───► slope factor  (Sr)          ┐
- GLiM ──────────────► lithology factor (Sl)      │   S = Π wᵢ·f(Sᵢ)      5-class
- Land cover ────────► vegetation factor (Sv)     ├─►  weighted product ─► susceptibility
- Precip / VWC ──────► soil-moisture factor (Sp)  ┘        (Eq. 1)          (1..5)
-                                                                              │
- Rainfall 24 h  ─► normalise ─► Gumbel return period ─► rainfall class 1..5   │
-   or                                                                         ├─► hazard
- Earthquake PGA ──────────────────────────────► seismic class 1..5           │    matrix
-                                                                              ▼
-                                            landslide probability per scenario event
+   TERRAIN DATA                 SUSCEPTIBILITY            HAZARD              RISK
+   slope, rock,      ───────►   "where is the    ──┐
+   plants, wetness               ground weak?"      │
+                                   (step 4)         ├──►  "how likely,   ──►  "what does
+   TRIGGER SCENARIO                                 │      in THIS         it cost?"
+   storm size, or    ─────────────────────────────┘       scenario?"        NOT BUILT
+   earthquake size                                         (step 5)
 ```
 
-Every reclassification table, weight, threshold and hazard matrix is transcribed
-from the manuscript into [`giri_landslide/config.py`](giri_landslide/config.py)
-and can be re-calibrated there or via a JSON config.
+---
 
-## Quick start
+## Install
 
 ```bash
-./setup.sh          # venv + dependencies + tests
+git clone https://github.com/ntwarakavi/Himalayas_LandslideRisk.git
+cd Himalayas_LandslideRisk
+./setup.sh                      # virtualenv, dependencies, tests
 source .venv/bin/activate
-
-./run_demo.sh       # offline smoke test, no downloads
-
-# first real-data run (fast, ~120 MB)
-python -m giri_landslide.cli run --mode download \
-    --config examples/01_hkh_quickstart.json
 ```
 
-**→ Full step-by-step guide: [`docs/RUNNING_LOCALLY.md`](docs/RUNNING_LOCALLY.md)**
+If `pip install rasterio` fails, use conda:
 
-### Example configs
+```bash
+conda create -n hkh python=3.11 -c conda-forge rasterio fiona numpy matplotlib requests pytest
+conda activate hkh
+```
 
-| Config | What it does |
+Check it works, offline, in under a minute:
+
+```bash
+./run_demo.sh                   # synthetic data, no downloads
+```
+
+---
+
+## The run sequence
+
+Six steps. Each writes files and tells you what to run next. **Stop after any
+step, inspect the output, carry on.** Steps 1–2 are one-off; 3 is optional;
+4–5 are the model.
+
+### Step 1 — Check what data you have
+
+```bash
+python -m giri_landslide.cli step1-check
+```
+
+Reports every dataset as `CACHED` / `READY` / `BLOCKED` / `MANUAL`, grouped by
+what it is used for, and totals the download still outstanding. Probes the
+network; add `--offline` to only look at the cache.
+
+*Produces:* nothing — it just tells you where you stand.
+
+### Step 2 — Download
+
+```bash
+python -m giri_landslide.cli step2-download --bbox 84.0 28.0 84.6 28.5
+```
+
+Fetches terrain, climate and landslide-inventory data for your area.
+**Anything already on disk is skipped**, so re-running is cheap and safe.
+First full run is ~2.2 GB (mostly the one-off global GLiM and WorldClim files);
+after that, a new area only pulls its own DEM and land-cover tiles.
+
+*Produces:* files under `data/raw/`.
+
+### Step 3 — Calibrate the weights *(optional but recommended)*
+
+```bash
+python -m giri_landslide.cli step3-calibrate \
+    --bbox 84.1 27.1 86.95 28.75 --res 0.0025 \
+    --inventory "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp"
+```
+
+The four factors do not matter equally, and the manuscript never published its
+weights. This step **learns them from real landslides**: it takes an inventory
+of places that *did* fail, samples the factors there and at random background
+points, and fits a logistic model. The coefficients are the weights.
+
+It also refits the **slope table** — how much each steepness band contributes —
+by frequency ratio.
+
+*Produces:* `outputs/<name>_calibrated_config.json` (feed it to step 4) and a
+report with the weights, the cross-validated AUC and any warnings.
+
+**Read the AUC**: 0.5 = no skill, 0.7 = fair, 0.8 = good. And read the
+warnings — see [Choosing an inventory](#choosing-an-inventory).
+
+### Step 4 — Susceptibility map
+
+```bash
+python -m giri_landslide.cli step4-susceptibility \
+    --name nepal --bbox 84.0 28.0 84.6 28.5 --res 0.0008333
+```
+
+Turns each input into a 0–5 factor score, combines them, and cuts the result
+into 5 susceptibility classes. Add `--config outputs/..._calibrated_config.json`
+to use step 3's weights.
+
+*Produces:* `outputs/<name>_susceptibility.tif` plus the four factor rasters in
+`data/work/` so you can check any single input.
+
+### Step 5 — Hazard for a scenario
+
+```bash
+python -m giri_landslide.cli step5-hazard --name nepal --return-period 100
+# or an earthquake:
+python -m giri_landslide.cli step5-hazard --name nepal --trigger earthquake --pga 0.35
+```
+
+Takes step 4's map, classifies your chosen trigger into 5 severity bands, and
+looks the pair up in a hazard matrix to get a probability per pixel.
+
+*Produces:* `outputs/<name>_hazard_probability.tif` and a two-panel
+`<name>_quicklook.png`.
+
+### Step 6 — Compare two scenarios *(optional)*
+
+```bash
+python -m giri_landslide.cli step6-compare --name future_vs_now \
+    --baseline outputs/now_susceptibility.tif \
+    --scenario outputs/ssp585_susceptibility.tif
+```
+
+*Produces:* a class-change map (red = worse), plus the share of area that moved.
+
+### All at once
+
+```bash
+python -m giri_landslide.cli run-all --name nepal \
+    --bbox 84.0 28.0 84.6 28.5 --res 0.0008333 --return-period 100
+```
+
+---
+
+## Reading the outputs
+
+| File | What it means |
 |---|---|
-| `examples/01_hkh_quickstart.json` | fast first run, 250 m, small downloads |
-| `examples/02_hkh_90m_rainfall.json` | **robust production run**, 90 m, full GLiM |
-| `examples/03_hkh_90m_earthquake.json` | earthquake scenario, 90 m, PGA 0.35 g |
-| `examples/04_hkh_calibrate.json` | weight calibration vs. the COOLR inventory |
-| `examples/05_hkh_future_climate.json` | **future-climate** hazard (CMIP6 SSP scenarios) |
+| `<name>_susceptibility.tif` | 1 = Very Low … 5 = Very High. A landscape property. |
+| `<name>_hazard_probability.tif` | Probability of a damaging landslide **in the scenario you specified**. |
+| `<name>_quicklook.png` | Two panels: susceptibility, then hazard. |
+| `<name>_summary.json` | Grid, weights, class histogram, hazard statistics. |
+| `data/work/<name>_f_*.tif` | The four individual factor scores — check these when a result looks wrong. |
 
-## Robust-by-default configuration
+Everything is EPSG:4326 GeoTIFF; open it in QGIS.
 
-The defaults are chosen for **scientific robustness, not the smallest download**.
-Each is a deliberate trade-off:
+---
 
-| Default | Why | Opt down with |
-|---|---|---|
-| **90 m grid** (3 arc-sec) | the manuscript's native resolution | `--res 0.0025` |
-| **Copernicus GLO-90 DEM** — *not* GLO-30 | the slope table (Table 2) was calibrated on ~90 m slope statistics; a finer DEM yields systematically steeper slopes and would silently bias every class | `--dem-source copernicus30` (re-calibrate `SLOPE_BREAKS_DEG` too) |
-| **Full GLiM geodatabase** (1.2M polygons, 1.1 GB) | the 0.5° grid is a single class per ~55 km cell — effectively uniform at hillslope scale | `--glim-grid` |
-| **WorldClim 30s** (~1 km, 1 GB) | coarser products smear orographic rainfall gradients across whole ranges | `--worldclim-res 10m` |
-| **5-fold cross-validated calibration** | a single hold-out split is noisy and often optimistic on small, clustered inventories | — |
-| **Density-matched background sampling** | controls the accessibility bias of citizen-science inventories | — |
-| **Manuscript slope table (Table 2)** | calibrated on ~90 m statistics; reusing it at 30 m inflates high-susceptibility area 13× | `calibrate --fit-slope-breaks` fits your own |
+## Choosing an inventory
 
-First robust run downloads ~2.2 GB, then caches everything in `data/raw/`.
+Step 3 is only as good as the landslide data behind it. Measured, same pipeline:
 
-This writes to `./outputs/`:
+| Inventory | Points | How mapped | AUC | Verdict |
+|---|---|---|---|---|
+| NASA GLC / COOLR | 8,634 | media reports | 0.640 | **avoid for calibration** — biased to roads/towns |
+| Roback Gorkha, Nepal | 24,794 | satellite, earthquake | **0.701** | best for `--trigger earthquake` |
+| Far-West Nepal | 26,348 | satellite, monsoon | 0.563 | best for rainfall — see note |
+| Southern Sikkim, India | 255 | satellite | — | small; regional check |
+| Eastern Himalaya, India | 420 | mapped points | — | large landslides, Arunachal |
 
-| file | meaning |
-|------|---------|
-| `*_susceptibility.tif` | 5-class susceptibility map (1 = Very Low … 5 = Very High) |
-| `*_hazard_probability.tif` | probability of a significant landslide per scenario event |
-| `*_trigger_class.tif` | rainfall / seismic trigger class |
-| `*_summary.json` | run metadata + class histogram + hazard stats |
-| `*_quicklook.png` | two-panel visual check |
+All are downloaded by step 2. Two things that look like paradoxes but are not:
+
+- **The best AUC is not the best inventory.** Far-West Nepal scores lowest yet
+  is the *only* one where all four factors come out positive with soil moisture
+  dominant — exactly what rainfall-triggered failure should look like. Its low
+  score comes from containing 2.4 landslides/km²: the terrain is saturated, so
+  background points land on ground that also failed and the two classes stop
+  being distinguishable. That is a sampling artefact, not a bad model.
+- **A factor forced to zero is a warning about your inventory,** not a
+  discovery about geology. COOLR makes lithology look protective, which is
+  reporter geography, not rock.
+
+Match the inventory's trigger to the run: earthquake inventories for
+earthquakes, monsoon inventories for rainfall.
+
+---
 
 ## Climate scenarios
 
-The model runs for **present and future climate**. `--climate <ssp>` swaps the
-soil-moisture factor from the WorldClim 1970–2000 baseline to downscaled CMIP6
-projections (default model **IPSL-CM6A-LR**, as in the manuscript):
-
 ```bash
-python -m giri_landslide.cli run --mode download \
-    --config examples/05_hkh_future_climate.json      # ssp585, 2061-2080
+python -m giri_landslide.cli step4-susceptibility --name ssp585 \
+    --climate ssp585 --climate-period 2061-2080
 ```
 
-Scenarios `ssp126|ssp245|ssp370|ssp585`; periods 2021-2040 … 2081-2100. Only the
-*susceptibility* side changes — the triggering return period keeps its
-present-day meaning, following the manuscript.
+Swaps the wetness factor to downscaled CMIP6 projections (default model
+IPSL-CM6A-LR, as in the manuscript). Scenarios `ssp126|ssp245|ssp370|ssp585`.
 
-`compare` maps the difference between two runs (the manuscript's Fig. 8):
+Only susceptibility responds — the trigger return period keeps its present-day
+meaning, because terrain takes centuries to adapt. So this captures a change in
+**background wetness**, not a change in storm frequency.
 
-```bash
-python -m giri_landslide.cli compare --name ssp585_vs_present \
-    --baseline outputs/base_susceptibility.tif \
-    --scenario outputs/hkh_ssp585_2061_2080_susceptibility.tif
+For a fair comparison run the baseline at the same precipitation resolution
+(`--climate current --worldclim-res 2.5m`); details and measured deltas in
+[`docs/RUNNING_LOCALLY.md`](docs/RUNNING_LOCALLY.md).
+
+---
+
+## Data
+
+| Role | Dataset | Resolution | How |
+|---|---|---|---|
+| Slope | Copernicus GLO-90 DEM | 90 m | automatic |
+| Vegetation | ESA WorldCover 2021 | 10 m | automatic |
+| Lithology | GLiM (1.2 M polygons) | vector | automatic (1.1 GB, once) |
+| Wetness | WorldClim v2.1 | 1 km | automatic (1.0 GB, once) |
+| Future wetness | WorldClim CMIP6 | 4.6 km | automatic |
+| Inventories | Gorkha, Far-West Nepal, Sikkim, E. Himalaya, COOLR | points/polygons | automatic |
+| Earthquake PGA | GEM seismic hazard map | — | **manual**, or use `--pga` |
+
+`python -m giri_landslide.cli info` prints sources and licences.
+
+**Why 90 m and not 30 m:** the slope table was calibrated on ~90 m statistics.
+Switching to a 30 m DEM makes the same hillside measurably steeper and inflates
+the high-susceptibility area **13×** — false precision. If you need 30 m, refit
+the slope table first with `step3-calibrate --fit-slope-breaks`.
+
+---
+
+## What is missing
+
+Honest status for anyone planning to rely on this.
+
+1. **Risk.** No exposure layer (roads, buildings, population), so no expected
+   losses. This is the largest gap.
+2. **The rainfall hazard matrix is a placeholder.** The manuscript publishes it
+   only as a figure, so the numbers in `config.py` are illustrative. The
+   *earthquake* matrix is transcribed exactly. Until this is calibrated,
+   **relative patterns are meaningful; absolute rainfall probabilities are
+   not.**
+3. **Real PGA and ERA5 soil moisture** fall back to uniform values unless you
+   supply them.
+4. **No independent validation.** Calibration AUC is not validation; the model
+   has not been back-tested against a held-out event.
+5. **No whole-HKH tiling driver.** Region-wide at 90 m is ~1.5 gigapixels and
+   must currently be run as manual tiles.
+
+---
+
+## Layout
+
+```
+giri_landslide/
+  datasets.py       registry of every dataset + cache/availability checks
+  sources.py        downloaders (all cache-first)
+  inventory.py      landslide inventories: load, download, sample
+  grid.py           the reference grid, warping, tiled processing
+  factors.py        inputs  -> the four 0-5 factor scores
+  susceptibility.py factors -> the 5-class susceptibility map      (step 4)
+  triggers.py       storm/earthquake -> 5 severity classes         (step 5)
+  hazard.py         susceptibility x trigger -> probability        (step 5)
+  calibrate.py      fit weights and the slope table to an inventory (step 3)
+  pipeline.py       orchestration
+  cli.py            the six steps
+config.py           every table, weight and threshold, in one place
+docs/RUNNING_LOCALLY.md   the long-form guide
+examples/           ready-made configs, numbered to match the steps
+tests/              15 offline tests
 ```
 
-See [`docs/RUNNING_LOCALLY.md`](docs/RUNNING_LOCALLY.md) §5 for measured
-present-vs-future deltas and the like-for-like comparison caveat.
-
-## Open datasets used
-
-| Factor | Default dataset (no login) | Resolution | Access |
-|--------|----------------------------|-----------|--------|
-| Slope | **Copernicus GLO-90 DEM** (or GLO-30) | 90 m / 30 m | AWS Open Data, auto |
-| Vegetation | **ESA WorldCover 2021 v200** | 10 m | AWS Open Data, auto |
-| Soil moisture (rainfall) | **WorldClim v2.1** monthly precip → max-monthly proxy | 30″ (~1 km) | direct download, **auto** |
-| Soil moisture (future) | **WorldClim CMIP6** downscaled SSP projections (IPSL-CM6A-LR) | 2.5′ (~4.6 km) | direct download, **auto** |
-| Soil moisture (earthquake) | ERA5 volumetric water content | 0.25° | supply via `vwc_path` |
-| Lithology | **GLiM** 0.5° global grid (Hartmann & Moosdorf 2012) | 0.5° | PANGAEA, **auto** |
-| Lithology (high-res) | **GLiM** full vector, 1 235 259 polygons | polygons | download¹, `glim_path` |
-| Landslide inventory | **NASA COOLR / GLC** point catalogue | points | ArcGIS FeatureServer, **auto** |
-| Earthquake trigger | GEM/GSHAP PGA (475-yr) | — | supply via `trigger_path`, or use `--pga` scenario |
-
-¹ **Lithology resolution.** The full GLiM geodatabase (1.14 GB) is the
-**default** and is downloaded automatically on first use; the 0.5° grid is a
-fallback for `--glim-grid`. GLiM ships in Eckert IV (`ESRI:54012`) and is
-reprojected to the model grid for you (needs `fiona`).
-
-The manuscript's exact DEM (MERIT) and rainfall (W5E5 / ISIMIP) sources require
-registration — the openly downloadable equivalents above are used by default and
-can be swapped for the originals via `*_path` config options. The global PGA
-layer still needs a manual download (or use a `--pga` scenario).
-
-### Resolution
-
-The model grid is set by `--res` (degrees). Use `0.0008333` (**3 arc-seconds,
-~90 m** — the manuscript's resolution) for production runs over the HKH, and a
-coarser value (e.g. `0.0025`) to prototype. Note the effective resolution of
-each *factor* differs: slope 90 m (Copernicus DEM), vegetation 10 m (WorldCover,
-downsampled), lithology polygon-level (full GLiM) or 0.5° (GLiM grid), and soil
-moisture ~10′ (WorldClim). Slope and land cover therefore carry most of the
-fine-scale signal.
-
-## Modules (run any stage on its own)
-
-| Module | Responsibility |
-|--------|----------------|
-| `config.py` | all calibration tables, weights, hazard matrices, run config |
-| `grid.py` | reference grid, warp-to-grid, **block/tile iteration**, reclassify |
-| `sources.py` | AOI-tiled downloaders (DEM, land cover, precip) + GLiM rasteriser |
-| `demo.py` | synthetic input generator for offline runs/tests |
-| `factors.py` | slope (Horn), lithology, land cover, soil-moisture → factors |
-| `susceptibility.py` | weighted product (Eq. 1) → 5-class susceptibility |
-| `triggers.py` | rainfall (Gumbel return period) / earthquake (PGA) classes |
-| `hazard.py` | susceptibility × trigger → probability via hazard matrix |
-| `inventory.py` | load/download/synthesize a landslide inventory; sampling |
-| `calibrate.py` | logistic-regression weight calibration + ROC AUC |
-| `pipeline.py` | orchestration; writes every intermediate for resume/inspect |
-| `cli.py` | `run` / `download` / `calibrate` / `compare` / `info` commands |
-
-Because each stage reads and writes grid-aligned GeoTIFFs, you can stop after any
-step, inspect the intermediate rasters in `data/work/`, tweak a table in
-`config.py`, and re-run only the downstream stages.
-
-## Calibrating the weights with historical Himalayan data
-
-The manuscript calibrates the factor weights against landslide inventories by
-expert judgment. This build adds an **automated, data-driven calibration** that
-tunes the weights to observed landslides in the Himalayan region.
+All model constants live in `giri_landslide/config.py` — reclassification
+tables, weights, trigger thresholds, hazard matrices. Change the model there.
 
 ```bash
-# Offline demonstration (synthetic Himalayan inventory) — proves the workflow:
-python -m giri_landslide.cli calibrate --mode demo \
-    --bbox 83.0 27.5 85.0 29.0 --res 0.004
-
-# Real data: supply the NASA Global Landslide Catalog (or your own inventory),
-# a CSV with latitude/longitude columns or a GeoJSON of points:
-python -m giri_landslide.cli calibrate --mode download \
-    --config examples/04_hkh_calibrate.json \
-    --inventory data/raw/inventory/nasa_glc.csv
-
-# Then run the model with the calibrated weights it wrote:
-python -m giri_landslide.cli run --mode download \
-    --config outputs/hkh_calibrated_calibrated_config.json
+python -m pytest tests/ -q       # 15 passing, no network needed
 ```
 
-**How it works** (`inventory.py` + `calibrate.py`):
+## Licence
 
-1. Load *presence* points (historical landslides), clip to the Himalayan region
-   and filter by country (`Pakistan, India, Nepal, Bhutan, …`).
-2. Draw *background* (pseudo-absence) points across the AOI.
-3. Sample the four factor rasters at every point.
-4. Fit a **logistic regression** of presence on `log(factor + 1)`. Because the
-   index is combined in **exponent form** `log S = Σ wᵢ·log(fᵢ+1)`, the fitted
-   coefficients *are* the calibrated factor weights.
-5. Report **held-out ROC AUC** and write a ready-to-run calibrated config
-   (`weight_mode = exponent`, `classification = quantile`).
-
-> **Why exponent mode matters:** in the pure multiplicative form
-> `S = Π wᵢ·fᵢ`, the weights are just a global scalar and *do not change which
-> pixels rank as more susceptible*. Calibration therefore uses the exponent form,
-> where weights genuinely control each factor's influence. Class breaks are then
-> taken as equal-area quantiles of `S` (scale-independent).
-
-The demo calibration recovers slope as the dominant factor with AUC ≈ 0.99
-against its synthetic inventory; real inventories yield region-specific weights.
-
-> **Getting the inventory:** the live NASA endpoints move periodically. If the
-> built-in downloader fails, export the point catalogue from
-> <https://landslides.nasa.gov> and pass it with `--inventory path.csv`
-> (`python -m giri_landslide.cli info` prints the pointer). The loader
-> auto-detects `latitude`/`longitude` columns and a `country_name` field.
-
-## Methodology notes & calibration
-
-- **Slope factor** (Table 2) is non-monotonic: it rises to a maximum at
-  30–36° then falls, because very steep terrain sheds sediment and tends to be
-  bare/hard rock.
-- **Susceptibility class breaks** and the **factor weights** are internal expert
-  calibrations in the manuscript; the defaults here are reasonable and clearly
-  flagged in `config.py` — recalibrate against a landslide inventory (e.g. the
-  NASA COLOR database) for operational use.
-- The **earthquake hazard matrix** (Fig. 4) is transcribed exactly. The
-  **rainfall hazard matrix** (Fig. 3) is published only as a figure whose numbers
-  are not machine-readable, so the default `RAINFALL_MATRIX` is an illustrative
-  diagonal calibration with the same structure — replace it with your calibrated
-  values (paper target ≈ 400 000 significant rainfall-induced landslides/yr
-  globally).
-- For **future-climate** rainfall triggers, normalise with today's μ and σ (as
-  the manuscript does) by supplying present-climate statistics.
-
-## Tests
-
-```bash
-python -m pytest tests/ -q      # or: PYTHONPATH=. python tests/test_model.py
-```
-
-Tests are fully offline (synthetic demo) and cover the reclassification tables,
-the Gumbel return-period mapping, the hazard-matrix corners, and a full
-end-to-end run for both triggers.
-
-## License
-
-MIT. The referenced datasets carry their own licenses (Copernicus, ESA
-WorldCover, WorldClim, GLiM, GEM) — cite and comply with each when publishing.
+MIT. Each dataset keeps its own licence (Copernicus, ESA, WorldClim, GLiM, GEM,
+NASA, Zenodo records) — cite them when you publish.

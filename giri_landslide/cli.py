@@ -244,6 +244,9 @@ def _step_hazard(args) -> int:
 
 def _step_validate(args) -> int:
     import json
+
+    import numpy as np
+
     from . import inventory, validate
 
     susc = args.susceptibility or os.path.join(
@@ -253,13 +256,21 @@ def _step_validate(args) -> int:
         return 1
     print("STEP 6  Validate against a held-out inventory\n")
     print(f"  map       : {susc}")
-    print(f"  inventory : {args.inventory}")
+    print("  inventories:")
 
     import rasterio
     with rasterio.open(susc) as src:
         b = src.bounds
         bbox = (b.left, b.bottom, b.right, b.top)
-    pts = inventory.load_inventory(args.inventory, bbox=bbox)
+    paths = args.inventory if isinstance(args.inventory, list) \
+        else [args.inventory]
+    parts = []
+    for src in paths:
+        sub = inventory.load_inventory(src, bbox=bbox)
+        print(f"    {len(sub):6d} from {os.path.basename(src)}")
+        if len(sub):
+            parts.append(sub)
+    pts = np.vstack(parts) if parts else np.empty((0, 2))
     print(f"  {len(pts)} landslides fall inside the map extent\n")
     if len(pts) == 0:
         print("  nothing to validate: the inventory does not overlap the map.")
@@ -352,8 +363,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                             "inventory (ideally another region)")
     p.add_argument("--susceptibility",
                    help="susceptibility GeoTIFF (default: from --name)")
-    p.add_argument("--inventory", required=True,
-                   help="INDEPENDENT inventory not used for calibration")
+    p.add_argument("--inventory", required=True, nargs="+",
+                   help="one or more INDEPENDENT inventories; multiple paths "
+                        "are pooled into a single validation set")
     p.add_argument("--name")
     p.add_argument("--out-dir", dest="out_dir", default="outputs")
     p.add_argument("--block", type=int)

@@ -22,6 +22,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from .. import config as C
+from . import features as FT
 
 FACTOR_NAMES = ["slope", "lithology", "vegetation", "soil_moisture"]
 
@@ -50,18 +51,21 @@ class CalibrationResult:
 # Feature construction
 # ---------------------------------------------------------------------------
 
-def build_dataset(presence_feats: np.ndarray,
-                  background_feats: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Stack presence/background factor samples into (X=log(f+1), y)."""
-    def clean(a: np.ndarray) -> np.ndarray:
-        a = np.asarray(a, dtype="float64")
-        return a[np.isfinite(a).all(axis=1)]
+def build_dataset(presence_feats: np.ndarray, background_feats: np.ndarray,
+                  feature_mode: str = "ordinal"
+                  ) -> Tuple[np.ndarray, np.ndarray]:
+    """Stack presence/background samples into a design matrix and labels.
 
-    p = clean(presence_feats)
-    b = clean(background_feats)
-    X = np.log(np.vstack([p, b]) + 1.0)
-    y = np.concatenate([np.ones(len(p)), np.zeros(len(b))])
-    return X, y
+    Transforms come from :mod:`giri_landslide.model.features`, so the model is
+    fitted on exactly the predictors the prediction step will rebuild.
+    """
+    X_all = np.vstack([np.asarray(presence_feats, dtype="float64"),
+                       np.asarray(background_feats, dtype="float64")])
+    y_all = np.concatenate([np.ones(len(presence_feats)),
+                            np.zeros(len(background_feats))])
+    X = FT.design_matrix(X_all, feature_mode)
+    ok = np.isfinite(X).all(axis=1)
+    return X[ok], y_all[ok]
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +133,8 @@ def _auc(scores: np.ndarray, y: np.ndarray) -> float:
 
 def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
               n_folds: int = 5, normalise: bool = True,
-              seed: int = 0) -> CalibrationResult:
+              seed: int = 0, feature_mode: str = "ordinal"
+              ) -> CalibrationResult:
     """Fit weights and report cross-validated AUC.
 
     K-fold cross-validation is used rather than a single hold-out split: with
@@ -140,7 +145,9 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
     The deployed weights are fitted on *all* the data; the folds only estimate
     how well those weights generalise.
     """
-    X, y = build_dataset(presence_feats, background_feats)
+    names = FT.names(feature_mode)
+    X, y = build_dataset(presence_feats, background_feats,
+                         feature_mode)
     if len(X) < 20:
         raise ValueError(f"too few valid calibration points ({len(X)})")
 
@@ -169,7 +176,7 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
     # Screen factors that carry no information (near-constant, e.g. a missing
     # lithology layer left uniform) - they cannot be calibrated.
     sd = X.std(axis=0)
-    excluded = [FACTOR_NAMES[i] for i in range(len(FACTOR_NAMES))
+    excluded = [names[i] for i in range(len(names))
                 if sd[i] <= 1e-6]
     warnings: List[str] = []
     if excluded:
@@ -182,9 +189,14 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
     p_mean = np.log(np.asarray(presence_feats, "float64") + 1.0)
     b_mean = np.log(np.asarray(background_feats, "float64") + 1.0)
 
-    # Flag factors that are *negatively* associated with observed landslides -
-    # usually a symptom of inventory reporting bias rather than physics.
-    for i, k in enumerate(FACTOR_NAMES):
+    # Ordinal factor scores are constructed so that a higher score always means
+    # more susceptible, so a negative coefficient there signals a data problem.
+    # A polynomial term carries no such expectation: a negative quadratic is how
+    # a peaked response is expressed, so those are left signed and unflagged.
+    signed = {n for n in names if n.endswith("_sq")}
+    for i, k in enumerate(names):
+        if k in signed:
+            continue
         if k not in excluded and w_raw[i] < -0.05:
             warnings.append(
                 f"factor '{k}' is negatively associated with mapped landslides "
@@ -205,18 +217,23 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
             f"only {int(y.sum())} landslide points - a few hundred well-spread "
             "points is the practical minimum for stable weights")
 
-    # Deployment weights (exponent form must be non-negative). Excluded factors
-    # keep the physical prior 1.0; fitted negatives are clamped to 0.
-    w_dep = np.clip(w_raw, 0.0, None)
-    for i, k in enumerate(FACTOR_NAMES):
+    # Deployment weights. Ordinal terms are clamped non-negative, since a
+    # negative one would invert the meaning of its factor scale; polynomial
+    # terms keep their sign so a peaked response survives. Excluded factors fall
+    # back to the physical prior 1.0.
+    w_dep = np.where([n in signed for n in names], w_raw,
+                     np.clip(w_raw, 0.0, None))
+    for i, k in enumerate(names):
         if k in excluded:
             w_dep[i] = 1.0
-    if normalise and w_dep.sum() > 0:
+    # Rescaling by the sum is meaningless once coefficients can be negative, and
+    # the intercept is fitted against the unscaled coefficients regardless.
+    if normalise and not signed and w_dep.sum() > 0:
         w_dep = w_dep * (len(w_dep) / w_dep.sum())
 
     return CalibrationResult(
-        weights={k: float(v) for k, v in zip(FACTOR_NAMES, w_dep)},
-        weights_raw={k: float(v) for k, v in zip(FACTOR_NAMES, w_raw)},
+        weights={k: float(v) for k, v in zip(names, w_dep)},
+        weights_raw={k: float(v) for k, v in zip(names, w_raw)},
         intercept=float(b),
         auc=float(auc_te),
         auc_train=float(auc_tr),
@@ -225,9 +242,9 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
         n_presence=int(y.sum()),
         n_background=int((1 - y).sum()),
         factor_means_presence={k: float(np.nanmean(p_mean[:, i]))
-                               for i, k in enumerate(FACTOR_NAMES)},
+                               for i, k in enumerate(names)},
         factor_means_background={k: float(np.nanmean(b_mean[:, i]))
-                                 for i, k in enumerate(FACTOR_NAMES)},
+                                 for i, k in enumerate(names)},
         excluded_factors=excluded,
         warnings=warnings,
     )
@@ -394,4 +411,5 @@ def apply_to_config(cfg: C.Config, result: CalibrationResult) -> C.Config:
     # Carry the fitted intercept so the continuous index uses the calibrated
     # model rather than re-centring on the AOI median.
     c.intercept = float(result.intercept)
+    c.feature_weights = {k: float(v) for k, v in result.weights.items()}
     return c

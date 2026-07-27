@@ -12,6 +12,7 @@ from typing import List, Optional
 import numpy as np
 
 from .. import config as C
+from . import features as FT
 from .factors import FACTOR_NODATA
 from ..utility.grid import combine_rasters, map_raster, reclassify_continuous
 
@@ -59,6 +60,63 @@ def combine_factors(slope_f: str, litho_f: str, veg_f: str, soil_f: str,
 
     return combine_rasters([slope_f, litho_f, veg_f, soil_f], out_index_path,
                            fn, "float32", -9999.0, block=block)
+
+
+def probability_index_features(raster_paths: dict, out_path: str,
+                               feature_mode: str,
+                               feature_weights: dict,
+                               intercept: Optional[float] = None,
+                               block: int = 1024) -> str:
+    """Continuous 0-1 index from a named feature set.
+
+    Uses :mod:`giri_landslide.model.features`, the same construction the
+    calibration fits, so the fitted coefficients are applied to exactly the
+    predictors they were estimated on.
+    """
+    feats = FT.get(feature_mode)
+    w = [float(feature_weights.get(f.name, 0.0)) for f in feats]
+    paths = FT.paths(feature_mode, raster_paths)
+
+    if intercept is None:
+        intercept = -_median_linear_features(paths, w, feature_mode, block)
+
+    def fn(arrs: List[np.ndarray]) -> np.ndarray:
+        bad = FT.nodata_mask(arrs, feature_mode)
+        z = FT.linear_predictor(arrs, w, feature_mode) + intercept
+        p = 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
+        # Hard physical constraints, independent of the fit: flat ground and
+        # open water cannot fail.
+        slope_i = next(i for i, f in enumerate(feats) if f.name == "slope")
+        veg_i = next(i for i, f in enumerate(feats) if f.name == "vegetation")
+        flat = np.nan_to_num(arrs[slope_i], nan=0.0) <= 0
+        water = np.nan_to_num(arrs[veg_i], nan=1.0) == 0
+        p = np.where(flat | water, 0.0, p)
+        return np.where(bad, -9999.0, p)
+
+    return combine_rasters(paths, out_path, fn, "float32", -9999.0, block=block)
+
+
+def _median_linear_features(paths, w, feature_mode, block) -> float:
+    """Median linear predictor over valid pixels, for centring the index."""
+    import rasterio
+
+    from ..utility.grid import iter_blocks
+
+    sample = []
+    ds = [rasterio.open(p) for p in paths]
+    try:
+        ref = ds[0]
+        for win in iter_blocks(ref.width, ref.height, block):
+            arrs = [d.read(1, window=win).astype("float64") for d in ds]
+            ok = ~FT.nodata_mask(arrs, feature_mode)
+            if ok.any():
+                z = FT.linear_predictor(arrs, w, feature_mode)
+                sample.append(z[ok].ravel()[::7])
+    finally:
+        for d in ds:
+            d.close()
+    vals = np.concatenate(sample) if sample else np.array([0.0])
+    return float(np.median(vals))
 
 
 def probability_index(slope_f: str, litho_f: str, veg_f: str, soil_f: str,

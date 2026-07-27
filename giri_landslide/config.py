@@ -288,6 +288,16 @@ class Config:
     # "probability" (continuous 0-1), "classes" (1-5), or "both".
     output: str = "probability"
 
+    # Predictors for the continuous index. "ordinal" uses the manuscript's
+    # integer factor scores; "continuous" feeds slope and precipitation in at
+    # full precision (slope as a quadratic, since its effect peaks near 30-36
+    # degrees) and keeps lithology and land cover categorical. "continuous"
+    # removes the ties that the integer scores impose on the index.
+    feature_mode: str = "continuous"
+    # Fitted coefficients keyed by feature name, set by the calibration. Falls
+    # back to `weights` when absent.
+    feature_weights: Optional[Dict[str, float]] = None
+
     block_size: int = 1024
     data_dir: str = "data/raw"
     work_dir: str = "data/work"

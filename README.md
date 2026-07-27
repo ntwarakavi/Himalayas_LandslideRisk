@@ -49,6 +49,21 @@ Factors are combined by the logistic model the calibration fits:
 P = 1 / (1 + exp(-(b + Σ wᵢ · log(fᵢ + 1))))
 ```
 
+Two predictor sets are available, selected by `feature_mode`:
+
+- `continuous` (default) — slope and precipitation enter at full precision.
+  Slope is represented by a quadratic, so the data may place a peak rather than
+  having one imposed. Lithology and land cover stay categorical, because they
+  are.
+- `ordinal` — the manuscript's formulation, fitted on `log(score + 1)` of the
+  four integer factor scores.
+
+The ordinal set makes the index inherit the coarseness of its inputs: four
+integer scores admit few distinct products, so large groups of pixels tie and
+equal-area bins cannot be formed. Measured over Sikkim, ordinal features put
+51 % of the map in a single bin; continuous features give bins of 20.1, 20.1,
+19.5, 20.1 and 20.2 %.
+
 The output is a continuous index in [0, 1]. Flat terrain and open water are
 constrained to zero. A five-class map can also be produced (`--output classes`)
 for compatibility with the manuscript's hazard matrix, which is indexed by

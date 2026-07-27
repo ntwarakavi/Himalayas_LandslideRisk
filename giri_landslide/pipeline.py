@@ -232,6 +232,7 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
             _uniform_raster(grid, 0.25, sm_grid)
     paths["soil"] = factors.soil_moisture_factor(
         sm_grid, _work(cfg, "f_soil.tif"), cfg.trigger, block=block)
+    paths["soil_raw"] = sm_grid          # untransformed mm / m3 m-3
 
     return paths
 
@@ -250,11 +251,16 @@ def _susceptibility_stage(cfg: C.Config,
          factor_paths["veg"], factor_paths["soil"])
 
     if cfg.output in ("probability", "both"):
-        _log("susceptibility", "continuous probability index (logistic)")
+        fw = cfg.feature_weights or {
+            "slope": cfg.weights.slope, "lithology": cfg.weights.lithology,
+            "vegetation": cfg.weights.vegetation,
+            "soil_moisture": cfg.weights.soil_moisture}
+        mode = cfg.feature_mode if cfg.feature_weights else "ordinal"
+        _log("susceptibility", f"continuous index ({mode} features)")
         prob = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility_prob.tif")
-        susceptibility.probability_index(*f, prob, cfg.weights,
-                                         intercept=cfg.intercept,
-                                         block=cfg.block_size)
+        susceptibility.probability_index_features(
+            factor_paths, prob, mode, fw, intercept=cfg.intercept,
+            block=cfg.block_size)
         out["probability"] = prob
 
     if cfg.output in ("classes", "both") or cfg.trigger:
@@ -301,8 +307,9 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
 
     inputs = resolve_inputs(cfg, mode)
     factor_paths = stage_factors(cfg, grid, inputs)
-    fpaths = [factor_paths["slope"], factor_paths["litho"],
-              factor_paths["veg"], factor_paths["soil"]]
+    from .model import features as FT
+    fpaths = FT.paths(cfg.feature_mode, factor_paths)
+    _log("features", f"{cfg.feature_mode}: {', '.join(FT.names(cfg.feature_mode))}")
 
     # ---- presence points -------------------------------------------------
     if cfg.inventory_path:
@@ -375,7 +382,8 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
     bg_feats = inventory.sample_factors_at_points(background, fpaths)
 
     _log("calibrate", "fitting logistic model on log-factors")
-    result = calibrate.calibrate(pres_feats, bg_feats)
+    result = calibrate.calibrate(pres_feats, bg_feats,
+                                 feature_mode=cfg.feature_mode)
     _log("calibrate", f"held-out AUC = {result.auc:.3f}  "
                       f"weights = {result.weights}")
 

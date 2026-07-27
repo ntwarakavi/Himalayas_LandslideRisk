@@ -184,11 +184,15 @@ def test_auc_perfect_separation():
 
 
 def test_calibration_recovers_signal():
-    """Synthetic presence drawn from susceptibility -> high AUC, slope leads."""
+    """Synthetic presence drawn from susceptibility -> high AUC, slope leads.
+
+    Pinned to ordinal features: the demo inventory is generated from the ordinal
+    factor scores, so that is the space the planted signal lives in.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         cfg = C.Config(
             name="cal", bbox=(83.0, 27.5, 85.0, 29.0), resolution_deg=0.006,
-            block_size=256,
+            block_size=256, feature_mode="ordinal",
             data_dir=os.path.join(tmp, "raw"),
             work_dir=os.path.join(tmp, "work"),
             out_dir=os.path.join(tmp, "out"),
@@ -244,6 +248,35 @@ def test_quantile_breaks_never_empty_class():
         assert cuts == sorted(set(cuts)), f"duplicate cuts: {cuts}"
         labels = [c for _, c in breaks]
         assert labels == list(range(1, len(breaks) + 1))
+
+
+def test_continuous_features_reduce_ties():
+    """Continuous features must give a far smoother index than ordinal scores."""
+    import rasterio
+
+    def distinct_values(cfg):
+        out = pipeline.run_susceptibility(cfg, mode="demo")
+        with rasterio.open(out["susceptibility_probability"]) as src:
+            a = src.read(1)
+            return len(np.unique(a[a != src.nodata]))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        common = dict(bbox=(83.0, 27.5, 84.5, 28.8), resolution_deg=0.005,
+                      block_size=256, data_dir=os.path.join(tmp, "raw"),
+                      work_dir=os.path.join(tmp, "work"),
+                      out_dir=os.path.join(tmp, "out"))
+        fw = {"slope": 1.0, "slope_sq": -0.4, "lithology": 0.6,
+              "vegetation": 0.3, "soil_moisture": 0.8}
+        n_ord = distinct_values(C.Config(
+            name="ord", feature_mode="ordinal", **common,
+            feature_weights={k: 1.0 for k in
+                             ("slope", "lithology", "vegetation",
+                              "soil_moisture")}))
+        n_cont = distinct_values(C.Config(
+            name="cont", feature_mode="continuous", feature_weights=fw,
+            **common))
+
+        assert n_cont > 10 * n_ord, (n_ord, n_cont)
 
 
 def test_validate_handles_continuous_index():

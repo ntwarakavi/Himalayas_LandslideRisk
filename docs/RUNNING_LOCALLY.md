@@ -158,6 +158,39 @@ python -m giri_landslide.cli run --mode download \
 RAM stays flat regardless — only disk and time grow. Lower `block_size` (e.g.
 512) if you are memory constrained.
 
+### How fine can you actually go?
+
+`--res` accepts any value, but the *meaningful* resolution is set by the inputs:
+
+| Factor | Source | Native resolution | Note |
+|---|---|---|---|
+| Slope | Copernicus GLO-90 | **92.8 m** | `--dem-source copernicus30` gives 30 m (~8× the download) |
+| Vegetation | ESA WorldCover | **9.3 m** | downsampled to your grid; never the constraint |
+| Lithology | GLiM vector | polygons | compiled from ~1:1M geological maps — sharp edges, coarse content |
+| Soil moisture | WorldClim 30s | **927.7 m** | the finest open monthly climatology; a hard floor |
+
+Slope dominates the model, so **the DEM sets the practical ceiling**.
+
+> ### Finer is not automatically better
+>
+> Slope is scale-dependent: the same hillside measured on a 30 m DEM is steeper
+> than on a 90 m DEM. Measured over a Himachal Pradesh AOI:
+>
+> | | 90 m | 30 m |
+> |---|---|---|
+> | mean slope | 1.24° | **2.61°** |
+> | 95th-percentile slope | 5.43° | **11.81°** |
+> | area in susceptibility class ≥ 4 | 0.40 % | **5.32 %** |
+>
+> That is a **13× jump in "high susceptibility" area** from changing the DEM
+> alone — not new information, but the slope table (Table 2, calibrated on ~90 m
+> statistics) being applied to a distribution it was not built for.
+>
+> So: run at 90 m for results consistent with the published model. If you need
+> 30 m, **re-calibrate `SLOPE_BREAKS_DEG` in `config.py` against an inventory at
+> that resolution first** — otherwise you get false precision with an inflated
+> hazard.
+
 ---
 
 ## 5. Calibrate the weights against historical landslides

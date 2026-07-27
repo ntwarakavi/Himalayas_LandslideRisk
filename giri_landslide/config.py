@@ -276,6 +276,9 @@ class Config:
     # your own with `cli calibrate --fit-slope-breaks`, which is what makes a
     # run at a different DEM resolution defensible.
     slope_breaks: Optional[List[Tuple[float, int]]] = None
+    # GLiM lithology code -> Sl factor. None uses the expert table GLIM_SL.
+    # Fit a regional one with `calibrate --fit-lithology`.
+    glim_sl: Optional[Dict[str, int]] = None
 
     block_size: int = 1024
     data_dir: str = "data/raw"

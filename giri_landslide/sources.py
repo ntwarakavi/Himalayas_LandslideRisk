@@ -361,11 +361,18 @@ def glim_grid_to_sl(asc_path: str, out_path: str) -> str:
 
 
 def rasterize_glim(glim_path: str, grid, out_path: str,
-                   code_field: Optional[str] = None) -> str:
-    """Rasterise a GLiM vector onto ``grid``, burning the Sl factor (0..3).
+                   code_field: Optional[str] = None,
+                   sl_map: Optional[Dict[str, int]] = None,
+                   burn_codes: bool = False):
+    """Rasterise a GLiM vector onto ``grid``.
 
-    Requires ``fiona``/``geopandas``. If ``glim_path`` is already a raster of
-    GLiM level-1 codes, use :func:`rasterize_glim_from_raster` instead.
+    By default the burned value is the lithology susceptibility factor Sl
+    (0..3), taken from ``sl_map`` (default :data:`config.GLIM_SL`).
+
+    With ``burn_codes=True`` the burned value is instead a dense class index,
+    and the function returns ``(path, index_to_code)`` so the calibration can
+    learn a factor per lithology class from an inventory rather than relying on
+    the expert mapping.
     """
     import numpy as np
     import rasterio
@@ -379,8 +386,6 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
             "Reading a GLiM vector needs 'fiona' (pip install fiona). "
             + GLIM_SOURCE_INFO) from exc
 
-    from . import config as C
-
     # A .gdb holds one or more layers; pick the first if not specified.
     layer = None
     if os.path.splitext(glim_path)[1].lower() == ".gdb" or \
@@ -388,7 +393,11 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
         layers = fiona.listlayers(glim_path)
         layer = layers[0] if layers else None
 
+    from . import config as C
+    sl_map = sl_map if sl_map is not None else C.GLIM_SL
+
     shapes = []
+    codes_seen: List[str] = []
     with fiona.open(glim_path, layer=layer) as src:
         field = code_field or _guess_glim_field(src.schema["properties"])
         src_crs = src.crs
@@ -405,11 +414,16 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
         for feat in src.filter(bbox=bbox):
             code = (feat["properties"].get(field) or "nd")
             code = str(code)[:2].lower()
-            sl = C.GLIM_SL.get(code, C.GLIM_SL_DEFAULT)
+            if burn_codes:
+                if code not in codes_seen:
+                    codes_seen.append(code)
+                value = codes_seen.index(code) + 1     # 0 reserved for "none"
+            else:
+                value = sl_map.get(code, C.GLIM_SL_DEFAULT)
             geom = feat["geometry"]
             if not same_crs:
                 geom = transform_geom(src_crs, "EPSG:4326", geom)
-            shapes.append((geom, sl))
+            shapes.append((geom, value))
 
     prof = grid.profile("uint8", 255)
     arr = rasterize(shapes, out_shape=grid.shape, transform=grid.transform,
@@ -417,6 +431,8 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
         np.full(grid.shape, 255, dtype="uint8")
     with rasterio.open(out_path, "w", **prof) as dst:
         dst.write(arr, 1)
+    if burn_codes:
+        return out_path, {i + 1: c for i, c in enumerate(codes_seen)}
     return out_path
 
 

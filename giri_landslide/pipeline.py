@@ -196,7 +196,8 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
                      Resampling.nearest, dtype="uint8", nodata=255, block=block)
     elif "glim_vector" in inputs:
         _log("lithology", "rasterising GLiM vector (full resolution)")
-        sources.rasterize_glim(inputs["glim_vector"], grid, glim_sl_grid)
+        sources.rasterize_glim(inputs["glim_vector"], grid, glim_sl_grid,
+                               sl_map=cfg.glim_sl)
     elif "glim_raster" in inputs:
         _log("lithology", "converting supplied GLiM class raster")
         sl_tif = _work(cfg, "glim_sl_native.tif")
@@ -260,7 +261,8 @@ def _susceptibility_stage(cfg: C.Config, factor_paths: Dict[str, str]) -> str:
 
 def run_calibration(cfg: C.Config, mode: str = "demo",
                     n_background: Optional[int] = None,
-                    fit_slope_breaks: bool = False) -> dict:
+                    fit_slope_breaks: bool = False,
+                    fit_lithology: bool = False) -> dict:
     """Fine-tune factor weights against a historical Himalayan inventory.
 
     Steps: stage the four factor rasters -> obtain presence points (from
@@ -313,6 +315,41 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
     _log("background", f"{len(background)} background points "
                        f"({len(bg_near)} density-matched + {len(bg_wide)} AOI-wide)")
 
+    # ---- optional: fit the lithology table (BEFORE the weights) ----------
+    # Order matters: the weights are fitted against the factor rasters, so the
+    # rock-type table has to be corrected first, the lithology factor rebuilt
+    # with it, and only then the weights estimated. Fitting the weights first
+    # would estimate them against a table we are about to replace.
+    glim_sl = None
+    litho_diag = None
+    if fit_lithology and "glim_vector" in inputs:
+        _log("lithology", "fitting Sl per rock type (frequency ratio)")
+        code_ras = _work(cfg, "glim_codes.tif")
+        _, idx_to_code = sources.rasterize_glim(
+            inputs["glim_vector"], grid, code_ras, burn_codes=True)
+        cp = inventory.sample_factors_at_points(presence, [code_ras])[:, 0]
+        cb = inventory.sample_factors_at_points(background, [code_ras])[:, 0]
+        try:
+            glim_sl, litho_diag = calibrate.calibrate_lithology(
+                cp, cb, idx_to_code)
+            changed = [k for k, v in litho_diag["fitted"].items()
+                       if litho_diag["expert"][k] != v]
+            _log("lithology", f"{len(litho_diag['fitted'])} rock types fitted, "
+                              f"{len(changed)} differ from the expert table")
+            _log("lithology", "note: ratios are confounded with topography - "
+                              "flat-lying units score low regardless of strength")
+            # Rebuild the lithology factor with the fitted table so the weight
+            # fit below sees the corrected values.
+            sources.rasterize_glim(inputs["glim_vector"], grid,
+                                   _work(cfg, "glim_sl.tif"), sl_map=glim_sl)
+            factors.lithology_factor(_work(cfg, "glim_sl.tif"),
+                                     factor_paths["litho"],
+                                     block=cfg.block_size)
+        except ValueError as exc:
+            _log("lithology", f"skipped ({exc})")
+    elif fit_lithology:
+        _log("lithology", "skipped (needs the full GLiM geodatabase)")
+
     pres_feats = inventory.sample_factors_at_points(presence, fpaths)
     bg_feats = inventory.sample_factors_at_points(background, fpaths)
 
@@ -340,6 +377,8 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
 
     # ---- write calibrated config + report -------------------------------
     cal_cfg = calibrate.apply_to_config(cfg, result)
+    if glim_sl:
+        cal_cfg.glim_sl = glim_sl
     if slope_breaks:
         cal_cfg.slope_breaks = slope_breaks
     cal_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibrated_config.json")
@@ -349,6 +388,9 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
     if slope_diag:
         report["slope_breaks"] = slope_breaks
         report["slope_diagnostics"] = slope_diag
+    if litho_diag:
+        report["glim_sl"] = glim_sl
+        report["lithology_diagnostics"] = litho_diag
     with open(report_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
 

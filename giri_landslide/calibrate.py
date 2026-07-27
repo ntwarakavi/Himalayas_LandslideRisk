@@ -312,6 +312,72 @@ def calibrate_slope_breaks(presence_slopes: np.ndarray,
     return breaks, diagnostics
 
 
+def calibrate_lithology(presence_codes: np.ndarray,
+                        background_codes: np.ndarray,
+                        index_to_code: Dict[int, str],
+                        min_per_class: int = 30) -> Tuple[Dict[str, int], Dict]:
+    """Fit the lithology factor Sl per GLiM class from an inventory.
+
+    Same frequency-ratio logic as the slope table: for each rock type, compare
+    the share of landslides sitting on it against the share of terrain it
+    covers. Rock types that carry more than their share of failures score high.
+
+    This replaces a global expert guess with regional evidence. It matters
+    because rock strength ranks differently in different orogens - the expert
+    default assumes weak sediments dominate, which is not how the High
+    Himalaya behaves, and shows up as lithology being clamped out of the fit.
+
+    Classes with fewer than ``min_per_class`` background samples keep the
+    expert default. Water and ice stay at 0.
+
+    CAVEAT - the ratio is confounded with topography. A rock type that crops
+    out only in flat terrain scores low because nothing can slide there, not
+    because the rock is strong: in the Himalaya the Siwalik/Terai siliciclastic
+    units behave exactly this way. Treat the fitted table as "which rock types
+    carry landslides in this region", not as a rock-strength ranking, and check
+    ``diagnostics['sample_counts']`` before trusting any single class.
+
+    Returns ``(code_to_sl, diagnostics)``.
+    """
+    p = np.asarray(presence_codes, "float64")
+    b = np.asarray(background_codes, "float64")
+    p = p[np.isfinite(p)].astype(int)
+    b = b[np.isfinite(b)].astype(int)
+    if len(p) < 20 or len(b) < 20:
+        raise ValueError("too few lithology samples to fit")
+
+    codes = sorted(set(index_to_code))
+    fr: Dict[str, float] = {}
+    counts: Dict[str, Dict[str, int]] = {}
+    for idx in codes:
+        code = index_to_code[idx]
+        np_i, nb_i = int((p == idx).sum()), int((b == idx).sum())
+        counts[code] = {"presence": np_i, "background": nb_i}
+        if nb_i >= min_per_class:
+            fr[code] = (np_i / max(len(p), 1)) / (nb_i / max(len(b), 1))
+
+    out = dict(C.GLIM_SL)                       # start from the expert table
+    if fr:
+        vals = np.array(list(fr.values()))
+        vmax = float(vals.max())
+        for code, ratio in fr.items():
+            if code in ("wb", "ig", "nd"):      # water/ice/no-data stay excluded
+                out[code] = 0
+                continue
+            # scale onto 1..3, the range the manuscript uses for Sl
+            out[code] = int(np.clip(np.ceil(ratio / vmax * 3.0), 1, 3)) \
+                if vmax > 0 else C.GLIM_SL_DEFAULT
+
+    diagnostics = {
+        "frequency_ratio": {k: round(v, 3) for k, v in fr.items()},
+        "sample_counts": counts,
+        "fitted": {k: out[k] for k in fr},
+        "expert": {k: C.GLIM_SL.get(k, C.GLIM_SL_DEFAULT) for k in fr},
+        "n_presence": int(len(p)), "n_background": int(len(b)),
+    }
+    return out, diagnostics
+
+
 def apply_to_config(cfg: C.Config, result: CalibrationResult) -> C.Config:
     """Return a copy of ``cfg`` using the calibrated exponent weights."""
     import copy

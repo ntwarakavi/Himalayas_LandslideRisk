@@ -169,7 +169,8 @@ def _step_calibrate(args) -> int:
     print("STEP 3  Calibrate factor weights against real landslides\n")
     report = pipeline.run_calibration(
         cfg, mode=args.mode,
-        fit_slope_breaks=not args.no_slope_breaks)
+        fit_slope_breaks=not args.no_slope_breaks,
+        fit_lithology=getattr(args, "fit_lithology", False))
     res = report["result"]
 
     print("\n  Fitted weights (how much each factor matters):")
@@ -188,6 +189,15 @@ def _step_calibrate(args) -> int:
             hs = "inf" if hi == float("inf") else f"{hi:.1f}"
             print(f"    {lo:5.1f} - {hs:>5s}  {'*' * sc}")
             lo = hi
+    if res.get("lithology_diagnostics"):
+        ld = res["lithology_diagnostics"]
+        print("\n  Fitted rock-type factors (expert -> fitted, by landslide"
+              " over-representation):")
+        for code, fr in sorted(ld["frequency_ratio"].items(),
+                               key=lambda kv: -kv[1]):
+            exp, fit = ld["expert"][code], ld["fitted"][code]
+            flag = "  <-- changed" if exp != fit else ""
+            print(f"    {code}  ratio={fr:5.2f}   {exp} -> {fit}{flag}")
     print(f"\n  Calibrated config -> {report['calibrated_config']}")
     print(f"  Full report       -> {report['report']}")
     print("\nNext:  python -m giri_landslide.cli step4-susceptibility "
@@ -284,6 +294,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                        help="fit factor weights to a landslide inventory")
     p.add_argument("--no-slope-breaks", action="store_true",
                    help="do not refit the slope table")
+    p.add_argument("--fit-lithology", action="store_true",
+                   help="also fit the rock-type factor from the inventory "
+                        "(needs the full GLiM geodatabase)")
     _mode(p); _add_common(p)
 
     p = sub.add_parser("step4-susceptibility", aliases=["susceptibility"],

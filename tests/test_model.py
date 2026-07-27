@@ -12,7 +12,7 @@ import tempfile
 import numpy as np
 
 from giri_landslide import config as C
-from giri_landslide import pipeline, triggers
+from giri_landslide import pipeline, triggers, inventory, calibrate
 from giri_landslide.grid import Grid, reclassify_continuous, remap_categorical
 
 
@@ -92,6 +92,61 @@ def test_end_to_end_demo_earthquake():
         )
         out = pipeline.run(cfg, mode="demo")
         assert os.path.exists(out["hazard_probability"])
+
+
+def test_region_clipping():
+    # AOI inside the Himalayan region is kept (intersected).
+    cfg = C.Config(bbox=(84.0, 28.0, 84.5, 28.5))
+    assert cfg.clipped_bbox()[0] >= 71.0
+    # AOI entirely outside the region raises.
+    off = C.Config(bbox=(0.0, 0.0, 1.0, 1.0))
+    try:
+        off.clipped_bbox()
+        assert False, "expected out-of-region AOI to raise"
+    except ValueError:
+        pass
+
+
+def test_inventory_csv_and_bbox_filter(tmp_path=None):
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "inv.csv")
+        with open(p, "w") as fh:
+            fh.write("event_id,latitude,longitude,country_name\n")
+            fh.write("1,28.2,84.1,Nepal\n")       # inside AOI
+            fh.write("2,10.0,10.0,Nigeria\n")      # outside AOI + country
+            fh.write("3,27.9,84.3,India\n")        # inside AOI
+        pts = inventory.load_inventory(p, bbox=(84.0, 27.5, 84.5, 28.5),
+                                       countries=("Nepal", "India"))
+        assert pts.shape == (2, 2)
+        assert pts[:, 0].min() >= 84.0 and pts[:, 1].max() <= 28.5
+
+
+def test_auc_perfect_separation():
+    scores = np.array([0.1, 0.2, 0.3, 0.9, 1.0, 1.1])
+    y = np.array([0, 0, 0, 1, 1, 1])
+    assert abs(calibrate._auc(scores, y) - 1.0) < 1e-9
+
+
+def test_calibration_recovers_signal():
+    """Synthetic presence drawn from susceptibility -> high AUC, slope leads."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = C.Config(
+            name="cal", bbox=(83.0, 27.5, 85.0, 29.0), resolution_deg=0.006,
+            block_size=256,
+            data_dir=os.path.join(tmp, "raw"),
+            work_dir=os.path.join(tmp, "work"),
+            out_dir=os.path.join(tmp, "out"),
+        )
+        report = pipeline.run_calibration(cfg, mode="demo")
+        res = report["result"]
+        assert res["auc"] > 0.7, res["auc"]
+        assert res["weights"]["slope"] == max(res["weights"].values())
+        assert os.path.exists(report["calibrated_config"])
+        # calibrated config must switch to exponent + quantile
+        cal = C.Config.from_json(report["calibrated_config"])
+        assert cal.weight_mode == "exponent"
+        assert cal.classification == "quantile"
 
 
 if __name__ == "__main__":

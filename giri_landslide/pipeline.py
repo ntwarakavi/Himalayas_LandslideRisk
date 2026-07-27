@@ -56,8 +56,9 @@ def _log(step: str, msg: str = "") -> None:
 
 def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
     """Return a dict of raw (ungridded) input source paths for the run."""
+    bbox = cfg.clipped_bbox()  # restrict AOI to the South Asia Himalayan region
     if mode == "demo":
-        grid = Grid.from_bbox(cfg.bbox, cfg.resolution_deg)
+        grid = Grid.from_bbox(bbox, cfg.resolution_deg)
         _log("demo", "generating synthetic inputs")
         return demo.make_demo_inputs(grid, cfg.data_dir)
 
@@ -68,7 +69,7 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
         inputs["dem_tiles"] = [cfg.dem_path]
     elif mode == "download":
         _log("download:dem", cfg.dem_source)
-        inputs["dem_tiles"] = sources.download_dem(cfg.bbox, cfg.data_dir,
+        inputs["dem_tiles"] = sources.download_dem(bbox, cfg.data_dir,
                                                    cfg.dem_source)
     else:
         raise ValueError("local mode requires config.dem_path")
@@ -79,7 +80,7 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
         inputs["landcover_tiles"] = [cfg.landcover_path]
     elif mode == "download" and cfg.landcover_source == "worldcover":
         _log("download:landcover", "ESA WorldCover 2021")
-        inputs["landcover_tiles"] = sources.download_worldcover(cfg.bbox,
+        inputs["landcover_tiles"] = sources.download_worldcover(bbox,
                                                                cfg.data_dir)
     else:
         raise ValueError("local mode requires config.landcover_path")
@@ -188,6 +189,100 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
     return paths
 
 
+def _susceptibility_stage(cfg: C.Config, factor_paths: Dict[str, str]) -> str:
+    """Combine factors into S and classify into the 5-class susceptibility map."""
+    _log("susceptibility", f"combining factors ({cfg.weight_mode})")
+    susc_index = _work(cfg, "susc_index.tif")
+    susceptibility.combine_factors(
+        factor_paths["slope"], factor_paths["litho"], factor_paths["veg"],
+        factor_paths["soil"], susc_index, cfg.weights, mode=cfg.weight_mode,
+        block=cfg.block_size)
+
+    if cfg.classification == "quantile":
+        breaks = susceptibility.quantile_breaks(susc_index, block=cfg.block_size)
+        _log("classify", "equal-area quantile breaks")
+    else:
+        breaks = cfg.susceptibility_breaks
+
+    susc_class = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility.tif")
+    susceptibility.classify_susceptibility(susc_index, susc_class, breaks,
+                                           block=cfg.block_size)
+    return susc_class
+
+
+# ---------------------------------------------------------------------------
+# calibration
+# ---------------------------------------------------------------------------
+
+def run_calibration(cfg: C.Config, mode: str = "demo",
+                    n_background: Optional[int] = None) -> dict:
+    """Fine-tune factor weights against a historical Himalayan inventory.
+
+    Steps: stage the four factor rasters -> obtain presence points (from
+    ``cfg.inventory_path``, a NASA-GLC download, or a synthetic inventory in
+    demo mode) -> sample factors at presence + background points -> fit the
+    logistic model -> write a calibrated config JSON. Returns a report dict.
+    """
+    from . import inventory, calibrate
+
+    _ensure_dirs(cfg)
+    bbox = cfg.clipped_bbox()
+    grid = Grid.from_bbox(bbox, cfg.resolution_deg)
+    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg "
+                 f"(calibration over Himalaya)")
+
+    inputs = resolve_inputs(cfg, mode)
+    factor_paths = stage_factors(cfg, grid, inputs)
+    fpaths = [factor_paths["slope"], factor_paths["litho"],
+              factor_paths["veg"], factor_paths["soil"]]
+
+    # ---- presence points -------------------------------------------------
+    if cfg.inventory_path:
+        _log("inventory", f"loading {cfg.inventory_path}")
+        presence = inventory.load_inventory(cfg.inventory_path, bbox=bbox,
+                                            countries=C.HIMALAYA_COUNTRIES)
+    elif mode == "download":
+        _log("inventory", "downloading NASA Global Landslide Catalog")
+        glc = inventory.download_nasa_glc(cfg.data_dir)
+        if not glc:
+            raise RuntimeError("NASA GLC unavailable; supply config.inventory_path")
+        presence = inventory.load_inventory(glc, bbox=bbox,
+                                            countries=C.HIMALAYA_COUNTRIES)
+    else:
+        _log("inventory", "synthetic Himalayan inventory (demo)")
+        presence = inventory.make_synthetic_inventory(
+            fpaths, n=1500, true_weights=[1.6, 0.7, 0.5, 1.1])
+    if len(presence) < 20:
+        raise RuntimeError(f"only {len(presence)} presence points in region; "
+                           "need >= 20 for calibration")
+    _log("inventory", f"{len(presence)} presence points in region")
+
+    # ---- background points ----------------------------------------------
+    n_bg = n_background or max(len(presence), 1500)
+    background = inventory.background_points(bbox, n_bg, fpaths[0])
+    _log("background", f"{len(background)} background points")
+
+    pres_feats = inventory.sample_factors_at_points(presence, fpaths)
+    bg_feats = inventory.sample_factors_at_points(background, fpaths)
+
+    _log("calibrate", "fitting logistic model on log-factors")
+    result = calibrate.calibrate(pres_feats, bg_feats)
+    _log("calibrate", f"held-out AUC = {result.auc:.3f}  "
+                      f"weights = {result.weights}")
+
+    # ---- write calibrated config + report -------------------------------
+    cal_cfg = calibrate.apply_to_config(cfg, result)
+    cal_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibrated_config.json")
+    cal_cfg.to_json(cal_path)
+    report_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibration.json")
+    with open(report_path, "w", encoding="utf-8") as fh:
+        json.dump(result.to_dict(), fh, indent=2)
+
+    _log("done", f"calibrated config -> {cal_path}")
+    return {"result": result.to_dict(), "calibrated_config": cal_path,
+            "report": report_path}
+
+
 # ---------------------------------------------------------------------------
 # full run
 # ---------------------------------------------------------------------------
@@ -195,23 +290,14 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
 def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
     """Execute the whole model and return a dict of output raster paths."""
     _ensure_dirs(cfg)
-    grid = Grid.from_bbox(cfg.bbox, cfg.resolution_deg)
+    grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
     _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg "
-                 f"({cfg.trigger})")
+                 f"({cfg.trigger}, weights={cfg.weight_mode})")
 
     inputs = resolve_inputs(cfg, mode)
     factor_paths = stage_factors(cfg, grid, inputs)
 
-    # ---- susceptibility --------------------------------------------------
-    _log("susceptibility", "combining factors (Eq. 1)")
-    susc_index = _work(cfg, "susc_index.tif")
-    susceptibility.combine_factors(
-        factor_paths["slope"], factor_paths["litho"], factor_paths["veg"],
-        factor_paths["soil"], susc_index, cfg.weights, block=cfg.block_size)
-    susc_class = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility.tif")
-    susceptibility.classify_susceptibility(susc_index, susc_class,
-                                           cfg.susceptibility_breaks,
-                                           block=cfg.block_size)
+    susc_class = _susceptibility_stage(cfg, factor_paths)
 
     # ---- trigger class ---------------------------------------------------
     _log("trigger", cfg.trigger)

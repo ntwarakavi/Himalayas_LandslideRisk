@@ -15,6 +15,17 @@ only the open-data tiles that intersect your area of interest (AOI) and
 processes everything in memory-bounded blocks, so a laptop can produce a
 90 m-resolution hazard map for a region without ever loading a global array.
 
+**Regional scope.** This build is **restricted to the South Asia Himalayan arc**
+— northern Pakistan, the Indian Himalaya, Nepal and Bhutan (and adjacent ranges),
+region bounds `(71°E, 26°N) – (98°E, 37°N)`. Any AOI is automatically clipped to
+this region, and historical inventories are filtered to it. Change
+`region_bbox` in a config to widen it.
+
+**Data-driven weight calibration.** The factor weights can be **fine-tuned
+against a historical Himalayan landslide inventory** (NASA Global Landslide
+Catalog / COOLR, or your own) by logistic regression — see
+[Calibrating the weights](#calibrating-the-weights-with-historical-himalayan-data).
+
 Running `./run_demo.sh` produces a two-panel quicklook
 (`outputs/*_quicklook.png`) — left: 5-class susceptibility (green→red);
 right: scenario landslide probability. Over the real central-Nepal AOI the model
@@ -105,12 +116,63 @@ can be swapped for the originals via `*_path` config options.
 | `susceptibility.py` | weighted product (Eq. 1) → 5-class susceptibility |
 | `triggers.py` | rainfall (Gumbel return period) / earthquake (PGA) classes |
 | `hazard.py` | susceptibility × trigger → probability via hazard matrix |
+| `inventory.py` | load/download/synthesize a landslide inventory; sampling |
+| `calibrate.py` | logistic-regression weight calibration + ROC AUC |
 | `pipeline.py` | orchestration; writes every intermediate for resume/inspect |
-| `cli.py` | `run` / `download` / `info` commands |
+| `cli.py` | `run` / `download` / `calibrate` / `info` commands |
 
 Because each stage reads and writes grid-aligned GeoTIFFs, you can stop after any
 step, inspect the intermediate rasters in `data/work/`, tweak a table in
 `config.py`, and re-run only the downstream stages.
+
+## Calibrating the weights with historical Himalayan data
+
+The manuscript calibrates the factor weights against landslide inventories by
+expert judgment. This build adds an **automated, data-driven calibration** that
+tunes the weights to observed landslides in the Himalayan region.
+
+```bash
+# Offline demonstration (synthetic Himalayan inventory) — proves the workflow:
+python -m giri_landslide.cli calibrate --mode demo \
+    --bbox 83.0 27.5 85.0 29.0 --res 0.004
+
+# Real data: supply the NASA Global Landslide Catalog (or your own inventory),
+# a CSV with latitude/longitude columns or a GeoJSON of points:
+python -m giri_landslide.cli calibrate --mode download \
+    --config examples/himalaya_calibrate.json \
+    --inventory data/raw/inventory/nasa_glc.csv
+
+# Then run the model with the calibrated weights it wrote:
+python -m giri_landslide.cli run --mode download \
+    --config outputs/himalaya_calibrated_calibrated_config.json
+```
+
+**How it works** (`inventory.py` + `calibrate.py`):
+
+1. Load *presence* points (historical landslides), clip to the Himalayan region
+   and filter by country (`Pakistan, India, Nepal, Bhutan, …`).
+2. Draw *background* (pseudo-absence) points across the AOI.
+3. Sample the four factor rasters at every point.
+4. Fit a **logistic regression** of presence on `log(factor + 1)`. Because the
+   index is combined in **exponent form** `log S = Σ wᵢ·log(fᵢ+1)`, the fitted
+   coefficients *are* the calibrated factor weights.
+5. Report **held-out ROC AUC** and write a ready-to-run calibrated config
+   (`weight_mode = exponent`, `classification = quantile`).
+
+> **Why exponent mode matters:** in the pure multiplicative form
+> `S = Π wᵢ·fᵢ`, the weights are just a global scalar and *do not change which
+> pixels rank as more susceptible*. Calibration therefore uses the exponent form,
+> where weights genuinely control each factor's influence. Class breaks are then
+> taken as equal-area quantiles of `S` (scale-independent).
+
+The demo calibration recovers slope as the dominant factor with AUC ≈ 0.99
+against its synthetic inventory; real inventories yield region-specific weights.
+
+> **Getting the inventory:** the live NASA endpoints move periodically. If the
+> built-in downloader fails, export the point catalogue from
+> <https://landslides.nasa.gov> and pass it with `--inventory path.csv`
+> (`python -m giri_landslide.cli info` prints the pointer). The loader
+> auto-detects `latitude`/`longitude` columns and a `country_name` field.
 
 ## Methodology notes & calibration
 

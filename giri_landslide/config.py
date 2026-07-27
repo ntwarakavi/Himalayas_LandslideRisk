@@ -198,6 +198,23 @@ RAINFALL_MATRIX: List[List[float]] = [
 
 
 # ---------------------------------------------------------------------------
+# Region of interest - South Asia Himalayan arc
+# ---------------------------------------------------------------------------
+
+# Default AOI for this project: the South Asia Himalayan region spanning
+# northern Pakistan, the Indian Himalaya, Nepal and Bhutan (and adjacent ranges).
+# (west, south, east, north) in EPSG:4326 degrees.
+HIMALAYA_BBOX: Tuple[float, float, float, float] = (71.0, 26.0, 98.0, 37.0)
+
+# Country names (as they appear in the NASA Global Landslide Catalog
+# "country_name" field) used to restrict a historical inventory to the region.
+HIMALAYA_COUNTRIES = (
+    "Pakistan", "India", "Nepal", "Bhutan", "Afghanistan", "Bangladesh",
+    "China",  # only the Himalayan fringe is kept via the bounding box
+)
+
+
+# ---------------------------------------------------------------------------
 # Top-level configuration object
 # ---------------------------------------------------------------------------
 
@@ -226,10 +243,27 @@ class Config:
         "worldcover" | "lccs" | "local".
     """
 
-    name: str = "aoi"
+    name: str = "himalaya"
     bbox: Tuple[float, float, float, float] = (83.0, 27.5, 85.0, 29.0)  # C. Nepal
     resolution_deg: float = 0.0008333333
     trigger: str = "rainfall"
+
+    # Region restriction: the model is scoped to the South Asia Himalayan arc.
+    # AOIs are clipped to `region_bbox` and inventories filtered to it.
+    region_bbox: Tuple[float, float, float, float] = HIMALAYA_BBOX
+
+    # Susceptibility combination:
+    #   "multiplicative"  S = prod_i (w_i * f_i)        (weights only rescale)
+    #   "exponent"        S = prod_i (f_i + 1) ** w_i   (weights change ranking;
+    #                     required for meaningful weight calibration)
+    weight_mode: str = "multiplicative"
+    # Class breaks for S -> 1..5:  "fixed" (config table) or "quantile"
+    # (equal-area quintiles of S over the AOI; used after calibration).
+    classification: str = "fixed"
+
+    # Calibration inputs -----------------------------------------------------
+    inventory_path: Optional[str] = None   # landslide inventory CSV/GeoJSON
+    calibrated_config: Optional[str] = None
 
     block_size: int = 1024
     data_dir: str = "data/raw"
@@ -266,8 +300,9 @@ class Config:
     @classmethod
     def from_dict(cls, raw: dict) -> "Config":
         raw = dict(raw)
-        if "bbox" in raw and raw["bbox"] is not None:
-            raw["bbox"] = tuple(raw["bbox"])
+        for key in ("bbox", "region_bbox"):
+            if key in raw and raw[key] is not None:
+                raw[key] = tuple(raw[key])
         if "weights" in raw and isinstance(raw["weights"], dict):
             raw["weights"] = Weights(**raw["weights"])
         if "susceptibility_breaks" in raw and raw["susceptibility_breaks"]:
@@ -280,6 +315,21 @@ class Config:
     def to_json(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(asdict(self), fh, indent=2, default=list)
+
+    # Region clipping -------------------------------------------------------
+    def clipped_bbox(self) -> Tuple[float, float, float, float]:
+        """Intersect the requested AOI with the Himalayan region bounds.
+
+        Raises if the AOI lies entirely outside the region.
+        """
+        w, s, e, n = self.bbox
+        rw, rs, re, rn = self.region_bbox
+        cw, cs, ce, cn = max(w, rw), max(s, rs), min(e, re), min(n, rn)
+        if cw >= ce or cs >= cn:
+            raise ValueError(
+                f"AOI {self.bbox} is outside the South Asia Himalayan region "
+                f"{self.region_bbox}. This model is restricted to that region.")
+        return (cw, cs, ce, cn)
 
     # Convenience for earthquake weight preset ------------------------------
     def with_earthquake_defaults(self) -> "Config":

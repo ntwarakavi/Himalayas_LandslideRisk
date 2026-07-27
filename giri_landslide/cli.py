@@ -50,6 +50,12 @@ def _build_config(args: argparse.Namespace) -> C.Config:
         cfg.scenario_pga_g = args.pga
     if args.return_period is not None:
         cfg.scenario_return_period_yr = args.return_period
+    if getattr(args, "inventory", None):
+        cfg.inventory_path = args.inventory
+    if getattr(args, "weight_mode", None):
+        cfg.weight_mode = args.weight_mode
+    if getattr(args, "classification", None):
+        cfg.classification = args.classification
     if cfg.trigger == "earthquake" and not args.no_eq_preset:
         cfg.weights.soil_moisture = min(cfg.weights.soil_moisture, 0.5)
     return cfg
@@ -73,6 +79,10 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="uniform rainfall return period scenario (yr)")
     p.add_argument("--no-eq-preset", dest="no_eq_preset", action="store_true",
                    help="do not auto-reduce soil-moisture weight for earthquake")
+    p.add_argument("--inventory", help="historical landslide inventory CSV/GeoJSON")
+    p.add_argument("--weight-mode", dest="weight_mode",
+                   choices=["multiplicative", "exponent"])
+    p.add_argument("--classification", choices=["fixed", "quantile"])
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -88,6 +98,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_dl = sub.add_parser("download", help="download open datasets for an AOI")
     _add_common(p_dl)
+
+    p_cal = sub.add_parser(
+        "calibrate",
+        help="fine-tune factor weights against a Himalayan landslide inventory")
+    p_cal.add_argument("--mode", choices=["demo", "download", "local"],
+                       default="demo")
+    _add_common(p_cal)
 
     p_info = sub.add_parser("info", help="print dataset source information")
 
@@ -109,6 +126,23 @@ def main(argv: Optional[List[str]] = None) -> int:
         if cfg.trigger == "rainfall":
             pr = sources.download_worldclim_precip(cfg.data_dir)
             print(f"WorldClim precip tiles: {len(pr)}")
+        return 0
+
+    if args.command == "calibrate":
+        report = pipeline.run_calibration(cfg, mode=args.mode)
+        res = report["result"]
+        print("\nCalibrated exponent weights (factor influence):")
+        for k, v in res["weights"].items():
+            print(f"  {k:14s} {v:6.3f}")
+        print(f"\nHeld-out ROC AUC : {res['auc']:.3f}  "
+              f"(train {res['auc_train']:.3f})")
+        print(f"Presence / background points: {res['n_presence']} / "
+              f"{res['n_background']}")
+        print(f"\nCalibrated config : {report['calibrated_config']}")
+        print(f"Full report       : {report['report']}")
+        print("\nRun the model with the calibrated weights:")
+        print(f"  python -m giri_landslide.cli run --mode {args.mode} "
+              f"--config {report['calibrated_config']}")
         return 0
 
     if args.command == "run":

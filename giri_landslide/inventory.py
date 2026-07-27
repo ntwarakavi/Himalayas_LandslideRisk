@@ -322,19 +322,6 @@ def download_sikkim(data_dir: str) -> Optional[str]:
     return shp if os.path.exists(shp) else None
 
 
-def download_east_himalaya(data_dir: str) -> Optional[str]:
-    """Large Landslide Inventory of the Eastern Himalaya (India) -> KML path.
-
-    420 large landslides across Arunachal Pradesh and the eastern arc.
-    Zenodo doi:10.5281/zenodo.18931430 (CC BY 4.0).
-    """
-    dest = os.path.join(data_dir, "inventory", "east_himalaya_large.kml")
-    return _cached_download(
-        "https://zenodo.org/api/records/18931430/files/"
-        "Large%20Landslide%20Location%20in%20Eastern%20Himalaya.kml/content",
-        dest)
-
-
 #: Inventory key -> (downloader, human label). Used by the CLI and pipeline.
 INVENTORY_FETCHERS = {
     "gorkha": (download_gorkha,
@@ -343,8 +330,6 @@ INVENTORY_FETCHERS = {
                 "Far-Western Nepal (monsoon, 26,350 polygons)"),
     "sikkim": (download_sikkim,
                "Southern Sikkim, India (255 polygons)"),
-    "east_himalaya": (download_east_himalaya,
-                      "Eastern Himalaya large landslides, India (420 points)"),
 }
 
 

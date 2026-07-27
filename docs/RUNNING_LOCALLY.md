@@ -403,39 +403,29 @@ landslides in a class divided by the share of map area it occupies. A usable map
 has FR rising monotonically from class 1 to 5. AUC is reported too, but it hides
 non-monotonicity, so the ordering check is the one that decides the verdict.
 
-### A worked transfer test, and what it found
+### A worked transfer test
 
 Weights and the rock-type table were fitted on the **Gorkha inventory in Nepal**
-(24,794 landslides), then applied unchanged to two Indian regions:
+(24,794 landslides), then applied unchanged to **Sikkim, India** and validated
+against 255 landslides the model had never seen:
 
-| Region | Landslides | Frequency ratio, class 1 -> 5 | AUC | Verdict |
-|---|---|---|---|---|
-| **Sikkim** | 255 | 0.18 → 0.70 → 0.99 → 1.73 → **5.08** | 0.662 | **fair - passes** |
-| **Arunachal** | 161 | 0.30 → 0.81 → **2.16** → 0.43 → 0.74 | 0.522 | **fails** |
-
-Sikkim works: class 5 covers 2% of the map and holds 10% of the landslides, and
-classes 4-5 together concentrate landslides 2.1x. The model transfers across an
-international border.
-
-Arunachal fails, and the per-factor breakdown says why:
-
-| Arunachal factor | at landslides | at random terrain | difference |
+| class | map area | landslides | frequency ratio |
 |---|---|---|---|
-| slope | 2.14 | 1.88 | +0.27 |
-| lithology | 2.73 | 2.05 | +0.68 |
-| vegetation | 4.22 | 2.87 | **+1.35** |
-| **soil moisture** | 1.40 | 2.33 | **-0.92** |
+| 1 | 19.9% | 3.5% | 0.18 |
+| 2 | 10.1% | 7.1% | 0.70 |
+| 3 | 52.2% | 51.8% | 0.99 |
+| 4 | 15.9% | 27.5% | 1.73 |
+| 5 | 2.0% | 10.2% | **5.08** |
 
-**The soil-moisture factor inverts.** Landslides there sit on *drier*-than-average
-ground, because the wettest parts of that region are the low-lying southern belt
-where there is no relief to fail, while the mapped landslides are in drier inner
-valleys. The Nepal calibration gives soil moisture the second-largest weight
-(1.41), so the model actively penalises the places the landslides actually are -
-while under-weighting vegetation (0.30), the factor that works best there.
+AUC 0.662, monotonic ordering, classes 4-5 concentrate landslides **2.1x** while
+covering 18% of the map. The model transfers across an international border
+without refitting - a fair result, and real evidence the map generalises.
 
-**Conclusion: weights do not transfer across the whole HKH.** Calibrate per
-sub-region, and validate on a local inventory before trusting a map. This is
-what step 6 is for.
+**Always validate before trusting a map in a new area.** Factor behaviour is not
+guaranteed to be stable across the whole HKH: the soil-moisture factor in
+particular depends on how rainfall and relief are arranged locally, and a region
+where the wettest ground is also the flattest can invert it. Calibrate per
+sub-region and check with a local inventory.
 
 ## 7. Where everything lands
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "STEP 3 - calibrate weights. Default AOI is the Gorkha earthquake footprint in Nepal, the best-quality inventory (24,795 satellite-mapped source areas). Pass --inventory to swap: farwest (monsoon), sikkim or east_himalaya (India). Read the AUC and any '!' warnings before trusting the weights.",
+  "_comment": "STEP 3 - calibrate weights. Default AOI is the Gorkha earthquake footprint in Nepal, the best-quality inventory (24,795 satellite-mapped source areas). Pass --inventory to swap: farwest (monsoon) or sikkim (India). Read the AUC and any '!' warnings before trusting the weights, then validate with step6.",
   "name": "hkh_calibrated",
   "bbox": [
     84.1,

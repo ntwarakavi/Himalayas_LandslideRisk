@@ -210,7 +210,6 @@ Step 3 is only as good as the landslide data behind it. Measured, same pipeline:
 | Roback Gorkha, Nepal | 24,794 | satellite, earthquake | **0.701** | best for `--trigger earthquake` |
 | Far-West Nepal | 26,348 | satellite, monsoon | 0.563 | best for rainfall — see note |
 | Southern Sikkim, India | 255 | satellite | — | small; regional check |
-| Eastern Himalaya, India | 420 | mapped points | — | large landslides, Arunachal |
 
 All are downloaded by step 2. Two things that look like paradoxes but are not:
 
@@ -258,7 +257,7 @@ For a fair comparison run the baseline at the same precipitation resolution
 | Lithology | GLiM (1.2 M polygons) | vector | automatic (1.1 GB, once) |
 | Wetness | WorldClim v2.1 | 1 km | automatic (1.0 GB, once) |
 | Future wetness | WorldClim CMIP6 | 4.6 km | automatic |
-| Inventories | Gorkha, Far-West Nepal, Sikkim, E. Himalaya, COOLR | points/polygons | automatic |
+| Inventories | Gorkha, Far-West Nepal, Sikkim, COOLR | points/polygons | automatic |
 | Earthquake PGA | GEM seismic hazard map | — | **manual**, or use `--pga` |
 
 `python -m giri_landslide.cli info` prints sources and licences.

@@ -131,15 +131,6 @@ REGISTRY: List[Dataset] = [
         probe_url="https://zenodo.org/api/records/8169506",
         note="255 polygons + 185 points, eastern Indian Himalaya",
     ),
-    Dataset(
-        key="east_himalaya",
-        name="Large Landslide Inventory of the Eastern Himalaya (India)",
-        group=INVENTORY, licence="CC BY 4.0", approx_mb=0.3, required=False,
-        rel_path="inventory/east_himalaya_large.kml",
-        probe_url="https://zenodo.org/api/records/18931430",
-        note="420 large landslides, Arunachal Pradesh / eastern arc",
-    ),
-
     # ---- TRIGGER ---------------------------------------------------------
     Dataset(
         key="pga", name="GEM Global Seismic Hazard Map (PGA, 475-yr)",

@@ -123,6 +123,25 @@ def test_inventory_csv_and_bbox_filter(tmp_path=None):
         assert pts[:, 0].min() >= 84.0 and pts[:, 1].max() <= 28.5
 
 
+def test_inventory_polygon_centroid_and_reprojection():
+    """Polygon inventories reduce to one point per feature, reprojected to WGS84."""
+    # A square polygon in UTM 45N (EPSG:32645) over central Nepal.
+    geom = {"type": "Polygon",
+            "coordinates": [[(300000.0, 3050000.0), (300100.0, 3050000.0),
+                             (300100.0, 3050100.0), (300000.0, 3050100.0),
+                             (300000.0, 3050000.0)]]}
+    xy = inventory._representative_point(geom)
+    assert xy == (300040.0, 3050040.0)  # coordinate centroid (ring closes)
+
+    # A point geometry is passed through untouched.
+    assert inventory._representative_point(
+        {"type": "Point", "coordinates": [85.3, 27.7]}) == (85.3, 27.7)
+
+    # Empty geometry yields nothing rather than raising.
+    assert inventory._representative_point(
+        {"type": "Polygon", "coordinates": []}) is None
+
+
 def test_auc_perfect_separation():
     scores = np.array([0.1, 0.2, 0.3, 0.9, 1.0, 1.1])
     y = np.array([0, 0, 0, 1, 1, 1])

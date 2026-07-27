@@ -47,10 +47,18 @@ _LON_KEYS = ("longitude", "lon", "long", "lng", "x", "xcoord", "x_coord")
 def load_inventory(path: str,
                    bbox: Optional[Sequence[float]] = None,
                    countries: Optional[Sequence[str]] = None) -> np.ndarray:
-    """Load landslide points from CSV/GeoJSON as an (N, 2) [lon, lat] array."""
+    """Load landslide locations as an (N, 2) [lon, lat] array.
+
+    Accepts CSV (lat/lon columns), GeoJSON, or an ESRI shapefile / geodatabase.
+    Polygon inventories - the norm for satellite-mapped landslides - are reduced
+    to one representative point per feature, and any projected CRS is
+    reprojected to EPSG:4326.
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext in (".geojson", ".json"):
         pts = _load_geojson(path)
+    elif ext in (".shp", ".gdb", ".gpkg"):
+        pts = _load_vector(path)
     else:
         pts = _load_csv(path, countries)
     pts = np.asarray(pts, dtype="float64").reshape(-1, 2)
@@ -85,6 +93,63 @@ def _load_csv(path: str, countries: Optional[Sequence[str]]) -> List[Tuple[float
             except (TypeError, ValueError):
                 continue
     return out
+
+
+def _load_vector(path: str, layer: Optional[str] = None
+                 ) -> List[Tuple[float, float]]:
+    """Read a shapefile/geodatabase of landslide points or polygons.
+
+    Each feature is reduced to a single representative location: points are
+    used as-is, polygons and lines are reduced to their coordinate centroid.
+    Features are reprojected to EPSG:4326 when the source CRS differs.
+    """
+    try:
+        import fiona
+        from fiona.transform import transform_geom
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "reading a shapefile inventory needs 'fiona' (pip install fiona)"
+        ) from exc
+
+    out: List[Tuple[float, float]] = []
+    with fiona.open(path, layer=layer) as src:
+        src_crs = src.crs
+        for feat in src:
+            geom = feat.get("geometry")
+            if not geom:
+                continue
+            if src_crs and str(src_crs).upper() not in ("EPSG:4326",
+                                                        "OGC:CRS84"):
+                geom = transform_geom(src_crs, "EPSG:4326", geom)
+            xy = _representative_point(geom)
+            if xy:
+                out.append(xy)
+    return out
+
+
+def _representative_point(geom: dict) -> Optional[Tuple[float, float]]:
+    """Centroid of a geometry's coordinates (no shapely dependency)."""
+    coords: List[Tuple[float, float]] = []
+
+    def walk(c):
+        if not c:
+            return
+        if isinstance(c[0], (int, float)):
+            coords.append((float(c[0]), float(c[1])))
+        else:
+            for part in c:
+                walk(part)
+
+    gtype = geom.get("type")
+    if gtype == "Point":
+        c = geom.get("coordinates") or []
+        return (float(c[0]), float(c[1])) if len(c) >= 2 else None
+    walk(geom.get("coordinates"))
+    if not coords:
+        return None
+    xs = [c[0] for c in coords]
+    ys = [c[1] for c in coords]
+    return (sum(xs) / len(xs), sum(ys) / len(ys))
 
 
 def _load_geojson(path: str) -> List[Tuple[float, float]]:

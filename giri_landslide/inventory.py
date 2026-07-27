@@ -9,9 +9,20 @@ The calibration needs *presence* points (mapped historical landslides) and
   * generate a synthetic Himalayan inventory for fully offline demos/tests;
   * sample factor rasters at points and draw background points.
 
-Primary open source for the region: the NASA Global Landslide Catalog / COOLR
-(Kirschbaum et al. 2010; Juang et al. 2019). If the live endpoint is
-unreachable, pass a downloaded copy via ``inventory_path``.
+Inventory sources for the HKH, in rough order of calibration quality:
+
+  * Roback et al. (2018) Gorkha earthquake inventory - 24,795 satellite-mapped
+    source areas across Nepal. USGS ScienceBase item 582c74fbe4b04d580bd377e8.
+  * Multi-temporal Far-Western Nepal inventory - 26,350 polygons, monsoon
+    triggered. Zenodo doi:10.5281/zenodo.4290100.
+  * ICIMOD Regional Database System (rds.icimod.org) - HKH-wide, free account.
+  * NASA Global Landslide Catalog / COOLR (Kirschbaum et al. 2010; Juang et al.
+    2019) - downloaded automatically, but note it is compiled from media
+    reports, so it carries a strong spatial reporting bias towards roads and
+    settlements. Useful for visual validation; weak for calibration. See
+    docs/RUNNING_LOCALLY.md for a measured comparison.
+
+Any of these can be passed via ``inventory_path`` as CSV, GeoJSON or shapefile.
 """
 
 from __future__ import annotations

@@ -311,6 +311,55 @@ the HKH but they are very unevenly distributed — thousands in Myanmar and
 Bangladesh, only ~176 in the Indian Himalaya. Calibrating on a few hundred
 clustered points will not give trustworthy weights.
 
+### Which inventory to use — measured comparison
+
+Three inventories were run through the identical pipeline over Himalayan AOIs:
+
+| Inventory | Points | How mapped | CV AUC | Fitted weights (slope/litho/veg/moisture) | Clamped |
+|---|---|---|---|---|---|
+| [NASA GLC / COOLR](https://landslides.nasa.gov) (Myanmar) | 8,634 | media reports | 0.640 | 0.78 / 0.00 / 0.00 / 3.22 | litho, veg |
+| [Roback Gorkha](https://www.sciencebase.gov/catalog/item/582c74fbe4b04d580bd377e8) (Nepal) | 24,794 | satellite, earthquake | **0.701** | 1.28 / 0.00 / 0.43 / 2.28 | litho |
+| [Far-West Nepal](https://doi.org/10.5281/zenodo.4290100) (Zenodo) | 26,348 | satellite, multi-temporal monsoon | 0.563 | **0.38 / 0.54 / 0.56 / 2.52** | **none** |
+
+Read this carefully — **the highest AUC is not the best inventory.**
+
+- **GLC/COOLR is media-report-derived.** A landslide enters it if someone wrote
+  about it, which requires roads and settlements nearby. Lithology *and*
+  vegetation come out negatively correlated: an artefact of where reporters are,
+  not of where slopes fail. Fine for visual validation, poor for calibration.
+- **Roback (Gorkha) scores best** and gives the cleanest slope curve, but it is a
+  single earthquake, so its weights describe seismic triggering.
+- **Far-West Nepal is the only run where all four factors come out positive**,
+  with soil moisture dominant — exactly what theory predicts for rainfall
+  triggering. Yet it has the *lowest* AUC.
+
+### Why a good inventory can score a bad AUC
+
+The presence/background factor contrast explains it:
+
+| Inventory | Total presence-vs-background contrast |
+|---|---|
+| GLC/COOLR | 0.384 |
+| Roback Gorkha | 0.369 |
+| Far-West Nepal | **0.106** |
+
+Far-West Nepal contains **2.4 landslides per km²** — the terrain is *saturated*.
+Background points drawn from the same small AOI land on ground that has also
+failed, or is equally failure-prone, so presence and background become
+statistically near-identical and AUC collapses toward 0.5. That is a **sampling
+artefact, not a bad model**.
+
+**Practical guidance:**
+
+1. Prefer **systematically mapped** (satellite) inventories over reported ones.
+2. Match the inventory's **trigger** to the model run — earthquake inventories
+   for `--trigger earthquake`, monsoon inventories for rainfall.
+3. On a saturated inventory, **do not judge the model by AUC**. Use the
+   frequency-ratio slope fit below, which stayed physically sensible in all
+   three runs even where AUC did not.
+4. Treat a factor clamped to 0 as a **red flag about the inventory**, not a
+   finding about the terrain.
+
 ### Fitting the slope classes too (needed for non-90 m runs)
 
 By default the slope table is the manuscript's Table 2, calibrated on ~90 m

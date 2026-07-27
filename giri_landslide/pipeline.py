@@ -1,0 +1,329 @@
+"""End-to-end orchestration: data -> factors -> susceptibility -> hazard.
+
+The pipeline runs in discrete, independently inspectable steps and writes every
+intermediate raster to ``work_dir`` so a run can be stopped and resumed, or a
+single stage re-run, on a local machine.
+
+Three input modes:
+  * "demo"     - fabricate synthetic inputs (no network); always works.
+  * "download" - fetch open datasets for the AOI (needs network).
+  * "local"    - use paths supplied in the Config.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Dict, Optional
+
+import numpy as np
+import rasterio
+from rasterio.enums import Resampling
+
+from . import config as C
+from . import factors, susceptibility, triggers, hazard, sources, demo
+from .grid import Grid, warp_to_grid, mosaic_and_warp, raster_stats
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _ensure_dirs(cfg: C.Config) -> None:
+    for d in (cfg.data_dir, cfg.work_dir, cfg.out_dir):
+        os.makedirs(d, exist_ok=True)
+
+
+def _work(cfg: C.Config, name: str) -> str:
+    return os.path.join(cfg.work_dir, f"{cfg.name}_{name}")
+
+
+def _uniform_raster(grid: Grid, value: float, out_path: str,
+                    dtype: str = "float32", nodata=-9999.0) -> str:
+    prof = grid.profile(dtype, nodata)
+    with rasterio.open(out_path, "w", **prof) as dst:
+        dst.write(np.full(grid.shape, value, dtype=dtype), 1)
+    return out_path
+
+
+def _log(step: str, msg: str = "") -> None:
+    print(f"[giri] {step:<22} {msg}")
+
+
+# ---------------------------------------------------------------------------
+# input resolution
+# ---------------------------------------------------------------------------
+
+def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
+    """Return a dict of raw (ungridded) input source paths for the run."""
+    if mode == "demo":
+        grid = Grid.from_bbox(cfg.bbox, cfg.resolution_deg)
+        _log("demo", "generating synthetic inputs")
+        return demo.make_demo_inputs(grid, cfg.data_dir)
+
+    inputs: Dict[str, object] = {}
+
+    # DEM ------------------------------------------------------------------
+    if cfg.dem_path:
+        inputs["dem_tiles"] = [cfg.dem_path]
+    elif mode == "download":
+        _log("download:dem", cfg.dem_source)
+        inputs["dem_tiles"] = sources.download_dem(cfg.bbox, cfg.data_dir,
+                                                   cfg.dem_source)
+    else:
+        raise ValueError("local mode requires config.dem_path")
+
+    # Land cover -----------------------------------------------------------
+    inputs["landcover_source"] = cfg.landcover_source
+    if cfg.landcover_path:
+        inputs["landcover_tiles"] = [cfg.landcover_path]
+    elif mode == "download" and cfg.landcover_source == "worldcover":
+        _log("download:landcover", "ESA WorldCover 2021")
+        inputs["landcover_tiles"] = sources.download_worldcover(cfg.bbox,
+                                                               cfg.data_dir)
+    else:
+        raise ValueError("local mode requires config.landcover_path")
+
+    # Lithology (optional; graceful fallback) ------------------------------
+    if cfg.glim_path:
+        inputs["glim_vector"] = cfg.glim_path
+
+    # Soil-moisture proxy --------------------------------------------------
+    if cfg.trigger == "rainfall":
+        if cfg.precip_monthly_dir:
+            inputs["precip_monthly"] = sorted(
+                os.path.join(cfg.precip_monthly_dir, f)
+                for f in os.listdir(cfg.precip_monthly_dir)
+                if f.endswith(".tif"))
+        elif mode == "download":
+            _log("download:precip", "WorldClim v2.1 monthly")
+            inputs["precip_monthly"] = sources.download_worldclim_precip(
+                cfg.data_dir)
+        # else -> fallback handled in staging
+    else:
+        if cfg.vwc_path:
+            inputs["vwc"] = cfg.vwc_path
+
+    # Trigger --------------------------------------------------------------
+    if cfg.trigger_path:
+        inputs["trigger_raster"] = cfg.trigger_path
+    return inputs
+
+
+# ---------------------------------------------------------------------------
+# staging: warp everything onto the reference grid
+# ---------------------------------------------------------------------------
+
+def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[str, str]:
+    """Produce grid-aligned factor rasters (Sr, Sl, Sv, Sp). Returns paths."""
+    block = cfg.block_size
+    paths: Dict[str, str] = {}
+
+    # ---- Slope factor ----------------------------------------------------
+    dem_grid = _work(cfg, "dem.tif")
+    if "dem" in inputs:                       # demo: already on grid
+        warp_to_grid(inputs["dem"], grid, dem_grid, Resampling.bilinear,
+                     dtype="float32", nodata=-9999.0, block=block)
+    else:
+        mosaic_and_warp(inputs["dem_tiles"], grid, dem_grid,
+                        Resampling.bilinear, dtype="float32", nodata=-9999.0,
+                        block=block)
+    _log("slope", "computing slope + factor")
+    slope_deg = _work(cfg, "slope_deg.tif")
+    factors.compute_slope_degrees(dem_grid, slope_deg, block=block)
+    paths["slope"] = factors.slope_factor(slope_deg, _work(cfg, "f_slope.tif"),
+                                          block=block)
+
+    # ---- Vegetation factor ----------------------------------------------
+    lc_grid = _work(cfg, "landcover.tif")
+    lc_src = inputs.get("landcover") or inputs.get("landcover_tiles")
+    if isinstance(lc_src, list):
+        mosaic_and_warp(lc_src, grid, lc_grid, Resampling.nearest,
+                        dtype="uint8", nodata=0, block=block)
+    else:
+        warp_to_grid(lc_src, grid, lc_grid, Resampling.nearest,
+                     dtype="uint8", nodata=0, block=block)
+    _log("vegetation", "reclassifying land cover")
+    paths["veg"] = factors.landcover_factor(
+        lc_grid, _work(cfg, "f_veg.tif"), inputs["landcover_source"],
+        block=block)
+
+    # ---- Lithology factor -----------------------------------------------
+    glim_sl_grid = _work(cfg, "glim_sl.tif")
+    if "glim_sl_raster" in inputs:            # demo: Sl already burned
+        warp_to_grid(inputs["glim_sl_raster"], grid, glim_sl_grid,
+                     Resampling.nearest, dtype="uint8", nodata=255, block=block)
+    elif "glim_vector" in inputs:
+        _log("lithology", "rasterising GLiM vector")
+        sources.rasterize_glim(inputs["glim_vector"], grid, glim_sl_grid)
+    else:
+        _log("lithology", "GLiM absent -> uniform Sl=2 (see sources.GLIM_SOURCE_INFO)")
+        _uniform_raster(grid, 2, glim_sl_grid, dtype="uint8", nodata=255)
+    paths["litho"] = factors.lithology_factor(
+        glim_sl_grid, _work(cfg, "f_litho.tif"), block=block)
+
+    # ---- Soil-moisture factor -------------------------------------------
+    sm_grid = _work(cfg, "soilmoist.tif")
+    if cfg.trigger == "rainfall":
+        if "precip_monthly" in inputs:
+            _log("soil moisture", "max monthly precip (MYMMR proxy)")
+            mymmr_native = _work(cfg, "mymmr_native.tif")
+            sources.max_monthly_precip(inputs["precip_monthly"], mymmr_native,
+                                       block=block)
+            warp_to_grid(mymmr_native, grid, sm_grid, Resampling.bilinear,
+                         dtype="float32", nodata=-9999.0, block=block)
+        else:
+            _log("soil moisture", "precip absent -> uniform MYMMR=300 mm")
+            _uniform_raster(grid, 300.0, sm_grid)
+    else:
+        if "vwc" in inputs:
+            warp_to_grid(inputs["vwc"], grid, sm_grid, Resampling.bilinear,
+                         dtype="float32", nodata=-9999.0, block=block)
+        else:
+            _log("soil moisture", "VWC absent -> uniform 0.25 m3/m3")
+            _uniform_raster(grid, 0.25, sm_grid)
+    paths["soil"] = factors.soil_moisture_factor(
+        sm_grid, _work(cfg, "f_soil.tif"), cfg.trigger, block=block)
+
+    return paths
+
+
+# ---------------------------------------------------------------------------
+# full run
+# ---------------------------------------------------------------------------
+
+def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
+    """Execute the whole model and return a dict of output raster paths."""
+    _ensure_dirs(cfg)
+    grid = Grid.from_bbox(cfg.bbox, cfg.resolution_deg)
+    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg "
+                 f"({cfg.trigger})")
+
+    inputs = resolve_inputs(cfg, mode)
+    factor_paths = stage_factors(cfg, grid, inputs)
+
+    # ---- susceptibility --------------------------------------------------
+    _log("susceptibility", "combining factors (Eq. 1)")
+    susc_index = _work(cfg, "susc_index.tif")
+    susceptibility.combine_factors(
+        factor_paths["slope"], factor_paths["litho"], factor_paths["veg"],
+        factor_paths["soil"], susc_index, cfg.weights, block=cfg.block_size)
+    susc_class = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility.tif")
+    susceptibility.classify_susceptibility(susc_index, susc_class,
+                                           cfg.susceptibility_breaks,
+                                           block=cfg.block_size)
+
+    # ---- trigger class ---------------------------------------------------
+    _log("trigger", cfg.trigger)
+    trig_class = _work(cfg, "trigger_class.tif")
+    if cfg.trigger == "rainfall":
+        if "trigger_raster" in inputs:
+            # interpret supplied raster as normalised 24h rainfall (z)
+            grid_z = _work(cfg, "rain_z.tif")
+            warp_to_grid(inputs["trigger_raster"], grid, grid_z,
+                         Resampling.bilinear, dtype="float32", nodata=-9999.0,
+                         block=cfg.block_size)
+            triggers.rainfall_class_from_norm(grid_z, trig_class,
+                                              block=cfg.block_size)
+        else:
+            triggers.rainfall_class_from_return_period(
+                susc_class, trig_class, cfg.scenario_return_period_yr,
+                block=cfg.block_size)
+    else:
+        pga_src = inputs.get("pga") or inputs.get("trigger_raster")
+        if pga_src:
+            grid_pga = _work(cfg, "pga.tif")
+            warp_to_grid(pga_src, grid, grid_pga, Resampling.bilinear,
+                         dtype="float32", nodata=-9999.0, block=cfg.block_size)
+            triggers.pga_class(grid_pga, trig_class, block=cfg.block_size)
+        else:
+            triggers.pga_class_uniform(susc_class, trig_class,
+                                       cfg.scenario_pga_g,
+                                       block=cfg.block_size)
+
+    # ---- hazard ----------------------------------------------------------
+    _log("hazard", "applying hazard matrix")
+    hazard_path = os.path.join(cfg.out_dir, f"{cfg.name}_hazard_probability.tif")
+    hazard.apply_hazard_matrix(susc_class, trig_class, hazard_path,
+                               cfg.trigger, block=cfg.block_size)
+
+    outputs = {
+        "susceptibility": susc_class,
+        "trigger_class": trig_class,
+        "hazard_probability": hazard_path,
+    }
+
+    # ---- summary + quicklook --------------------------------------------
+    summary = _summarise(cfg, mode, grid, factor_paths, outputs)
+    summary_path = os.path.join(cfg.out_dir, f"{cfg.name}_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, indent=2)
+    outputs["summary"] = summary_path
+    try:
+        outputs["quicklook"] = quicklook(susc_class, hazard_path,
+                                         os.path.join(cfg.out_dir,
+                                                      f"{cfg.name}_quicklook.png"))
+    except Exception as exc:  # matplotlib optional
+        _log("quicklook", f"skipped ({exc})")
+
+    _log("done", f"outputs in {cfg.out_dir}")
+    return outputs
+
+
+def _summarise(cfg, mode, grid, factor_paths, outputs) -> dict:
+    susc_hist = _class_histogram(outputs["susceptibility"], 1, 5)
+    return {
+        "name": cfg.name,
+        "mode": mode,
+        "trigger": cfg.trigger,
+        "bbox": list(cfg.bbox),
+        "resolution_deg": cfg.resolution_deg,
+        "grid": {"width": grid.width, "height": grid.height},
+        "weights": vars(cfg.weights),
+        "susceptibility_class_pixels": susc_hist,
+        "hazard_probability_stats": raster_stats(outputs["hazard_probability"]),
+    }
+
+
+def _class_histogram(path: str, lo: int, hi: int) -> Dict[str, int]:
+    from .grid import iter_blocks
+    counts = {str(k): 0 for k in range(lo, hi + 1)}
+    with rasterio.open(path) as src:
+        for win in iter_blocks(src.width, src.height, 1024):
+            a = src.read(1, window=win)
+            for k in range(lo, hi + 1):
+                counts[str(k)] += int(np.count_nonzero(a == k))
+    return counts
+
+
+def quicklook(susc_path: str, hazard_path: str, out_png: str) -> str:
+    """Render a two-panel PNG (susceptibility + hazard) for a quick visual check."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap, BoundaryNorm
+
+    with rasterio.open(susc_path) as s:
+        susc = s.read(1).astype("float32")
+        susc[susc == s.nodata] = np.nan
+    with rasterio.open(hazard_path) as h:
+        haz = h.read(1).astype("float32")
+        haz[haz == h.nodata] = np.nan
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    cmap = ListedColormap(["#1a9850", "#a6d96a", "#fee08b", "#fc8d59",
+                           "#d73027"])
+    norm = BoundaryNorm([0.5, 1.5, 2.5, 3.5, 4.5, 5.5], cmap.N)
+    im0 = axes[0].imshow(susc, cmap=cmap, norm=norm)
+    axes[0].set_title("Landslide susceptibility (1-5)")
+    fig.colorbar(im0, ax=axes[0], fraction=0.046, ticks=[1, 2, 3, 4, 5])
+
+    im1 = axes[1].imshow(haz, cmap="magma")
+    axes[1].set_title("Landslide probability (per scenario event)")
+    fig.colorbar(im1, ax=axes[1], fraction=0.046)
+    for ax in axes:
+        ax.set_xticks([]); ax.set_yticks([])
+    fig.tight_layout()
+    fig.savefig(out_png, dpi=120)
+    plt.close(fig)
+    return out_png

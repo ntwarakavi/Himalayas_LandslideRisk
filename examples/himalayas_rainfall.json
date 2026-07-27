@@ -1,0 +1,19 @@
+{
+  "name": "himalayas_rainfall",
+  "bbox": [83.0, 27.5, 85.0, 29.0],
+  "resolution_deg": 0.0008333333,
+  "trigger": "rainfall",
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs",
+  "dem_source": "copernicus90",
+  "landcover_source": "worldcover",
+  "scenario_return_period_yr": 100.0,
+  "weights": {
+    "slope": 1.0,
+    "lithology": 1.0,
+    "vegetation": 1.0,
+    "soil_moisture": 1.0
+  }
+}

@@ -32,6 +32,8 @@ COP_DEM_90 = "https://copernicus-dem-90m.s3.eu-central-1.amazonaws.com"
 COP_DEM_30 = "https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com"
 WORLDCOVER = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map"
 WORLDCLIM = "https://geodata.ucdavis.edu/climate/worldclim/2_1/base"
+# Downscaled CMIP6 projections (future climate scenarios).
+WORLDCLIM_CMIP6 = "https://geodata.ucdavis.edu/cmip6"
 
 # GLiM (Hartmann & Moosdorf 2012). The PANGAEA record distributes a global
 # 0.5-degree ASCII grid of level-1 lithology classes plus a legend, which this
@@ -199,12 +201,42 @@ def download_worldclim_precip(data_dir: str, res: str = "10m") -> List[str]:
     return tifs
 
 
-def max_monthly_precip(monthly_paths: Sequence[str], grid, out_path: str,
+def download_worldclim_future(data_dir: str, ssp: str,
+                              period: str = "2061-2080",
+                              model: str = "IPSL-CM6A-LR",
+                              res: str = "2.5m") -> Optional[List]:
+    """Download downscaled CMIP6 monthly precipitation for a future scenario.
+
+    WorldClim distributes these as a single 12-band GeoTIFF (one band per
+    month), so the return value is a list of ``(path, band)`` pairs matching the
+    interface of :func:`download_worldclim_precip`.
+
+    ``ssp`` is e.g. "ssp126"/"ssp585"; ``period`` one of 2021-2040, 2041-2060,
+    2061-2080, 2081-2100. The default model, IPSL-CM6A-LR, is the one used in
+    the GIRI manuscript.
+    """
+    fn = f"wc2.1_{res}_prec_{model}_{ssp}_{period}.tif"
+    url = f"{WORLDCLIM_CMIP6}/{res}/{model}/{ssp}/{fn}"
+    dest = os.path.join(data_dir, "worldclim_future", fn)
+    got = download_file(url, dest, timeout=1800)
+    if not got:
+        print(f"  future climate not available: {url}\n"
+              "  check the model/period/ssp combination at "
+              "https://worldclim.org/data/cmip6/cmip6climate.html")
+        return None
+    return [(got, m) for m in range(1, 13)]
+
+
+def max_monthly_precip(monthly_paths: Sequence, grid, out_path: str,
                        tmp_prefix: str, block: int = 1024) -> str:
     """Pixel-wise maximum of 12 monthly precip rasters on ``grid`` (mm).
 
     Approximates the paper's "mean year maximum monthly rainfall" from an open
     monthly climatology.
+
+    ``monthly_paths`` entries may be plain paths (one file per month, as in the
+    current-climate product) or ``(path, band)`` pairs (a single 12-band file,
+    as in the CMIP6 future-climate product).
 
     Each monthly raster is clipped/resampled onto the AOI grid *first* and the
     maximum is taken afterwards. Doing it in that order matters: the WorldClim
@@ -218,10 +250,11 @@ def max_monthly_precip(monthly_paths: Sequence[str], grid, out_path: str,
     from .grid import combine_rasters, warp_to_grid
 
     clipped: List[str] = []
-    for i, p in enumerate(monthly_paths, start=1):
+    for i, entry in enumerate(monthly_paths, start=1):
+        p, band = entry if isinstance(entry, (tuple, list)) else (entry, 1)
         t = f"{tmp_prefix}_prec_{i:02d}.tif"
         warp_to_grid(p, grid, t, Resampling.bilinear, dtype="float32",
-                     nodata=-9999.0, block=block)
+                     nodata=-9999.0, src_band=band, block=block)
         clipped.append(t)
 
     def fn(arrs):

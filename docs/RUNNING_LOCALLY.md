@@ -193,7 +193,62 @@ Slope dominates the model, so **the DEM sets the practical ceiling**.
 
 ---
 
-## 5. Calibrate the weights against historical landslides
+## 5. Future-climate scenarios
+
+The model can produce hazard maps for **present and future climate**. Adding
+`--climate <ssp>` switches the soil-moisture factor from the WorldClim
+1970–2000 baseline to downscaled CMIP6 projections, giving a future
+susceptibility — and therefore hazard — map:
+
+```bash
+# present day (baseline)
+python -m giri_landslide.cli run --mode download --name base \
+    --bbox 76.0 30.5 77.0 31.3 --res 0.0025 \
+    --climate current --worldclim-res 2.5m
+
+# end-of-century, high-emissions
+python -m giri_landslide.cli run --mode download \
+    --config examples/05_hkh_future_climate.json
+```
+
+Scenarios: `ssp126`, `ssp245`, `ssp370`, `ssp585`. Periods: `2021-2040`,
+`2041-2060`, `2061-2080`, `2081-2100`. The default model is **IPSL-CM6A-LR**,
+the one used in the GIRI manuscript (`--climate-model` to change it).
+
+Measured over the Himachal Pradesh AOI (IPSL-CM6A-LR, 2061–2080):
+
+| Scenario | Mean wettest-month rainfall | Change | Very-High susceptibility area |
+|---|---|---|---|
+| current | 304.7 mm | — | 861 px |
+| ssp126 | 379.2 mm | **+24.4 %** | 1148 px |
+| ssp585 | 329.0 mm | **+8.0 %** | 1032 px |
+
+Two things to take from that:
+
+- **Both futures are wetter here, so susceptibility rises.** That is the
+  climate-change signal the model is designed to capture.
+- **SSP1-2.6 comes out wetter than SSP5-8.5 *at this location*.** That is not a
+  bug: monsoon rainfall does not respond monotonically to forcing, and it gets
+  spatially redistributed — the manuscript notes the same counterintuitive
+  behaviour. Never assume a higher-emissions scenario means more rain in a
+  particular valley; check the map.
+
+> **Compare like with like.** The CMIP6 files are 2.5′ (~4.6 km) while the
+> current-climate default is 30″ (~1 km). Run your baseline with
+> `--worldclim-res 2.5m` so a present-vs-future difference reflects climate,
+> not resampling. The 30″ CMIP6 files exist but are ~22 GB *each*.
+
+> **What does not change with scenario.** Only the *susceptibility* side moves.
+> The triggering return period keeps its present-day meaning — a "100-year
+> storm" is defined against today's climate — because the terrain takes
+> centuries to adapt to a new regime. This follows the manuscript. It also means
+> the model captures changes in the *background wetness*, not changes in the
+> frequency of extreme storms; if storm intensity shifts too, the real change in
+> hazard could be larger than shown.
+
+---
+
+## 6. Calibrate the weights against historical landslides
 
 Fine-tune the factor weights to observed landslides instead of using the
 defaults:
@@ -236,7 +291,7 @@ clustered points will not give trustworthy weights.
 
 ---
 
-## 6. Where everything lands
+## 7. Where everything lands
 
 ```
 data/raw/      downloaded source data (cached, safe to delete to reclaim space)
@@ -259,7 +314,7 @@ GeoTIFFs in QGIS — they are standard EPSG:4326 rasters.
 
 ---
 
-## 7. Customising a run
+## 8. Customising a run
 
 Copy an example config and edit it, or override on the command line:
 
@@ -279,7 +334,7 @@ there to re-calibrate the model itself.
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -289,7 +344,7 @@ there to re-calibrate the model itself.
 | `No Copernicus DEM tiles found` | AOI is all ocean, or the network is blocked. Check the bbox order: `W S E N` |
 | `TIFFReadDirectory: Cannot handle zero number of tiles` | A previous run left a truncated file — delete `data/work/<name>_*` and re-run |
 | Lithology looks uniform | You passed `--glim-grid`; drop it to use the full GLiM (section 4) |
-| Calibration returns odd weights | Read section 5; usually inventory bias or too few points |
+| Calibration returns odd weights | Read section 6; usually inventory bias or too few points |
 | Run is slow | Coarsen `--res`, shrink the AOI, or tile it |
 
 Re-running is cheap: downloads are cached and every intermediate is written to

@@ -1,0 +1,28 @@
+{
+  "_comment": "STEP 5 - FUTURE-CLIMATE hazard. Switches the soil-moisture factor to downscaled CMIP6 projections (IPSL-CM6A-LR, the model used in the GIRI manuscript) for SSP5-8.5 over 2061-2080. For a like-for-like comparison run the present-day baseline at the SAME precipitation resolution: --climate current --worldclim-res 2.5m",
+  "name": "hkh_ssp585_2061_2080",
+  "bbox": [76.0, 30.5, 77.0, 31.3],
+  "region_bbox": [60.0, 16.0, 105.0, 39.0],
+  "resolution_deg": 0.0025,
+  "trigger": "rainfall",
+  "scenario_return_period_yr": 100.0,
+  "climate": "ssp585",
+  "climate_period": "2061-2080",
+  "climate_model": "IPSL-CM6A-LR",
+  "climate_res": "2.5m",
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs",
+  "dem_source": "copernicus90",
+  "landcover_source": "worldcover",
+  "glim_full": true,
+  "weight_mode": "multiplicative",
+  "classification": "fixed",
+  "weights": {
+    "slope": 1.0,
+    "lithology": 1.0,
+    "vegetation": 1.0,
+    "soil_moisture": 1.0
+  }
+}

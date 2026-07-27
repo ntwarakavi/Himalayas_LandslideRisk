@@ -25,12 +25,12 @@ and historical inventories are filtered to it (bbox + country list). Change
 **Data-driven weight calibration.** The factor weights can be **fine-tuned
 against a historical Himalayan landslide inventory** (NASA Global Landslide
 Catalog / COOLR, or your own) by logistic regression — see
-[Calibrating the weights](#calibrating-the-weights-with-historical-himalayan-data).
+[Calibrating the weights](#calibrating-the-weights-with-historical-himalayan-data) below.
 
-Running `./run_demo.sh` produces a two-panel quicklook
-(`outputs/*_quicklook.png`) — left: 5-class susceptibility (green→red);
-right: scenario landslide probability. Over the real central-Nepal AOI the model
-correctly maps river valleys as low susceptibility and steep hillslopes as high.
+Every run writes a two-panel quicklook (`outputs/*_quicklook.png`) — left:
+5-class susceptibility (green→red); right: scenario landslide probability. On
+real HKH data the model resolves the mountain front sharply: plains and river
+valleys as class 1, steep hillslopes as class 4–5.
 
 ---
 
@@ -76,6 +76,7 @@ python -m giri_landslide.cli run --mode download \
 | `examples/02_hkh_90m_rainfall.json` | **robust production run**, 90 m, full GLiM |
 | `examples/03_hkh_90m_earthquake.json` | earthquake scenario, 90 m, PGA 0.35 g |
 | `examples/04_hkh_calibrate.json` | weight calibration vs. the COOLR inventory |
+| `examples/05_hkh_future_climate.json` | **future-climate** hazard (CMIP6 SSP scenarios) |
 
 ## Robust-by-default configuration
 
@@ -103,21 +104,22 @@ This writes to `./outputs/`:
 | `*_summary.json` | run metadata + class histogram + hazard stats |
 | `*_quicklook.png` | two-panel visual check |
 
-## Run on real open data
+## Climate scenarios
+
+The model runs for **present and future climate**. `--climate <ssp>` swaps the
+soil-moisture factor from the WorldClim 1970–2000 baseline to downscaled CMIP6
+projections (default model **IPSL-CM6A-LR**, as in the manuscript):
 
 ```bash
-# central Nepal, 90 m, 100-yr rainfall scenario
 python -m giri_landslide.cli run --mode download \
-    --bbox 84.0 28.0 84.6 28.5 --res 0.0008333 \
-    --trigger rainfall --return-period 100
-
-# earthquake scenario from a config file
-python -m giri_landslide.cli run --mode download \
-    --config examples/himalayas_earthquake.json
+    --config examples/05_hkh_future_climate.json      # ssp585, 2061-2080
 ```
 
-Start with a **small AOI and a coarse `--res` (e.g. 0.0025)** to test, then
-refine. Downloads are cached under `data/raw/` and reused across runs.
+Scenarios `ssp126|ssp245|ssp370|ssp585`; periods 2021-2040 … 2081-2100. Only the
+*susceptibility* side changes — the triggering return period keeps its
+present-day meaning, following the manuscript. See
+[`docs/RUNNING_LOCALLY.md`](docs/RUNNING_LOCALLY.md) §5 for measured
+present-vs-future deltas and the like-for-like comparison caveat.
 
 ## Open datasets used
 
@@ -125,26 +127,18 @@ refine. Downloads are cached under `data/raw/` and reused across runs.
 |--------|----------------------------|-----------|--------|
 | Slope | **Copernicus GLO-90 DEM** (or GLO-30) | 90 m / 30 m | AWS Open Data, auto |
 | Vegetation | **ESA WorldCover 2021 v200** | 10 m | AWS Open Data, auto |
-| Soil moisture (rainfall) | **WorldClim v2.1** monthly precip → max-monthly proxy | ~10′ | direct download, auto |
+| Soil moisture (rainfall) | **WorldClim v2.1** monthly precip → max-monthly proxy | 30″ (~1 km) | direct download, **auto** |
+| Soil moisture (future) | **WorldClim CMIP6** downscaled SSP projections (IPSL-CM6A-LR) | 2.5′ (~4.6 km) | direct download, **auto** |
 | Soil moisture (earthquake) | ERA5 volumetric water content | 0.25° | supply via `vwc_path` |
 | Lithology | **GLiM** 0.5° global grid (Hartmann & Moosdorf 2012) | 0.5° | PANGAEA, **auto** |
 | Lithology (high-res) | **GLiM** full vector, 1 235 259 polygons | polygons | download¹, `glim_path` |
 | Landslide inventory | **NASA COOLR / GLC** point catalogue | points | ArcGIS FeatureServer, **auto** |
 | Earthquake trigger | GEM/GSHAP PGA (475-yr) | — | supply via `trigger_path`, or use `--pga` scenario |
 
-¹ **Higher-resolution lithology.** The pipeline auto-downloads the GLiM 0.5°
-grid, but at 90 m that is one class per ~55 km cell. For real lithological
-detail download the full geodatabase (1.14 GB) and point the config at it:
-
-```bash
-curl -L -o LiMW_GIS_2015.gdb.zip \
-  "https://www.dropbox.com/s/9vuowtebp9f1iud/LiMW_GIS%202015.gdb.zip?dl=1"
-unzip LiMW_GIS_2015.gdb.zip -d data/raw/glim/
-# then set  "glim_path": "data/raw/glim/LiMW_GIS 2015.gdb"
-```
-
-It ships in Eckert IV (`ESRI:54012`); the rasteriser reprojects it to the model
-grid automatically (needs `fiona`: `pip install fiona`).
+¹ **Lithology resolution.** The full GLiM geodatabase (1.14 GB) is the
+**default** and is downloaded automatically on first use; the 0.5° grid is a
+fallback for `--glim-grid`. GLiM ships in Eckert IV (`ESRI:54012`) and is
+reprojected to the model grid for you (needs `fiona`).
 
 The manuscript's exact DEM (MERIT) and rainfall (W5E5 / ISIMIP) sources require
 registration — the openly downloadable equivalents above are used by default and
@@ -196,12 +190,12 @@ python -m giri_landslide.cli calibrate --mode demo \
 # Real data: supply the NASA Global Landslide Catalog (or your own inventory),
 # a CSV with latitude/longitude columns or a GeoJSON of points:
 python -m giri_landslide.cli calibrate --mode download \
-    --config examples/himalaya_calibrate.json \
+    --config examples/04_hkh_calibrate.json \
     --inventory data/raw/inventory/nasa_glc.csv
 
 # Then run the model with the calibrated weights it wrote:
 python -m giri_landslide.cli run --mode download \
-    --config outputs/himalaya_calibrated_calibrated_config.json
+    --config outputs/hkh_calibrated_calibrated_config.json
 ```
 
 **How it works** (`inventory.py` + `calibrate.py`):

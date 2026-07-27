@@ -296,6 +296,18 @@ class Config:
     landcover_path: Optional[str] = None
     glim_full: bool = True                    # fetch/use full-resolution GLiM
     worldclim_res: str = "30s"                # 30s | 2.5m | 5m | 10m
+
+    # Climate scenario -------------------------------------------------------
+    # "current" uses the WorldClim 1970-2000 baseline. An SSP name switches the
+    # soil-moisture factor to downscaled CMIP6 projections, giving a
+    # future-climate susceptibility (and hence hazard) map, as in section 3.1 of
+    # the manuscript. The triggering rainfall return period is always defined
+    # against *today's* climate: the terrain takes centuries to adapt to a new
+    # regime, so a "100-year storm" keeps its present-day meaning.
+    climate: str = "current"                  # current|ssp126|ssp245|ssp370|ssp585
+    climate_period: str = "2061-2080"         # 2021-2040|2041-2060|2061-2080|2081-2100
+    climate_model: str = "IPSL-CM6A-LR"       # the model used in the manuscript
+    climate_res: str = "2.5m"                 # CMIP6 grid (30s is ~22 GB/file)
     glim_path: Optional[str] = None           # GLiM vector (.shp) or raster
     precip_monthly_dir: Optional[str] = None  # 12 monthly precip rasters (mm)
     vwc_path: Optional[str] = None            # ERA5 volumetric water content

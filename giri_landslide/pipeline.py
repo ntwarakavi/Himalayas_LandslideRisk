@@ -121,9 +121,23 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
                 for f in os.listdir(cfg.precip_monthly_dir)
                 if f.endswith(".tif"))
         elif mode == "download":
-            _log("download:precip", f"WorldClim v2.1 monthly ({cfg.worldclim_res})")
-            inputs["precip_monthly"] = sources.download_worldclim_precip(
-                cfg.data_dir, res=cfg.worldclim_res)
+            if cfg.climate == "current":
+                _log("download:precip",
+                     f"WorldClim v2.1 monthly ({cfg.worldclim_res})")
+                inputs["precip_monthly"] = sources.download_worldclim_precip(
+                    cfg.data_dir, res=cfg.worldclim_res)
+            else:
+                _log("download:precip",
+                     f"CMIP6 {cfg.climate_model} {cfg.climate} "
+                     f"{cfg.climate_period} ({cfg.climate_res})")
+                fut = sources.download_worldclim_future(
+                    cfg.data_dir, ssp=cfg.climate, period=cfg.climate_period,
+                    model=cfg.climate_model, res=cfg.climate_res)
+                if not fut:
+                    raise RuntimeError(
+                        f"future-climate precipitation unavailable for "
+                        f"{cfg.climate_model}/{cfg.climate}/{cfg.climate_period}")
+                inputs["precip_monthly"] = fut
         # else -> fallback handled in staging
     else:
         if cfg.vwc_path:

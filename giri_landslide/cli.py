@@ -60,6 +60,12 @@ def _build_config(args: argparse.Namespace) -> C.Config:
         cfg.glim_full = False
     if getattr(args, "worldclim_res", None):
         cfg.worldclim_res = args.worldclim_res
+    if getattr(args, "climate", None):
+        cfg.climate = args.climate
+    if getattr(args, "climate_period", None):
+        cfg.climate_period = args.climate_period
+    if getattr(args, "climate_model", None):
+        cfg.climate_model = args.climate_model
     if cfg.trigger == "earthquake" and not args.no_eq_preset:
         cfg.weights.soil_moisture = min(cfg.weights.soil_moisture, 0.5)
     return cfg
@@ -94,6 +100,16 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--worldclim-res", dest="worldclim_res",
                    choices=["30s", "2.5m", "5m", "10m"],
                    help="WorldClim precipitation resolution (default 30s ~1 km)")
+    p.add_argument("--climate",
+                   choices=["current", "ssp126", "ssp245", "ssp370", "ssp585"],
+                   help="climate scenario for the soil-moisture factor "
+                        "(default current)")
+    p.add_argument("--climate-period", dest="climate_period",
+                   choices=["2021-2040", "2041-2060", "2061-2080",
+                            "2081-2100"],
+                   help="future period (default 2061-2080)")
+    p.add_argument("--climate-model", dest="climate_model",
+                   help="CMIP6 model (default IPSL-CM6A-LR, as in the paper)")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -139,10 +155,19 @@ def main(argv: Optional[List[str]] = None) -> int:
             lc = sources.download_worldcover(bbox, cfg.data_dir)
             print(f"Land cover tiles    : {len(lc)}")
         if cfg.trigger == "rainfall":
-            pr = sources.download_worldclim_precip(cfg.data_dir,
-                                                   res=cfg.worldclim_res)
-            print(f"WorldClim precip    : {len(pr)} monthly rasters "
-                  f"({cfg.worldclim_res})")
+            if cfg.climate == "current":
+                pr = sources.download_worldclim_precip(cfg.data_dir,
+                                                       res=cfg.worldclim_res)
+                print(f"WorldClim precip    : {len(pr)} months "
+                      f"({cfg.worldclim_res}, current climate)")
+            else:
+                pr = sources.download_worldclim_future(
+                    cfg.data_dir, ssp=cfg.climate, period=cfg.climate_period,
+                    model=cfg.climate_model, res=cfg.climate_res)
+                print(f"CMIP6 precip        : "
+                      f"{len(pr) if pr else 0} months "
+                      f"({cfg.climate_model} {cfg.climate} "
+                      f"{cfg.climate_period})")
         if cfg.glim_full:
             gdb = sources.download_glim_vector(cfg.data_dir)
             print(f"GLiM geodatabase    : {gdb or 'FAILED (see message above)'}")

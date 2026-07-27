@@ -37,6 +37,8 @@ class CalibrationResult:
     n_background: int
     factor_means_presence: Dict[str, float]
     factor_means_background: Dict[str, float]
+    excluded_factors: List[str]        # uninformative (near-constant) factors
+    warnings: List[str]                # data-quality caveats
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -64,33 +66,35 @@ def build_dataset(presence_feats: np.ndarray,
 # Logistic regression (numpy)
 # ---------------------------------------------------------------------------
 
-def _fit_logistic(X: np.ndarray, y: np.ndarray, epochs: int = 4000,
-                  lr: float = 0.1, l2: float = 1e-3,
+def _fit_logistic(X: np.ndarray, y: np.ndarray, epochs: int = 6000,
+                  lr: float = 0.1, l2: float = 0.05,
                   seed: int = 0) -> Tuple[np.ndarray, float]:
-    """Return (coefficients, intercept) via standardised gradient descent."""
-    rng = np.random.default_rng(seed)
+    """Return (coefficients, intercept) via standardised gradient descent.
+
+    Only columns with real variance are used; near-constant columns get a
+    zero coefficient (they carry no information and would otherwise blow up in
+    collinearity with the intercept). L2 regularisation keeps weights bounded.
+    """
     mu = X.mean(axis=0)
     sd = X.std(axis=0)
-    sd[sd == 0] = 1.0
-    Xs = (X - mu) / sd
+    active = sd > 1e-6
+    sd_safe = np.where(active, sd, 1.0)
+    Xs = np.where(active, (X - mu) / sd_safe, 0.0)
     n, d = Xs.shape
     w = np.zeros(d)
     b = 0.0
-    # class balancing weights
     pos = max(y.sum(), 1.0)
     neg = max((1 - y).sum(), 1.0)
     sw = np.where(y == 1, n / (2 * pos), n / (2 * neg))
     for _ in range(epochs):
         z = Xs @ w + b
-        p = 1.0 / (1.0 + np.exp(-z))
+        p = 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
         g = (p - y) * sw
-        gw = Xs.T @ g / n + l2 * w
-        gb = g.mean()
-        w -= lr * gw
-        b -= lr * gb
-    # de-standardise back to raw-feature space
-    w_raw = w / sd
-    b_raw = b - float((w * mu / sd).sum())
+        w -= lr * (Xs.T @ g / n + l2 * w)
+        b -= lr * g.mean()
+    w = np.where(active, w, 0.0)
+    w_raw = w / sd_safe
+    b_raw = b - float((w * mu / sd_safe)[active].sum())
     return w_raw, b_raw
 
 
@@ -138,14 +142,39 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
     auc_tr = _auc(X[train] @ w_raw, y[train])
     auc_te = _auc(X[test] @ w_raw, y[test])
 
-    # For the deployed index we want positive influences; clamp tiny negatives
-    # to 0 and scale so the mean weight is 1 (scale is irrelevant to ranking).
-    w_dep = np.clip(w_raw, 0.0, None)
-    if normalise and w_dep.sum() > 0:
-        w_dep = w_dep * (len(w_dep) / w_dep.sum())
+    # Screen factors that carry no information (near-constant, e.g. a missing
+    # lithology layer left uniform) - they cannot be calibrated.
+    sd = X.std(axis=0)
+    excluded = [FACTOR_NAMES[i] for i in range(len(FACTOR_NAMES))
+                if sd[i] <= 1e-6]
+    warnings: List[str] = []
+    if excluded:
+        warnings.append(
+            "uninformative (near-constant) factors excluded from calibration: "
+            + ", ".join(excluded) + " - supply the underlying dataset "
+            "(e.g. GLiM lithology) to calibrate them; their weight is held at "
+            "the physical prior 1.0")
 
     p_mean = np.log(np.asarray(presence_feats, "float64") + 1.0)
     b_mean = np.log(np.asarray(background_feats, "float64") + 1.0)
+
+    # Flag factors that are *negatively* associated with observed landslides -
+    # usually a symptom of inventory reporting bias rather than physics.
+    for i, k in enumerate(FACTOR_NAMES):
+        if k not in excluded and w_raw[i] < -0.05:
+            warnings.append(
+                f"factor '{k}' is negatively associated with mapped landslides "
+                f"(coef {w_raw[i]:.2f}); likely spatial reporting bias in the "
+                f"inventory - weight clamped to 0")
+
+    # Deployment weights (exponent form must be non-negative). Excluded factors
+    # keep the physical prior 1.0; fitted negatives are clamped to 0.
+    w_dep = np.clip(w_raw, 0.0, None)
+    for i, k in enumerate(FACTOR_NAMES):
+        if k in excluded:
+            w_dep[i] = 1.0
+    if normalise and w_dep.sum() > 0:
+        w_dep = w_dep * (len(w_dep) / w_dep.sum())
 
     return CalibrationResult(
         weights={k: float(v) for k, v in zip(FACTOR_NAMES, w_dep)},
@@ -159,6 +188,8 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
                                for i, k in enumerate(FACTOR_NAMES)},
         factor_means_background={k: float(np.nanmean(b_mean[:, i]))
                                  for i, k in enumerate(FACTOR_NAMES)},
+        excluded_factors=excluded,
+        warnings=warnings,
     )
 
 

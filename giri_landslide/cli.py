@@ -138,6 +138,8 @@ def main(argv: Optional[List[str]] = None) -> int:
               f"(train {res['auc_train']:.3f})")
         print(f"Presence / background points: {res['n_presence']} / "
               f"{res['n_background']}")
+        for wmsg in res.get("warnings", []):
+            print(f"  ! {wmsg}")
         print(f"\nCalibrated config : {report['calibrated_config']}")
         print(f"Full report       : {report['report']}")
         print("\nRun the model with the calibrated weights:")

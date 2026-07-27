@@ -198,20 +198,27 @@ RAINFALL_MATRIX: List[List[float]] = [
 
 
 # ---------------------------------------------------------------------------
-# Region of interest - South Asia Himalayan arc
+# Region of interest - the Hindu Kush Himalaya (HKH)
 # ---------------------------------------------------------------------------
 
-# Default AOI for this project: the South Asia Himalayan region spanning
-# northern Pakistan, the Indian Himalaya, Nepal and Bhutan (and adjacent ranges).
+# The study region is the Hindu Kush Himalaya as defined by ICIMOD: an arc of
+# mountain ranges spanning eight countries from the Hindu Kush (Afghanistan)
+# across the Karakoram, Himalaya and Hengduan Shan. Approximate extent
 # (west, south, east, north) in EPSG:4326 degrees.
-HIMALAYA_BBOX: Tuple[float, float, float, float] = (71.0, 26.0, 98.0, 37.0)
+HKH_BBOX: Tuple[float, float, float, float] = (60.0, 16.0, 105.0, 39.0)
 
-# Country names (as they appear in the NASA Global Landslide Catalog
-# "country_name" field) used to restrict a historical inventory to the region.
-HIMALAYA_COUNTRIES = (
-    "Pakistan", "India", "Nepal", "Bhutan", "Afghanistan", "Bangladesh",
-    "China",  # only the Himalayan fringe is kept via the bounding box
+# The eight HKH member countries (as they appear in the NASA COOLR/GLC
+# "country_name" field). The bounding box plus this list restricts a global
+# inventory to the region; neighbouring lowland countries (e.g. Vietnam, Laos)
+# are excluded even though they fall inside the box.
+HKH_COUNTRIES = (
+    "Afghanistan", "Pakistan", "India", "Nepal", "Bhutan", "Bangladesh",
+    "China", "Myanmar",
 )
+
+# Backwards-compatible aliases (the project began as a Himalaya-only study).
+HIMALAYA_BBOX = HKH_BBOX
+HIMALAYA_COUNTRIES = HKH_COUNTRIES
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +255,9 @@ class Config:
     resolution_deg: float = 0.0008333333
     trigger: str = "rainfall"
 
-    # Region restriction: the model is scoped to the South Asia Himalayan arc.
+    # Region restriction: the model is scoped to the Hindu Kush Himalaya.
     # AOIs are clipped to `region_bbox` and inventories filtered to it.
-    region_bbox: Tuple[float, float, float, float] = HIMALAYA_BBOX
+    region_bbox: Tuple[float, float, float, float] = HKH_BBOX
 
     # Susceptibility combination:
     #   "multiplicative"  S = prod_i (w_i * f_i)        (weights only rescale)
@@ -327,7 +334,7 @@ class Config:
         cw, cs, ce, cn = max(w, rw), max(s, rs), min(e, re), min(n, rn)
         if cw >= ce or cs >= cn:
             raise ValueError(
-                f"AOI {self.bbox} is outside the South Asia Himalayan region "
+                f"AOI {self.bbox} is outside the Hindu Kush Himalaya region "
                 f"{self.region_bbox}. This model is restricted to that region.")
         return (cw, cs, ce, cn)
 

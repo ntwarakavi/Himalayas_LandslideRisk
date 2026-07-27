@@ -15,11 +15,12 @@ only the open-data tiles that intersect your area of interest (AOI) and
 processes everything in memory-bounded blocks, so a laptop can produce a
 90 m-resolution hazard map for a region without ever loading a global array.
 
-**Regional scope.** This build is **restricted to the South Asia Himalayan arc**
-— northern Pakistan, the Indian Himalaya, Nepal and Bhutan (and adjacent ranges),
-region bounds `(71°E, 26°N) – (98°E, 37°N)`. Any AOI is automatically clipped to
-this region, and historical inventories are filtered to it. Change
-`region_bbox` in a config to widen it.
+**Regional scope.** This build is **restricted to the Hindu Kush Himalaya (HKH)**
+as defined by ICIMOD — the mountain arc spanning **Afghanistan, Pakistan, India,
+Nepal, Bhutan, Bangladesh, China and Myanmar**, region bounds
+`(60°E, 16°N) – (105°E, 39°N)`. Any AOI is automatically clipped to this region,
+and historical inventories are filtered to it (bbox + country list). Change
+`region_bbox` / `HKH_COUNTRIES` in a config to adjust.
 
 **Data-driven weight calibration.** The factor weights can be **fine-tuned
 against a historical Himalayan landslide inventory** (NASA Global Landslide
@@ -93,16 +94,39 @@ refine. Downloads are cached under `data/raw/` and reused across runs.
 | Vegetation | **ESA WorldCover 2021 v200** | 10 m | AWS Open Data, auto |
 | Soil moisture (rainfall) | **WorldClim v2.1** monthly precip → max-monthly proxy | ~10′ | direct download, auto |
 | Soil moisture (earthquake) | ERA5 volumetric water content | 0.25° | supply via `vwc_path` |
-| Lithology | **GLiM** (Hartmann & Moosdorf 2012) | polygons | supply via `glim_path`¹ |
+| Lithology | **GLiM** 0.5° global grid (Hartmann & Moosdorf 2012) | 0.5° | PANGAEA, **auto** |
+| Lithology (high-res) | **GLiM** full vector, 1 235 259 polygons | polygons | download¹, `glim_path` |
+| Landslide inventory | **NASA COOLR / GLC** point catalogue | points | ArcGIS FeatureServer, **auto** |
 | Earthquake trigger | GEM/GSHAP PGA (475-yr) | — | supply via `trigger_path`, or use `--pga` scenario |
 
-¹ GLiM and the global PGA layer are distributed from portals that need a
-one-click/registered download, so the pipeline points you to the source
-(`python -m giri_landslide.cli info`) and **degrades gracefully** if they are
-absent (uniform lithology `Sl = 2`; use a uniform `--pga` scenario). The
-manuscript's exact DEM (MERIT) and rainfall (W5E5 / ISIMIP) sources also require
+¹ **Higher-resolution lithology.** The pipeline auto-downloads the GLiM 0.5°
+grid, but at 90 m that is one class per ~55 km cell. For real lithological
+detail download the full geodatabase (1.14 GB) and point the config at it:
+
+```bash
+curl -L -o LiMW_GIS_2015.gdb.zip \
+  "https://www.dropbox.com/s/9vuowtebp9f1iud/LiMW_GIS%202015.gdb.zip?dl=1"
+unzip LiMW_GIS_2015.gdb.zip -d data/raw/glim/
+# then set  "glim_path": "data/raw/glim/LiMW_GIS 2015.gdb"
+```
+
+It ships in Eckert IV (`ESRI:54012`); the rasteriser reprojects it to the model
+grid automatically (needs `fiona`: `pip install fiona`).
+
+The manuscript's exact DEM (MERIT) and rainfall (W5E5 / ISIMIP) sources require
 registration — the openly downloadable equivalents above are used by default and
-can be swapped for the originals via `*_path` config options.
+can be swapped for the originals via `*_path` config options. The global PGA
+layer still needs a manual download (or use a `--pga` scenario).
+
+### Resolution
+
+The model grid is set by `--res` (degrees). Use `0.0008333` (**3 arc-seconds,
+~90 m** — the manuscript's resolution) for production runs over the HKH, and a
+coarser value (e.g. `0.0025`) to prototype. Note the effective resolution of
+each *factor* differs: slope 90 m (Copernicus DEM), vegetation 10 m (WorldCover,
+downsampled), lithology polygon-level (full GLiM) or 0.5° (GLiM grid), and soil
+moisture ~10′ (WorldClim). Slope and land cover therefore carry most of the
+fine-scale signal.
 
 ## Modules (run any stage on its own)
 

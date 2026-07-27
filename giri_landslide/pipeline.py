@@ -85,9 +85,23 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
     else:
         raise ValueError("local mode requires config.landcover_path")
 
-    # Lithology (optional; graceful fallback) ------------------------------
+    # Lithology -------------------------------------------------------------
     if cfg.glim_path:
-        inputs["glim_vector"] = cfg.glim_path
+        # A vector database (.shp/.gdb) gives the finest lithological detail;
+        # a raster path is used directly.
+        if os.path.splitext(cfg.glim_path)[1].lower() in (".tif", ".tiff",
+                                                          ".asc"):
+            inputs["glim_raster"] = cfg.glim_path
+        else:
+            inputs["glim_vector"] = cfg.glim_path
+    elif mode == "download":
+        _log("download:lithology", "GLiM 0.5-deg global grid")
+        asc = sources.download_glim_grid(cfg.data_dir)
+        if asc:
+            sl_tif = os.path.join(cfg.data_dir, "glim", "glim_sl.tif")
+            if not os.path.exists(sl_tif):
+                sources.glim_grid_to_sl(asc, sl_tif)
+            inputs["glim_sl_raster"] = sl_tif
 
     # Soil-moisture proxy --------------------------------------------------
     if cfg.trigger == "rainfall":
@@ -155,8 +169,14 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
         warp_to_grid(inputs["glim_sl_raster"], grid, glim_sl_grid,
                      Resampling.nearest, dtype="uint8", nodata=255, block=block)
     elif "glim_vector" in inputs:
-        _log("lithology", "rasterising GLiM vector")
+        _log("lithology", "rasterising GLiM vector (full resolution)")
         sources.rasterize_glim(inputs["glim_vector"], grid, glim_sl_grid)
+    elif "glim_raster" in inputs:
+        _log("lithology", "converting supplied GLiM class raster")
+        sl_tif = _work(cfg, "glim_sl_native.tif")
+        sources.glim_grid_to_sl(inputs["glim_raster"], sl_tif)
+        warp_to_grid(sl_tif, grid, glim_sl_grid, Resampling.nearest,
+                     dtype="uint8", nodata=255, block=block)
     else:
         _log("lithology", "GLiM absent -> uniform Sl=2 (see sources.GLIM_SOURCE_INFO)")
         _uniform_raster(grid, 2, glim_sl_grid, dtype="uint8", nodata=255)
@@ -242,8 +262,8 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
         presence = inventory.load_inventory(cfg.inventory_path, bbox=bbox,
                                             countries=C.HIMALAYA_COUNTRIES)
     elif mode == "download":
-        _log("inventory", "downloading NASA Global Landslide Catalog")
-        glc = inventory.download_nasa_glc(cfg.data_dir)
+        _log("inventory", "downloading NASA COOLR landslide catalogue")
+        glc = inventory.download_nasa_glc(cfg.data_dir, bbox=cfg.region_bbox)
         if not glc:
             raise RuntimeError("NASA GLC unavailable; supply config.inventory_path")
         presence = inventory.load_inventory(glc, bbox=bbox,
@@ -257,10 +277,16 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
                            "need >= 20 for calibration")
     _log("inventory", f"{len(presence)} presence points in region")
 
-    # ---- background points ----------------------------------------------
-    n_bg = n_background or max(len(presence), 1500)
-    background = inventory.background_points(bbox, n_bg, fpaths[0])
-    _log("background", f"{len(background)} background points")
+    # ---- background points (density-matched to control reporting bias) ---
+    n_bg = n_background or max(2 * len(presence), 1500)
+    n_near = int(n_bg * 0.7)
+    bg_near = inventory.background_points(bbox, n_near, fpaths[0],
+                                          near=presence, radius_deg=0.15)
+    bg_wide = inventory.background_points(bbox, n_bg - n_near, fpaths[0],
+                                          seed=11)
+    background = np.vstack([b for b in (bg_near, bg_wide) if len(b)])
+    _log("background", f"{len(background)} background points "
+                       f"({len(bg_near)} density-matched + {len(bg_wide)} AOI-wide)")
 
     pres_feats = inventory.sample_factors_at_points(presence, fpaths)
     bg_feats = inventory.sample_factors_at_points(background, fpaths)

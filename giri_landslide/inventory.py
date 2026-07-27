@@ -23,15 +23,21 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-# Candidate NASA GLC endpoints (may change; override via download_nasa_glc(url=)).
+# NASA COOLR (Cooperative Open Online Landslide Repository) point catalogue,
+# served as an ArcGIS FeatureServer that supports GeoJSON queries + pagination.
+COOLR_POINTS_URL = (
+    "https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/"
+    "COOLR_Events_Points/FeatureServer/0/query"
+)
+# Legacy CSV endpoints (kept as fallbacks; may be offline).
 NASA_GLC_URLS = [
     "https://data.nasa.gov/api/views/dd9e-wu2v/rows.csv?accessType=DOWNLOAD",
-    "https://maps.nccs.nasa.gov/download/landslide/catalog/nasa_global_landslide_catalog_point.csv",
 ]
 NASA_GLC_INFO = (
-    "NASA Global Landslide Catalog / COOLR: browse https://landslides.nasa.gov "
-    "and export the point catalogue as CSV or GeoJSON, then pass it via "
-    "config.inventory_path (columns latitude/longitude or a GeoJSON of points)."
+    "NASA Global Landslide Catalog / COOLR: browse https://landslides.nasa.gov"
+    "/viewer and export the point catalogue as CSV/GeoJSON, or download it "
+    "directly from the ArcGIS FeatureServer:\n  " + COOLR_POINTS_URL +
+    "?where=1=1&outFields=*&f=geojson\nThen pass it via config.inventory_path."
 )
 
 _LAT_KEYS = ("latitude", "lat", "y", "ycoord", "y_coord")
@@ -102,9 +108,66 @@ def _load_geojson(path: str) -> List[Tuple[float, float]]:
 # Downloading
 # ---------------------------------------------------------------------------
 
-def download_nasa_glc(data_dir: str, url: Optional[str] = None) -> Optional[str]:
-    """Try to download the NASA Global Landslide Catalog CSV. Returns path/None."""
+def download_coolr_points(data_dir: str,
+                          bbox: Optional[Sequence[float]] = None,
+                          page: int = 1000, max_records: int = 100000
+                          ) -> Optional[str]:
+    """Download NASA COOLR landslide points as GeoJSON via the FeatureServer.
+
+    Only records intersecting ``bbox`` are requested (server-side), and results
+    are paginated. Returns the written GeoJSON path, or None on failure.
+    """
+    import requests
+
+    params = {"where": "1=1", "outFields": "latitude,longitude,country_name,"
+              "event_date,landslide_category,landslide_trigger",
+              "outSR": "4326", "f": "geojson"}
+    if bbox is not None:
+        w, s, e, n = bbox
+        params.update(geometry=f"{w},{s},{e},{n}",
+                      geometryType="esriGeometryEnvelope", inSR="4326",
+                      spatialRel="esriSpatialRelIntersects")
+
+    features: List[dict] = []
+    offset = 0
+    try:
+        while offset < max_records:
+            q = dict(params, resultOffset=offset, resultRecordCount=page)
+            r = requests.get(COOLR_POINTS_URL, params=q, timeout=120)
+            r.raise_for_status()
+            batch = r.json().get("features", [])
+            if not batch:
+                break
+            features.extend(batch)
+            if len(batch) < page:
+                break
+            offset += page
+    except Exception as exc:  # noqa: BLE001
+        print(f"  COOLR fetch failed: {exc}")
+        return None
+
+    if not features:
+        return None
+    os.makedirs(os.path.join(data_dir, "inventory"), exist_ok=True)
+    dest = os.path.join(data_dir, "inventory", "coolr_points.geojson")
+    with open(dest, "w", encoding="utf-8") as fh:
+        json.dump({"type": "FeatureCollection", "features": features}, fh)
+    print(f"  COOLR: {len(features)} landslide points -> {dest}")
+    return dest
+
+
+def download_nasa_glc(data_dir: str, url: Optional[str] = None,
+                      bbox: Optional[Sequence[float]] = None) -> Optional[str]:
+    """Obtain a NASA landslide inventory. Prefers the COOLR FeatureServer.
+
+    Returns a path to a GeoJSON/CSV inventory, or None (with a pointer printed).
+    """
     from .sources import download_file
+
+    if not url:
+        got = download_coolr_points(data_dir, bbox=bbox)
+        if got:
+            return got
 
     urls = [url] if url else NASA_GLC_URLS
     dest = os.path.join(data_dir, "inventory", "nasa_glc.csv")
@@ -198,8 +261,18 @@ def sample_factors_at_points(points: np.ndarray,
 
 
 def background_points(bbox: Sequence[float], n: int, reference_raster: str,
-                      seed: int = 7) -> np.ndarray:
-    """Draw ``n`` random background points that fall on valid raster data."""
+                      seed: int = 7, near: Optional[np.ndarray] = None,
+                      radius_deg: float = 0.15) -> np.ndarray:
+    """Draw ``n`` random background points on valid raster data.
+
+    If ``near`` (an array of presence points) is given, points are drawn within
+    ``radius_deg`` of a random presence point ("target-group" / density-matched
+    background). This controls the spatial reporting bias of citizen-science
+    inventories: landslides cluster in accessible valleys, so background drawn
+    uniformly across a steep AOI would be systematically steeper than presence
+    and the calibration would learn a spurious negative slope effect. Matching
+    the background's spatial density to presence removes that bias.
+    """
     import rasterio
 
     rng = np.random.default_rng(seed)
@@ -209,12 +282,20 @@ def background_points(bbox: Sequence[float], n: int, reference_raster: str,
         nod = src.nodata
         transform = src.transform
         H, W = src.height, src.width
+    have_near = near is not None and len(near) > 0
     pts = []
     tries = 0
-    while len(pts) < n and tries < n * 50:
+    while len(pts) < n and tries < n * 100:
         tries += 1
-        x = rng.uniform(w, e)
-        y = rng.uniform(s, nth)
+        if have_near:
+            cx, cy = near[rng.integers(len(near))]
+            x = cx + rng.uniform(-radius_deg, radius_deg)
+            y = cy + rng.uniform(-radius_deg, radius_deg)
+            if not (w <= x <= e and s <= y <= nth):
+                continue
+        else:
+            x = rng.uniform(w, e)
+            y = rng.uniform(s, nth)
         col, row = ~transform * (x, y)
         r, c = int(row), int(col)
         if 0 <= r < H and 0 <= c < W:

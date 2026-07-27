@@ -33,11 +33,27 @@ COP_DEM_30 = "https://copernicus-dem-30m.s3.eu-central-1.amazonaws.com"
 WORLDCOVER = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map"
 WORLDCLIM = "https://geodata.ucdavis.edu/climate/worldclim/2_1/base"
 
+# GLiM (Hartmann & Moosdorf 2012). The PANGAEA record distributes a global
+# 0.5-degree ASCII grid of level-1 lithology classes plus a legend, which this
+# package can download and use directly. The full 1.2M-polygon vector database
+# ('LiMW_GIS 2015.gdb') is available from the same record's landing page and can
+# be supplied instead via config.glim_path for much finer lithological detail.
+GLIM_ASCII_URL = "https://hdl.handle.net/10013/epic.39939.d001"
+GLIM_LANDING_PAGE = "https://doi.pangaea.de/10.1594/PANGAEA.788537"
 GLIM_SOURCE_INFO = (
-    "GLiM lithology: download 'LiMW_GIS 2015.gdb' / shapefile from "
-    "https://doi.pangaea.de/10.1594/PANGAEA.788537 and pass its path via "
-    "config.glim_path (vector .shp/.gdb or a pre-rasterised code GeoTIFF)."
+    "GLiM lithology: the global 0.5-degree grid is downloaded automatically "
+    f"from {GLIM_ASCII_URL}. For higher lithological resolution, download the "
+    f"full vector database ('LiMW_GIS 2015.gdb') from {GLIM_LANDING_PAGE} and "
+    "pass its path via config.glim_path."
 )
+
+# GLiM raster value -> level-1 lithology code (from the distributed
+# Classnames.txt legend).
+GLIM_VALUE_TO_CODE = {
+    1: "su", 2: "vb", 3: "ss", 4: "pb", 5: "sm", 6: "sc", 7: "va", 8: "mt",
+    9: "pa", 10: "vi", 11: "wb", 12: "py", 13: "pi", 14: "ev", 15: "nd",
+    16: "ig",
+}
 PGA_SOURCE_INFO = (
     "PGA: download the GEM Global Seismic Hazard Map (PGA, 475-yr return "
     "period) GeoTIFF from https://www.globalquakemodel.org/product/"
@@ -221,6 +237,64 @@ def max_monthly_precip(monthly_paths: Sequence[str], out_path: str,
 # GLiM lithology -> rasterised Sl code grid
 # ---------------------------------------------------------------------------
 
+def download_glim_grid(data_dir: str) -> Optional[str]:
+    """Download + extract the global GLiM 0.5-degree lithology grid (.asc).
+
+    Returns the path to the ASCII grid, or None if unavailable.
+    """
+    dest_zip = os.path.join(data_dir, "glim", "glim.zip")
+    got = download_file(GLIM_ASCII_URL, dest_zip, timeout=300)
+    if not got:
+        print("  " + GLIM_SOURCE_INFO)
+        return None
+    out_dir = os.path.join(data_dir, "glim")
+    asc = None
+    with zipfile.ZipFile(got) as zf:
+        for member in zf.namelist():
+            if member.lower().endswith((".asc", ".txt")):
+                target = os.path.join(out_dir, os.path.basename(member))
+                if not os.path.exists(target):
+                    with zf.open(member) as src, open(target, "wb") as dst:
+                        dst.write(src.read())
+                if member.lower().endswith(".asc"):
+                    asc = target
+    return asc
+
+
+def glim_grid_to_sl(asc_path: str, out_path: str) -> str:
+    """Convert the GLiM class grid into an Sl susceptibility-factor GeoTIFF.
+
+    Values are mapped GLiM class -> level-1 code -> Sl (0..3) using the tables
+    in :mod:`giri_landslide.config`.
+    """
+    import numpy as np
+    import rasterio
+
+    from . import config as C
+
+    with rasterio.open(asc_path) as src:
+        arr = src.read(1).astype("float64")
+        prof = src.profile.copy()
+        nod = src.nodata if src.nodata is not None else -9999.0
+        transform = src.transform
+
+    out = np.full(arr.shape, 255, dtype="uint8")
+    for value, code in GLIM_VALUE_TO_CODE.items():
+        sl = C.GLIM_SL.get(code, C.GLIM_SL_DEFAULT)
+        out[arr == value] = sl
+    out[arr == nod] = 255
+
+    prof.update(driver="GTiff", dtype="uint8", nodata=255, count=1,
+                compress="deflate", crs=prof.get("crs") or "EPSG:4326",
+                transform=transform)
+    prof.pop("blockxsize", None)
+    prof.pop("blockysize", None)
+    prof.pop("tiled", None)
+    with rasterio.open(out_path, "w", **prof) as dst:
+        dst.write(out, 1)
+    return out_path
+
+
 def rasterize_glim(glim_path: str, grid, out_path: str,
                    code_field: Optional[str] = None) -> str:
     """Rasterise a GLiM vector onto ``grid``, burning the Sl factor (0..3).
@@ -231,6 +305,7 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
     import numpy as np
     import rasterio
     from rasterio.features import rasterize
+    from rasterio.warp import transform_geom
 
     try:
         import fiona
@@ -241,15 +316,35 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
 
     from . import config as C
 
+    # A .gdb holds one or more layers; pick the first if not specified.
+    layer = None
+    if os.path.splitext(glim_path)[1].lower() == ".gdb" or \
+            os.path.isdir(glim_path):
+        layers = fiona.listlayers(glim_path)
+        layer = layers[0] if layers else None
+
     shapes = []
-    with fiona.open(glim_path) as src:
+    with fiona.open(glim_path, layer=layer) as src:
         field = code_field or _guess_glim_field(src.schema["properties"])
-        for feat in src.filter(bbox=(grid.west, grid.south, grid.east,
-                                     grid.north)):
+        src_crs = src.crs
+        # GLiM ships in Eckert IV (ESRI:54012), so the AOI must be projected
+        # into the source CRS to filter, and geometries reprojected back.
+        same_crs = bool(src_crs) and rasterio.crs.CRS.from_user_input(
+            src_crs).to_epsg() == 4326
+        if same_crs:
+            bbox = (grid.west, grid.south, grid.east, grid.north)
+        else:
+            from rasterio.warp import transform_bounds
+            bbox = transform_bounds("EPSG:4326", src_crs, grid.west,
+                                    grid.south, grid.east, grid.north)
+        for feat in src.filter(bbox=bbox):
             code = (feat["properties"].get(field) or "nd")
             code = str(code)[:2].lower()
             sl = C.GLIM_SL.get(code, C.GLIM_SL_DEFAULT)
-            shapes.append((feat["geometry"], sl))
+            geom = feat["geometry"]
+            if not same_crs:
+                geom = transform_geom(src_crs, "EPSG:4326", geom)
+            shapes.append((geom, sl))
 
     prof = grid.profile("uint8", 255)
     arr = rasterize(shapes, out_shape=grid.shape, transform=grid.transform,

@@ -37,8 +37,19 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
+# NASA Global Landslide Catalog, authoritative CSV export. This is the file to
+# use: it carries the location_accuracy field, without which the catalogue
+# cannot be screened for positional precision, and it has far better HKH
+# coverage than the FeatureServer below (Nepal 481, Pakistan 142, Afghanistan 15
+# against zero for each). NASA moved it under /docs/legacy/; the older Socrata
+# ids (dd9e-wu2v) now 404.
+GLC_CSV_URL = ("https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_"
+               "Export/Global_Landslide_Catalog_Export_rows.csv")
+
 # NASA COOLR (Cooperative Open Online Landslide Repository) point catalogue,
 # served as an ArcGIS FeatureServer that supports GeoJSON queries + pagination.
+# NOTE: this serves a *partial* subset and omits location_accuracy - prefer
+# GLC_CSV_URL above.
 COOLR_POINTS_URL = (
     "https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/"
     "COOLR_Events_Points/FeatureServer/0/query"
@@ -325,8 +336,67 @@ def download_sikkim(data_dir: str) -> Optional[str]:
     return shp if os.path.exists(shp) else None
 
 
+def download_glc_csv(data_dir: str) -> Optional[str]:
+    """Download the authoritative NASA Global Landslide Catalog CSV.
+
+    11,033 records, 1997-2016, with ``location_accuracy`` - the field that makes
+    the catalogue screenable. Only about a third of records are placed to 1 km
+    or better, so filter before using it against a hillslope-scale map; see
+    :func:`load_glc_csv`.
+    """
+    dest = os.path.join(data_dir, "inventory", "glc_export.csv")
+    return _cached_download(GLC_CSV_URL, dest)
+
+
+#: Positional accuracy classes, best first. Anything beyond "1km" is too coarse
+#: to test a 90 m pixel.
+GLC_ACCURACY_ORDER = ["exact", "1km", "5km", "10km", "25km", "50km", "100km",
+                      "250km"]
+
+
+def load_glc_csv(path: str, bbox: Optional[Sequence[float]] = None,
+                 countries: Optional[Sequence[str]] = None,
+                 max_accuracy: str = "1km",
+                 triggers: Optional[Sequence[str]] = None) -> np.ndarray:
+    """Load GLC records, screened by positional accuracy.
+
+    ``max_accuracy`` keeps only records placed at least that precisely
+    (default "1km"). Records with unknown or blank accuracy are dropped, since
+    an unquantified position cannot be trusted against a 90 m grid.
+
+    ``triggers`` optionally restricts to matching landslide_trigger values,
+    e.g. ("downpour", "rain", "continuous_rain") for rainfall-triggered only.
+    """
+    keep = set(GLC_ACCURACY_ORDER[:GLC_ACCURACY_ORDER.index(max_accuracy) + 1])
+    trig = {t.lower() for t in triggers} if triggers else None
+    cset = {c.lower() for c in countries} if countries else None
+
+    out: List[Tuple[float, float]] = []
+    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+        for row in csv.DictReader(fh):
+            if (row.get("location_accuracy") or "").strip() not in keep:
+                continue
+            if cset and (row.get("country_name") or "").strip().lower() not in cset:
+                continue
+            if trig and (row.get("landslide_trigger") or "").strip().lower() not in trig:
+                continue
+            try:
+                out.append((float(row["longitude"]), float(row["latitude"])))
+            except (TypeError, ValueError, KeyError):
+                continue
+
+    pts = np.asarray(out, dtype="float64").reshape(-1, 2)
+    if bbox is not None and len(pts):
+        w, s, e, n = bbox
+        pts = pts[(pts[:, 0] >= w) & (pts[:, 0] <= e) &
+                  (pts[:, 1] >= s) & (pts[:, 1] <= n)]
+    return pts
+
+
 #: Inventory key -> (downloader, human label). Used by the CLI and pipeline.
 INVENTORY_FETCHERS = {
+    "glc": (download_glc_csv,
+            "NASA Global Landslide Catalog CSV (11,033 records, screenable)"),
     "gorkha": (download_gorkha,
                "Roback 2018 Gorkha, Nepal (earthquake, 24,795 polygons)"),
     "farwest": (download_farwest_nepal,

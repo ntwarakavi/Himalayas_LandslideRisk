@@ -421,27 +421,44 @@ AUC 0.662, monotonic ordering, classes 4-5 concentrate landslides **2.1x** while
 covering 18% of the map. The model transfers across an international border
 without refitting - a fair result, and real evidence the map generalises.
 
-### Why the NASA GLC / COOLR catalogue is not used for validation
+### Screening the NASA Global Landslide Catalog before using it
 
-It is tempting to validate against the global catalogue, since it is the only
-source with near-global coverage. It does not work, and the reason is worse than
-reporting bias.
+The catalogue is the only source with near-global coverage, so it is worth
+using - but only after screening.
 
-Validating the Himachal map against its 176 Indian GLC records gives AUC 0.518 -
-indistinguishable from random - with 81% of records landing in class 1 and *none
-at all* in classes 2, 4 or 5. That is not a model-failure signature; it is a
-positional one. Querying the records shows why: all 176 share a single
-`location_description`,
+Take it from the authoritative CSV export, not the ArcGIS FeatureServer. The
+FeatureServer serves a partial subset and omits `location_accuracy`; it reports
+zero records for Nepal, Pakistan and Afghanistan where the CSV has 481, 142 and
+15. The CSV lives at
 
-    "Uttarakhand and Himachal Pradesh, India"
+    https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_Export/
+    Global_Landslide_Catalog_Export_rows.csv
 
-Two states, roughly 100,000 square kilometres. The points are geocoded to a
-regional centroid, not to landslides. A point placed at state-level precision
-cannot say anything about a 90 m pixel, so any validation against it measures
-the geocoding, not the map.
+(the older Socrata ids such as `dd9e-wu2v` now 404) and is fetched by
+`step2-download` as the `glc` dataset.
 
-Use GLC to see roughly *where* landslides get reported. Do not use it to
-calibrate or to validate.
+Every record carries a stated positional accuracy, and most of it is too coarse
+for a 90 m map:
+
+| accuracy | records | share |
+|---|---|---|
+| exact | 1,386 | 12.6% |
+| 1 km | 2,185 | 19.8% |
+| 5 km | 3,178 | 28.8% |
+| 10 km | 1,435 | 13.0% |
+| 25 km and worse | 2,305 | 20.9% |
+| unknown | 542 | 4.9% |
+
+Only about a third are placed to 1 km or better. Validating against unscreened
+records measures the geocoding rather than the map: an earlier test against an
+unscreened subset returned AUC 0.518, with 81% of records in class 1 and none
+at all in classes 2, 4 or 5 - the signature of points placed at administrative
+centroids, not of a bad map.
+
+Screened to 1 km or better, the HKH retains **295 records** (225 of them
+rainfall-triggered): India 221, Nepal 29, China 27, Bangladesh 9, Pakistan 7,
+Bhutan 1, Afghanistan 1. Small, but independent, and the only source that
+reaches the western HKH at all.
 
 **Always validate before trusting a map in a new area.** Factor behaviour is not
 guaranteed to be stable across the whole HKH: the soil-moisture factor in

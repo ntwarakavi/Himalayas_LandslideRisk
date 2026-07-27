@@ -110,6 +110,15 @@ REGISTRY: List[Dataset] = [
         note="global, but media-report derived: biased towards roads/towns",
     ),
     Dataset(
+        key="glc", name="NASA Global Landslide Catalog (authoritative CSV)",
+        group=INVENTORY, licence="open", approx_mb=8.5, required=False,
+        rel_path="inventory/glc_export.csv",
+        probe_url=("https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog"
+                   "_Export/Global_Landslide_Catalog_Export_rows.csv"),
+        note="11,033 records with location_accuracy; only ~1/3 are placed to "
+             "1 km or better - screen before use",
+    ),
+    Dataset(
         key="gorkha", name="Roback 2018 Gorkha earthquake inventory (Nepal)",
         group=INVENTORY, licence="public domain (USGS)", approx_mb=129.0,
         required=False,

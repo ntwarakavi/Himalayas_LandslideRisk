@@ -142,6 +142,31 @@ def test_inventory_polygon_centroid_and_reprojection():
         {"type": "Polygon", "coordinates": []}) is None
 
 
+def test_glc_accuracy_screening():
+    """GLC loading must drop records too coarsely placed to test a 90 m map."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "glc.csv")
+        with open(p, "w") as fh:
+            fh.write("location_accuracy,country_name,landslide_trigger,"
+                     "longitude,latitude\n")
+            fh.write("exact,Nepal,downpour,84.1,28.1\n")
+            fh.write("1km,Nepal,rain,84.2,28.2\n")
+            fh.write("25km,Nepal,downpour,84.3,28.3\n")     # too coarse
+            fh.write("unknown,Nepal,downpour,84.4,28.4\n")  # unquantified
+            fh.write("exact,Peru,downpour,-72.0,-13.0\n")   # wrong country
+
+        assert len(inventory.load_glc_csv(p, max_accuracy="1km")) == 3
+        assert len(inventory.load_glc_csv(p, max_accuracy="exact")) == 2
+        assert len(inventory.load_glc_csv(p, max_accuracy="25km")) == 4
+        # country and trigger filters
+        assert len(inventory.load_glc_csv(p, countries=("Nepal",))) == 2
+        assert len(inventory.load_glc_csv(
+            p, countries=("Nepal",), triggers=("rain",))) == 1
+        # bbox clipping
+        assert len(inventory.load_glc_csv(
+            p, bbox=(84.0, 28.0, 84.15, 28.15))) == 1
+
+
 def test_auc_perfect_separation():
     scores = np.array([0.1, 0.2, 0.3, 0.9, 1.0, 1.1])
     y = np.array([0, 0, 0, 1, 1, 1])

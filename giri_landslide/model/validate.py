@@ -56,7 +56,7 @@ def _class_areas(susc_path: str, block: int = 1024) -> Dict[int, int]:
     """Pixel count per susceptibility class over the whole map."""
     import rasterio
 
-    from .grid import iter_blocks
+    from ..utility.grid import iter_blocks
 
     counts = {k: 0 for k in range(1, 6)}
     with rasterio.open(susc_path) as src:
@@ -71,7 +71,7 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
                             background_points: Optional[np.ndarray] = None,
                             block: int = 1024) -> ValidationResult:
     """Score a susceptibility map against landslides it was not fitted on."""
-    from .inventory import sample_factors_at_points
+    from ..input.inventory import sample_factors_at_points
 
     if len(inventory_points) == 0:
         raise ValueError("no inventory points fall inside the map extent")

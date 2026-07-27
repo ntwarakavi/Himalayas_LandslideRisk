@@ -11,9 +11,9 @@ from typing import List, Optional
 
 import numpy as np
 
-from . import config as C
+from .. import config as C
 from .factors import FACTOR_NODATA
-from .grid import combine_rasters, map_raster, reclassify_continuous
+from ..utility.grid import combine_rasters, map_raster, reclassify_continuous
 
 SUSC_NODATA = 255
 
@@ -117,7 +117,7 @@ def _median_linear(slope_f, litho_f, veg_f, soil_f, linear, block) -> float:
     """Median of the linear predictor over valid, non-flat pixels."""
     import rasterio
 
-    from .grid import iter_blocks
+    from ..utility.grid import iter_blocks
 
     sample = []
     ds = [rasterio.open(p) for p in (slope_f, litho_f, veg_f, soil_f)]
@@ -161,7 +161,7 @@ def quantile_breaks(index_path: str, n_classes: int = 5,
     to class 1.
     """
     import rasterio
-    from .grid import iter_blocks
+    from ..utility.grid import iter_blocks
 
     sample = []
     stride = 1

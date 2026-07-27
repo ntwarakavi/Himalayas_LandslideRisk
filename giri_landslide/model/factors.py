@@ -11,8 +11,8 @@ import numpy as np
 import rasterio
 from rasterio.windows import Window
 
-from . import config as C
-from .grid import iter_blocks, map_raster, remap_categorical, reclassify_continuous
+from .. import config as C
+from ..utility.grid import iter_blocks, map_raster, remap_categorical, reclassify_continuous
 
 FACTOR_NODATA = 255  # uint8 nodata for factor rasters
 

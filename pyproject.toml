@@ -23,7 +23,7 @@ vector = ["fiona>=1.9", "geopandas>=0.13"]
 giri-landslide = "giri_landslide.cli:main"
 
 [tool.setuptools]
-packages = ["giri_landslide"]
+packages = ["giri_landslide", "giri_landslide.input", "giri_landslide.model", "giri_landslide.utility"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

@@ -247,7 +247,7 @@ def max_monthly_precip(monthly_paths: Sequence, grid, out_path: str,
     import numpy as np
     from rasterio.enums import Resampling
 
-    from .grid import combine_rasters, warp_to_grid
+    from ..utility.grid import combine_rasters, warp_to_grid
 
     clipped: List[str] = []
     for i, entry in enumerate(monthly_paths, start=1):
@@ -335,7 +335,7 @@ def glim_grid_to_sl(asc_path: str, out_path: str) -> str:
     import numpy as np
     import rasterio
 
-    from . import config as C
+    from .. import config as C
 
     with rasterio.open(asc_path) as src:
         arr = src.read(1).astype("float64")
@@ -393,7 +393,7 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
         layers = fiona.listlayers(glim_path)
         layer = layers[0] if layers else None
 
-    from . import config as C
+    from .. import config as C
     sl_map = sl_map if sl_map is not None else C.GLIM_SL
 
     shapes = []

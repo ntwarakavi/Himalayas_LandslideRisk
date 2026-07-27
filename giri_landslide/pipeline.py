@@ -21,8 +21,10 @@ import rasterio
 from rasterio.enums import Resampling
 
 from . import config as C
-from . import factors, susceptibility, triggers, hazard, sources, demo
-from .grid import Grid, warp_to_grid, mosaic_and_warp, raster_stats
+from .model import factors, susceptibility, triggers, hazard
+from .input import sources
+from .utility import demo
+from .utility.grid import Grid, warp_to_grid, mosaic_and_warp, raster_stats
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +290,8 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
     demo mode) -> sample factors at presence + background points -> fit the
     logistic model -> write a calibrated config JSON. Returns a report dict.
     """
-    from . import inventory, calibrate
+    from .input import inventory
+    from .model import calibrate
 
     _ensure_dirs(cfg)
     bbox = cfg.clipped_bbox()
@@ -431,8 +434,8 @@ def compare_susceptibility(baseline_path: str, scenario_path: str,
 
     Both inputs must be on the same grid (same AOI, same resolution).
     """
-    from .grid import combine_rasters, iter_blocks
-    from .susceptibility import SUSC_NODATA
+    from .utility.grid import combine_rasters, iter_blocks
+    from .model.susceptibility import SUSC_NODATA
 
     with rasterio.open(baseline_path) as a, rasterio.open(scenario_path) as b:
         if (a.width, a.height) != (b.width, b.height):
@@ -658,7 +661,7 @@ def _summarise(cfg, mode, grid, factor_paths, outputs) -> dict:
 
 
 def _class_histogram(path: str, lo: int, hi: int) -> Dict[str, int]:
-    from .grid import iter_blocks
+    from .utility.grid import iter_blocks
     counts = {str(k): 0 for k in range(lo, hi + 1)}
     with rasterio.open(path) as src:
         for win in iter_blocks(src.width, src.height, 1024):

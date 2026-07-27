@@ -13,8 +13,11 @@ import tempfile
 import numpy as np
 
 from giri_landslide import config as C
-from giri_landslide import pipeline, triggers, inventory, calibrate
-from giri_landslide.grid import Grid, reclassify_continuous, remap_categorical
+from giri_landslide import pipeline
+from giri_landslide.input import inventory
+from giri_landslide.model import calibrate, triggers
+from giri_landslide.utility.grid import (Grid, reclassify_continuous,
+                                         remap_categorical)
 
 
 def test_grid_dimensions():
@@ -223,8 +226,8 @@ def test_slope_break_calibration_recovers_shape():
 def test_quantile_breaks_never_empty_class():
     """Lumpy S distributions must not leave a class with an empty interval."""
     import rasterio
-    from giri_landslide import susceptibility as S
-    from giri_landslide.grid import Grid
+    from giri_landslide.model import susceptibility as S
+    from giri_landslide.utility.grid import Grid
 
     with tempfile.TemporaryDirectory() as tmp:
         grid = Grid.from_bbox((84.0, 28.0, 84.1, 28.1), 0.001)
@@ -246,7 +249,7 @@ def test_quantile_breaks_never_empty_class():
 def test_compare_susceptibility():
     """Difference map should report the class shift between two runs."""
     import rasterio
-    from giri_landslide.grid import Grid
+    from giri_landslide.utility.grid import Grid
 
     with tempfile.TemporaryDirectory() as tmp:
         grid = Grid.from_bbox((84.0, 28.0, 84.1, 28.1), 0.01)
@@ -283,7 +286,7 @@ def test_compare_susceptibility():
 
 def test_dataset_registry_is_wellformed():
     """Every registered dataset must be fetchable or explicitly manual."""
-    from giri_landslide import datasets
+    from giri_landslide.input import datasets
 
     keys = [d.key for d in datasets.REGISTRY]
     assert len(keys) == len(set(keys)), "duplicate dataset keys"
@@ -296,7 +299,7 @@ def test_dataset_registry_is_wellformed():
 
 def test_dataset_cache_detection():
     """A dataset counts as cached only when its file/dir actually has content."""
-    from giri_landslide import datasets
+    from giri_landslide.input import datasets
 
     ds = datasets.BY_KEY["coolr"]
     with tempfile.TemporaryDirectory() as tmp:

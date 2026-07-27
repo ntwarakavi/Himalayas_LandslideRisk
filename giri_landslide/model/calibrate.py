@@ -21,7 +21,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from . import config as C
+from .. import config as C
 
 FACTOR_NAMES = ["slope", "lithology", "vegetation", "soil_moisture"]
 

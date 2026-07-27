@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import config as C
-from .grid import combine_rasters
+from .. import config as C
+from ..utility.grid import combine_rasters
 from .susceptibility import SUSC_NODATA
 from .triggers import TRIGGER_NODATA
 

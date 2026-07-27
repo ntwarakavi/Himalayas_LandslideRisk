@@ -9,8 +9,8 @@ from __future__ import annotations
 import math
 import numpy as np
 
-from . import config as C
-from .grid import map_raster
+from .. import config as C
+from ..utility.grid import map_raster
 
 TRIGGER_NODATA = 255
 

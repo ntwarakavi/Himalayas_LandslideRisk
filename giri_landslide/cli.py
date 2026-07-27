@@ -23,7 +23,8 @@ import sys
 from typing import List, Optional
 
 from . import config as C
-from . import datasets, pipeline, sources
+from .input import datasets, sources
+from . import pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +128,7 @@ def _step_download(args) -> int:
     cfg = _build_config(args)
     bbox = cfg.clipped_bbox()
     print("STEP 2  Download (anything already cached is skipped)\n")
-    from . import inventory
+    from .input import inventory
 
     got = sources.download_dem(bbox, cfg.data_dir, cfg.dem_source)
     print(f"  DEM tiles            {len(got)}")
@@ -251,7 +252,8 @@ def _step_validate(args) -> int:
 
     import numpy as np
 
-    from . import inventory, validate
+    from .input import inventory
+    from .model import validate
 
     susc = args.susceptibility or os.path.join(
         args.out_dir, f"{args.name}_susceptibility.tif")

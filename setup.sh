@@ -56,9 +56,9 @@ Activate the environment in every new shell:
     source .venv/bin/activate
 
 Next steps:
-    ./run_demo.sh                                  # offline, no downloads
-    python -m giri_landslide.cli run --mode download \
-        --config examples/01_hkh_quickstart.json   # first real-data run
+    ./scripts/run_demo.sh                                  # offline, no downloads
+    python -m giri_landslide.cli step4-susceptibility --mode download \
+        --config configs/01_hkh_quickstart.json   # first real-data run
 
 See docs/RUNNING_LOCALLY.md for the full walkthrough.
 EOF

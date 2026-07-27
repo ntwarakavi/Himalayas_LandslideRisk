@@ -2,7 +2,7 @@
 # Offline smoke test - synthetic data, no downloads, under a minute.
 # Walks the same steps as a real run so you can see the sequence.
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 AOI="--bbox 83.0 27.5 85.0 29.0"
 
 echo ">> STEP 1  what data do we have?"

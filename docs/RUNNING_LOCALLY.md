@@ -55,7 +55,7 @@ python -m pytest tests/ -q         # expect: 12 passed
 Confirm the install works before spending bandwidth:
 
 ```bash
-./run_demo.sh
+./scripts/run_demo.sh
 ```
 
 This fabricates plausible synthetic terrain over a Himalayan AOI and runs the
@@ -73,7 +73,7 @@ image: susceptibility classes on the left, hazard probability on the right.
 
 ```bash
 python -m giri_landslide.cli run --mode download \
-    --config examples/01_hkh_quickstart.json
+    --config configs/01_hkh_quickstart.json
 ```
 
 This covers a 1.0° × 0.8° window over the Himachal Pradesh mountain front at
@@ -112,7 +112,7 @@ uses the **package defaults**, which are the robust ones:
 
 ```bash
 python -m giri_landslide.cli run --mode download \
-    --config examples/02_hkh_90m_rainfall.json
+    --config configs/02_hkh_90m_rainfall.json
 ```
 
 On the first run this additionally downloads, once, and then caches forever:
@@ -143,7 +143,7 @@ Earthquake scenario over the same AOI:
 
 ```bash
 python -m giri_landslide.cli run --mode download \
-    --config examples/03_hkh_90m_earthquake.json
+    --config configs/03_hkh_90m_earthquake.json
 ```
 
 **Scaling guidance.** Cost grows with the square of the resolution:
@@ -208,7 +208,7 @@ python -m giri_landslide.cli run --mode download --name base \
 
 # end-of-century, high-emissions
 python -m giri_landslide.cli run --mode download \
-    --config examples/05_hkh_future_climate.json
+    --config configs/05_hkh_future_climate.json
 ```
 
 Scenarios: `ssp126`, `ssp245`, `ssp370`, `ssp585`. Periods: `2021-2040`,
@@ -277,7 +277,7 @@ defaults:
 
 ```bash
 python -m giri_landslide.cli calibrate --mode download \
-    --config examples/04_hkh_calibrate.json
+    --config configs/04_hkh_calibrate.json
 ```
 
 This downloads the **NASA COOLR** inventory for the HKH, samples the factor
@@ -369,7 +369,7 @@ own inventory instead, at whatever DEM resolution you are running:
 
 ```bash
 python -m giri_landslide.cli calibrate --mode download \
-    --config examples/04_hkh_calibrate.json \
+    --config configs/04_hkh_calibrate.json \
     --dem-source copernicus30 --res 0.00027778 \
     --fit-slope-breaks
 ```

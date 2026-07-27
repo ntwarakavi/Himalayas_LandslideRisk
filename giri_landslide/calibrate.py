@@ -17,7 +17,7 @@ there is no scikit-learn dependency.
 from __future__ import annotations
 
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -31,8 +31,10 @@ class CalibrationResult:
     weights: Dict[str, float]          # calibrated exponent weights (w_i)
     weights_raw: Dict[str, float]      # unnormalised logistic coefficients
     intercept: float
-    auc: float                         # held-out ROC AUC
+    auc: float                         # mean cross-validated ROC AUC
     auc_train: float
+    auc_folds: List[float]             # per-fold held-out AUC (stability check)
+    auc_std: float                     # spread across folds
     n_presence: int
     n_background: int
     factor_means_presence: Dict[str, float]
@@ -126,21 +128,43 @@ def _auc(scores: np.ndarray, y: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
-              test_fraction: float = 0.3, normalise: bool = True,
+              n_folds: int = 5, normalise: bool = True,
               seed: int = 0) -> CalibrationResult:
-    """Fit weights and report held-out AUC."""
+    """Fit weights and report cross-validated AUC.
+
+    K-fold cross-validation is used rather than a single hold-out split: with
+    the small, clustered inventories typical of mountain regions a single split
+    gives a noisy, sometimes badly optimistic score. The per-fold spread
+    (``auc_std``) is reported so an unstable fit is visible.
+
+    The deployed weights are fitted on *all* the data; the folds only estimate
+    how well those weights generalise.
+    """
     X, y = build_dataset(presence_feats, background_feats)
     if len(X) < 20:
         raise ValueError(f"too few valid calibration points ({len(X)})")
 
     rng = np.random.default_rng(seed)
     idx = rng.permutation(len(X))
-    n_test = max(4, int(len(X) * test_fraction))
-    test, train = idx[:n_test], idx[n_test:]
+    n_folds = max(2, min(n_folds, int(y.sum()), int((1 - y).sum())))
+    folds = np.array_split(idx, n_folds)
 
-    w_raw, b = _fit_logistic(X[train], y[train], seed=seed)
-    auc_tr = _auc(X[train] @ w_raw, y[train])
-    auc_te = _auc(X[test] @ w_raw, y[test])
+    fold_aucs: List[float] = []
+    for k in range(n_folds):
+        test = folds[k]
+        train = np.concatenate([folds[j] for j in range(n_folds) if j != k])
+        if y[train].sum() == 0 or (1 - y[train]).sum() == 0:
+            continue
+        w_k, _ = _fit_logistic(X[train], y[train], seed=seed)
+        a = _auc(X[test] @ w_k, y[test])
+        if np.isfinite(a):
+            fold_aucs.append(float(a))
+
+    # Deployed model: fitted on the full dataset.
+    w_raw, b = _fit_logistic(X, y, seed=seed)
+    auc_tr = _auc(X @ w_raw, y)
+    auc_te = float(np.mean(fold_aucs)) if fold_aucs else float("nan")
+    auc_sd = float(np.std(fold_aucs)) if fold_aucs else float("nan")
 
     # Screen factors that carry no information (near-constant, e.g. a missing
     # lithology layer left uniform) - they cannot be calibrated.
@@ -167,6 +191,20 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
                 f"(coef {w_raw[i]:.2f}); likely spatial reporting bias in the "
                 f"inventory - weight clamped to 0")
 
+    if np.isfinite(auc_te) and auc_te < 0.7:
+        warnings.append(
+            f"weak discrimination (CV AUC {auc_te:.2f}) - the calibrated "
+            "weights are not trustworthy; use a larger/denser inventory or "
+            "keep the default weights")
+    if np.isfinite(auc_sd) and auc_sd > 0.1:
+        warnings.append(
+            f"unstable across folds (AUC sd {auc_sd:.2f}) - the inventory is "
+            "probably too small or too spatially clustered")
+    if int(y.sum()) < 100:
+        warnings.append(
+            f"only {int(y.sum())} landslide points - a few hundred well-spread "
+            "points is the practical minimum for stable weights")
+
     # Deployment weights (exponent form must be non-negative). Excluded factors
     # keep the physical prior 1.0; fitted negatives are clamped to 0.
     w_dep = np.clip(w_raw, 0.0, None)
@@ -182,6 +220,8 @@ def calibrate(presence_feats: np.ndarray, background_feats: np.ndarray,
         intercept=float(b),
         auc=float(auc_te),
         auc_train=float(auc_tr),
+        auc_folds=fold_aucs,
+        auc_std=auc_sd,
         n_presence=int(y.sum()),
         n_background=int((1 - y).sum()),
         factor_means_presence={k: float(np.nanmean(p_mean[:, i]))

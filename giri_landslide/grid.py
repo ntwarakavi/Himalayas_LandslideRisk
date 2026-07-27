@@ -17,7 +17,7 @@ import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
-from rasterio.warp import reproject, calculate_default_transform
+from rasterio.warp import reproject
 from rasterio.windows import Window
 
 WGS84 = "EPSG:4326"
@@ -166,13 +166,6 @@ def mosaic_and_warp(src_paths: Sequence[str], grid: Grid, out_path: str,
 # Block-wise map / reclassify helpers
 # ---------------------------------------------------------------------------
 
-def write_grid_raster(grid: Grid, out_path: str, dtype: str, nodata,
-                      block: int = 512):
-    """Open a new grid-aligned raster for writing; returns the dataset."""
-    return rasterio.open(out_path, "w", **grid.profile(dtype, nodata,
-                                                       block=block))
-
-
 def map_raster(src_path: str, out_path: str, func: Callable[[np.ndarray],
                np.ndarray], out_dtype: str, out_nodata, block: int = 512,
                src_nodata=None) -> str:
@@ -182,7 +175,6 @@ def map_raster(src_path: str, out_path: str, func: Callable[[np.ndarray],
     return an array of the same shape.
     """
     with rasterio.open(src_path) as src:
-        grid = Grid(*_grid_from_dataset(src))
         prof = src.profile.copy()
         prof.update(dtype=out_dtype, nodata=out_nodata, count=1,
                     compress="deflate", tiled=True,
@@ -196,7 +188,6 @@ def map_raster(src_path: str, out_path: str, func: Callable[[np.ndarray],
                     arr = np.where(arr == nod, np.nan, arr)
                 out = func(arr)
                 dst.write(out.astype(out_dtype), 1, window=win)
-    _ = grid  # grid only used for validation / clarity
     return out_path
 
 
@@ -260,11 +251,6 @@ def remap_categorical(arr: np.ndarray, mapping: Dict[int, int],
     for code, val in mapping.items():
         out[finite & (codes == code)] = val
     return out
-
-
-def _grid_from_dataset(src) -> Tuple[float, float, float, float, float]:
-    b = src.bounds
-    return (b.left, b.bottom, b.right, b.top, src.transform.a)
 
 
 def raster_stats(path: str) -> Dict[str, float]:

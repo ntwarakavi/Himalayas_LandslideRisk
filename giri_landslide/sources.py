@@ -23,7 +23,7 @@ import os
 import time
 import warnings
 import zipfile
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
 import requests
 
@@ -40,6 +40,12 @@ WORLDCLIM = "https://geodata.ucdavis.edu/climate/worldclim/2_1/base"
 # be supplied instead via config.glim_path for much finer lithological detail.
 GLIM_ASCII_URL = "https://hdl.handle.net/10013/epic.39939.d001"
 GLIM_LANDING_PAGE = "https://doi.pangaea.de/10.1594/PANGAEA.788537"
+# Full GLiM geodatabase (1,235,259 polygons, ~1.14 GB), as published by the
+# authors via the University of Hamburg GLiM page.
+GLIM_VECTOR_URL = (
+    "https://www.dropbox.com/s/9vuowtebp9f1iud/LiMW_GIS%202015.gdb.zip?dl=1"
+)
+GLIM_VECTOR_DIRNAME = "LiMW_GIS 2015.gdb"
 GLIM_SOURCE_INFO = (
     "GLiM lithology: the global 0.5-degree grid is downloaded automatically "
     f"from {GLIM_ASCII_URL}. For higher lithological resolution, download the "
@@ -193,44 +199,47 @@ def download_worldclim_precip(data_dir: str, res: str = "10m") -> List[str]:
     return tifs
 
 
-def max_monthly_precip(monthly_paths: Sequence[str], out_path: str,
-                       block: int = 1024) -> str:
-    """Pixel-wise maximum across 12 monthly precip rasters -> MYMMR proxy (mm).
+def max_monthly_precip(monthly_paths: Sequence[str], grid, out_path: str,
+                       tmp_prefix: str, block: int = 1024) -> str:
+    """Pixel-wise maximum of 12 monthly precip rasters on ``grid`` (mm).
 
     Approximates the paper's "mean year maximum monthly rainfall" from an open
     monthly climatology.
+
+    Each monthly raster is clipped/resampled onto the AOI grid *first* and the
+    maximum is taken afterwards. Doing it in that order matters: the WorldClim
+    30s product is a 43200 x 21600 global grid, so taking the maximum globally
+    and clipping afterwards would process ~11 billion pixels for an AOI that
+    needs a few million.
     """
     import numpy as np
-    import rasterio
-    from .grid import iter_blocks, _clamp_block
+    from rasterio.enums import Resampling
 
-    datasets = [rasterio.open(p) for p in monthly_paths]
-    try:
-        ref = datasets[0]
-        blk = _clamp_block(512, ref.width, ref.height)
-        prof = ref.profile.copy()
-        prof.update(dtype="float32", count=1, nodata=-9999.0,
-                    compress="deflate", tiled=True,
-                    blockxsize=blk, blockysize=blk)
-        with rasterio.open(out_path, "w", **prof) as dst:
-            for win in iter_blocks(ref.width, ref.height, block):
-                stack = []
-                for ds in datasets:
-                    a = ds.read(1, window=win).astype("float64")
-                    nod = ds.nodata
-                    if nod is not None:
-                        a = np.where(a == nod, np.nan, a)
-                    a = np.where(a < 0, np.nan, a)  # WorldClim ocean = -32768
-                    stack.append(a)
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", RuntimeWarning)
-                    mx = np.nanmax(np.stack(stack), axis=0)
-                dst.write(np.where(np.isnan(mx), -9999.0, mx).astype("float32"),
-                          1, window=win)
-    finally:
-        for ds in datasets:
-            ds.close()
-    return out_path
+    from .grid import combine_rasters, warp_to_grid
+
+    clipped: List[str] = []
+    for i, p in enumerate(monthly_paths, start=1):
+        t = f"{tmp_prefix}_prec_{i:02d}.tif"
+        warp_to_grid(p, grid, t, Resampling.bilinear, dtype="float32",
+                     nodata=-9999.0, block=block)
+        clipped.append(t)
+
+    def fn(arrs):
+        # WorldClim marks ocean with a large negative value.
+        stack = np.stack([np.where(a < 0, np.nan, a) for a in arrs])
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            mx = np.nanmax(stack, axis=0)
+        return np.where(np.isnan(mx), -9999.0, mx)
+
+    result = combine_rasters(clipped, out_path, fn, "float32", -9999.0,
+                             block=block)
+    for t in clipped:  # the per-month clips are not needed once combined
+        try:
+            os.remove(t)
+        except OSError:
+            pass
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +268,29 @@ def download_glim_grid(data_dir: str) -> Optional[str]:
                 if member.lower().endswith(".asc"):
                     asc = target
     return asc
+
+
+def download_glim_vector(data_dir: str) -> Optional[str]:
+    """Download + extract the full GLiM geodatabase (~1.14 GB).
+
+    Returns the path to the extracted ``.gdb`` directory, or None on failure.
+    Safe to re-run: both the download and the extraction are skipped if the
+    geodatabase is already present.
+    """
+    out_dir = os.path.join(data_dir, "glim")
+    gdb = os.path.join(out_dir, GLIM_VECTOR_DIRNAME)
+    if os.path.isdir(gdb):
+        return gdb
+
+    dest_zip = os.path.join(out_dir, "LiMW_GIS_2015.gdb.zip")
+    print("  downloading the full GLiM geodatabase (~1.14 GB, one-off)...")
+    got = download_file(GLIM_VECTOR_URL, dest_zip, timeout=1800)
+    if not got:
+        print("  " + GLIM_SOURCE_INFO)
+        return None
+    with zipfile.ZipFile(got) as zf:
+        zf.extractall(out_dir)
+    return gdb if os.path.isdir(gdb) else None
 
 
 def glim_grid_to_sl(asc_path: str, out_path: str) -> str:

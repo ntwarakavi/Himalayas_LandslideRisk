@@ -7,13 +7,10 @@ crossed with the susceptibility class through a hazard matrix.
 from __future__ import annotations
 
 import math
-from typing import Optional
-
 import numpy as np
 
 from . import config as C
-from .grid import iter_blocks, map_raster, reclassify_continuous
-import rasterio
+from .grid import map_raster
 
 TRIGGER_NODATA = 255
 
@@ -83,20 +80,6 @@ def rainfall_class_from_return_period(grid_template_path: str, out_path: str,
 
     return map_raster(grid_template_path, out_path, fn, "uint8",
                       TRIGGER_NODATA, block=block)
-
-
-def normalise_24h_rainfall(i24_path: str, mu_path: str, sigma_path: str,
-                           out_path: str, block: int = 1024) -> str:
-    """z = (I24 - mu) / sigma, block-by-block over three aligned rasters."""
-    from .grid import combine_rasters
-
-    def fn(arrs):
-        i24, mu, sigma = arrs
-        sigma = np.where((sigma == 0) | np.isnan(sigma), np.nan, sigma)
-        return (i24 - mu) / sigma
-
-    return combine_rasters([i24_path, mu_path, sigma_path], out_path, fn,
-                           "float32", -9999.0, block=block)
 
 
 # ---------------------------------------------------------------------------

@@ -7,11 +7,8 @@ writes an integer factor raster on the same grid, processed block-by-block.
 from __future__ import annotations
 
 import math
-from typing import Optional
-
 import numpy as np
 import rasterio
-from rasterio.enums import Resampling
 from rasterio.windows import Window
 
 from . import config as C

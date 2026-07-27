@@ -56,6 +56,10 @@ def _build_config(args: argparse.Namespace) -> C.Config:
         cfg.weight_mode = args.weight_mode
     if getattr(args, "classification", None):
         cfg.classification = args.classification
+    if getattr(args, "glim_grid", False):
+        cfg.glim_full = False
+    if getattr(args, "worldclim_res", None):
+        cfg.worldclim_res = args.worldclim_res
     if cfg.trigger == "earthquake" and not args.no_eq_preset:
         cfg.weights.soil_moisture = min(cfg.weights.soil_moisture, 0.5)
     return cfg
@@ -83,6 +87,13 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--weight-mode", dest="weight_mode",
                    choices=["multiplicative", "exponent"])
     p.add_argument("--classification", choices=["fixed", "quantile"])
+    p.add_argument("--glim-grid", dest="glim_grid", action="store_true",
+                   help="use the coarse GLiM 0.5-deg grid instead of the "
+                        "full-resolution geodatabase (smaller download, "
+                        "much weaker lithology)")
+    p.add_argument("--worldclim-res", dest="worldclim_res",
+                   choices=["30s", "2.5m", "5m", "10m"],
+                   help="WorldClim precipitation resolution (default 30s ~1 km)")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -97,6 +108,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     _add_common(p_run)
 
     p_dl = sub.add_parser("download", help="download open datasets for an AOI")
+    p_dl.add_argument("--inventory-download", dest="inv_dl",
+                      action="store_true",
+                      help="also fetch the NASA COOLR landslide inventory")
     _add_common(p_dl)
 
     p_cal = sub.add_parser(
@@ -106,7 +120,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                        default="demo")
     _add_common(p_cal)
 
-    p_info = sub.add_parser("info", help="print dataset source information")
+    sub.add_parser("info", help="print dataset source information")
 
     args = parser.parse_args(argv)
 
@@ -118,14 +132,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     cfg = _build_config(args)
 
     if args.command == "download":
-        paths = sources.download_dem(cfg.bbox, cfg.data_dir, cfg.dem_source)
-        print(f"DEM tiles: {len(paths)}")
+        bbox = cfg.clipped_bbox()
+        paths = sources.download_dem(bbox, cfg.data_dir, cfg.dem_source)
+        print(f"DEM tiles           : {len(paths)}")
         if cfg.landcover_source == "worldcover":
-            lc = sources.download_worldcover(cfg.bbox, cfg.data_dir)
-            print(f"Land cover tiles: {len(lc)}")
+            lc = sources.download_worldcover(bbox, cfg.data_dir)
+            print(f"Land cover tiles    : {len(lc)}")
         if cfg.trigger == "rainfall":
-            pr = sources.download_worldclim_precip(cfg.data_dir)
-            print(f"WorldClim precip tiles: {len(pr)}")
+            pr = sources.download_worldclim_precip(cfg.data_dir,
+                                                   res=cfg.worldclim_res)
+            print(f"WorldClim precip    : {len(pr)} monthly rasters "
+                  f"({cfg.worldclim_res})")
+        if cfg.glim_full:
+            gdb = sources.download_glim_vector(cfg.data_dir)
+            print(f"GLiM geodatabase    : {gdb or 'FAILED (see message above)'}")
+        else:
+            asc = sources.download_glim_grid(cfg.data_dir)
+            print(f"GLiM 0.5-deg grid   : {asc or 'unavailable'}")
+        if args.inv_dl:
+            from . import inventory
+            inv = inventory.download_nasa_glc(cfg.data_dir,
+                                              bbox=cfg.region_bbox)
+            print(f"Landslide inventory : {inv or 'unavailable'}")
         return 0
 
     if args.command == "calibrate":
@@ -134,8 +162,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\nCalibrated exponent weights (factor influence):")
         for k, v in res["weights"].items():
             print(f"  {k:14s} {v:6.3f}")
-        print(f"\nHeld-out ROC AUC : {res['auc']:.3f}  "
-              f"(train {res['auc_train']:.3f})")
+        print(f"\nCross-validated ROC AUC : {res['auc']:.3f} "
+              f"+/- {res['auc_std']:.3f}  (in-sample {res['auc_train']:.3f})")
         print(f"Presence / background points: {res['n_presence']} / "
               f"{res['n_background']}")
         for wmsg in res.get("warnings", []):

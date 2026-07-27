@@ -1,0 +1,35 @@
+{
+  "_comment": "STEP 3 - ROBUST earthquake scenario at 90 m with a uniform PGA of 0.35 g. For a real PGA field download the GEM hazard map and set trigger_path. The reduced soil-moisture weight follows the manuscript: slope dominates earthquake-induced landsliding.",
+  "name": "hkh_90m_earthquake",
+  "bbox": [
+    76.0,
+    30.5,
+    77.0,
+    31.3
+  ],
+  "region_bbox": [
+    60.0,
+    16.0,
+    105.0,
+    39.0
+  ],
+  "resolution_deg": 0.0008333333,
+  "trigger": "earthquake",
+  "scenario_pga_g": 0.35,
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs",
+  "dem_source": "copernicus90",
+  "landcover_source": "worldcover",
+  "weight_mode": "multiplicative",
+  "classification": "fixed",
+  "weights": {
+    "slope": 1.0,
+    "lithology": 1.0,
+    "vegetation": 1.0,
+    "soil_moisture": 0.5
+  },
+  "glim_full": true,
+  "worldclim_res": "30s"
+}

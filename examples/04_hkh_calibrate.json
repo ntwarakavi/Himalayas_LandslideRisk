@@ -1,0 +1,36 @@
+{
+  "_comment": "STEP 4 - Fine-tune factor weights against the NASA COOLR inventory. Uses a wide eastern-HKH window (Myanmar/NE India/Bangladesh) where COOLR has thousands of points - a dense, well-spread inventory is essential. Read the AUC and any '!' warnings before trusting the weights.",
+  "name": "hkh_calibrated",
+  "bbox": [
+    88.0,
+    20.0,
+    99.0,
+    28.0
+  ],
+  "region_bbox": [
+    60.0,
+    16.0,
+    105.0,
+    39.0
+  ],
+  "resolution_deg": 0.0025,
+  "trigger": "rainfall",
+  "scenario_return_period_yr": 100.0,
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs",
+  "dem_source": "copernicus90",
+  "landcover_source": "worldcover",
+  "inventory_path": null,
+  "weight_mode": "exponent",
+  "classification": "quantile",
+  "weights": {
+    "slope": 1.0,
+    "lithology": 1.0,
+    "vegetation": 1.0,
+    "soil_moisture": 1.0
+  },
+  "glim_full": true,
+  "worldclim_res": "30s"
+}

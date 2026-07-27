@@ -29,10 +29,6 @@ COOLR_POINTS_URL = (
     "https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/"
     "COOLR_Events_Points/FeatureServer/0/query"
 )
-# Legacy CSV endpoints (kept as fallbacks; may be offline).
-NASA_GLC_URLS = [
-    "https://data.nasa.gov/api/views/dd9e-wu2v/rows.csv?accessType=DOWNLOAD",
-]
 NASA_GLC_INFO = (
     "NASA Global Landslide Catalog / COOLR: browse https://landslides.nasa.gov"
     "/viewer and export the point catalogue as CSV/GeoJSON, or download it "
@@ -156,28 +152,15 @@ def download_coolr_points(data_dir: str,
     return dest
 
 
-def download_nasa_glc(data_dir: str, url: Optional[str] = None,
+def download_nasa_glc(data_dir: str,
                       bbox: Optional[Sequence[float]] = None) -> Optional[str]:
-    """Obtain a NASA landslide inventory. Prefers the COOLR FeatureServer.
+    """Obtain the NASA COOLR landslide inventory for ``bbox``.
 
-    Returns a path to a GeoJSON/CSV inventory, or None (with a pointer printed).
+    Returns a path to the downloaded GeoJSON, or None (with a pointer printed).
     """
-    from .sources import download_file
-
-    if not url:
-        got = download_coolr_points(data_dir, bbox=bbox)
-        if got:
-            return got
-
-    urls = [url] if url else NASA_GLC_URLS
-    dest = os.path.join(data_dir, "inventory", "nasa_glc.csv")
-    for u in urls:
-        try:
-            got = download_file(u, dest, retries=2, timeout=120)
-            if got and os.path.getsize(got) > 1000:
-                return got
-        except Exception as exc:  # noqa: BLE001
-            print(f"  NASA GLC fetch failed for {u}: {exc}")
+    got = download_coolr_points(data_dir, bbox=bbox)
+    if got:
+        return got
     print("  " + NASA_GLC_INFO)
     return None
 

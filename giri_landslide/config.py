@@ -278,10 +278,24 @@ class Config:
     out_dir: str = "outputs"
 
     # Source selection / local overrides -----------------------------------
+    # Defaults are chosen for ROBUSTNESS, not for the smallest download:
+    #   * copernicus90 - 3 arc-second DEM. Deliberately NOT the 30 m product:
+    #     the slope reclassification table (Table 2) was calibrated against
+    #     ~90 m slope distributions, and slope statistics are strongly
+    #     resolution-dependent in steep terrain, so a finer DEM would silently
+    #     bias every slope class. Set "copernicus30" only if you also
+    #     re-calibrate SLOPE_BREAKS_DEG.
+    #   * glim_full - use the 1.2M-polygon GLiM geodatabase rather than the
+    #     0.5-degree grid, which is effectively uniform at hillslope scale.
+    #   * worldclim_res "30s" (~1 km) - the finest open monthly climatology;
+    #     the coarser products smear orographic rainfall gradients that drive
+    #     the soil-moisture factor across whole mountain ranges.
     dem_source: str = "copernicus90"
     dem_path: Optional[str] = None
     landcover_source: str = "worldcover"
     landcover_path: Optional[str] = None
+    glim_full: bool = True                    # fetch/use full-resolution GLiM
+    worldclim_res: str = "30s"                # 30s | 2.5m | 5m | 10m
     glim_path: Optional[str] = None           # GLiM vector (.shp) or raster
     precip_monthly_dir: Optional[str] = None  # 12 monthly precip rasters (mm)
     vwc_path: Optional[str] = None            # ERA5 volumetric water content

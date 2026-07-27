@@ -95,13 +95,23 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
         else:
             inputs["glim_vector"] = cfg.glim_path
     elif mode == "download":
-        _log("download:lithology", "GLiM 0.5-deg global grid")
-        asc = sources.download_glim_grid(cfg.data_dir)
-        if asc:
-            sl_tif = os.path.join(cfg.data_dir, "glim", "glim_sl.tif")
-            if not os.path.exists(sl_tif):
-                sources.glim_grid_to_sl(asc, sl_tif)
-            inputs["glim_sl_raster"] = sl_tif
+        local_gdb = os.path.join(cfg.data_dir, "glim",
+                                 sources.GLIM_VECTOR_DIRNAME)
+        if cfg.glim_full or os.path.isdir(local_gdb):
+            # Full-resolution lithology (default). Downloaded once, then reused.
+            gdb = local_gdb if os.path.isdir(local_gdb) else \
+                sources.download_glim_vector(cfg.data_dir)
+            if gdb:
+                _log("lithology", "full-resolution GLiM geodatabase")
+                inputs["glim_vector"] = gdb
+        if "glim_vector" not in inputs:
+            _log("download:lithology", "GLiM 0.5-deg grid (coarse fallback)")
+            asc = sources.download_glim_grid(cfg.data_dir)
+            if asc:
+                sl_tif = os.path.join(cfg.data_dir, "glim", "glim_sl.tif")
+                if not os.path.exists(sl_tif):
+                    sources.glim_grid_to_sl(asc, sl_tif)
+                inputs["glim_sl_raster"] = sl_tif
 
     # Soil-moisture proxy --------------------------------------------------
     if cfg.trigger == "rainfall":
@@ -111,9 +121,9 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
                 for f in os.listdir(cfg.precip_monthly_dir)
                 if f.endswith(".tif"))
         elif mode == "download":
-            _log("download:precip", "WorldClim v2.1 monthly")
+            _log("download:precip", f"WorldClim v2.1 monthly ({cfg.worldclim_res})")
             inputs["precip_monthly"] = sources.download_worldclim_precip(
-                cfg.data_dir)
+                cfg.data_dir, res=cfg.worldclim_res)
         # else -> fallback handled in staging
     else:
         if cfg.vwc_path:
@@ -188,11 +198,9 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
     if cfg.trigger == "rainfall":
         if "precip_monthly" in inputs:
             _log("soil moisture", "max monthly precip (MYMMR proxy)")
-            mymmr_native = _work(cfg, "mymmr_native.tif")
-            sources.max_monthly_precip(inputs["precip_monthly"], mymmr_native,
+            sources.max_monthly_precip(inputs["precip_monthly"], grid, sm_grid,
+                                       tmp_prefix=_work(cfg, "tmp"),
                                        block=block)
-            warp_to_grid(mymmr_native, grid, sm_grid, Resampling.bilinear,
-                         dtype="float32", nodata=-9999.0, block=block)
         else:
             _log("soil moisture", "precip absent -> uniform MYMMR=300 mm")
             _uniform_raster(grid, 300.0, sm_grid)

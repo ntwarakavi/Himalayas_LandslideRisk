@@ -94,7 +94,6 @@ def quantile_breaks(index_path: str, n_classes: int = 5,
         total = src.width * src.height
         if total > max_sample:
             stride = int(total / max_sample) + 1
-        flat_count = 0
         for win in iter_blocks(src.width, src.height, block):
             a = src.read(1, window=win).astype("float64").ravel()
             a = a[(a != src.nodata) & np.isfinite(a) & (a > 0)]

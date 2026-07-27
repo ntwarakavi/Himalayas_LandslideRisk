@@ -53,12 +53,45 @@ Every reclassification table, weight, threshold and hazard matrix is transcribed
 from the manuscript into [`giri_landslide/config.py`](giri_landslide/config.py)
 and can be re-calibrated there or via a JSON config.
 
-## Quick start (no downloads)
+## Quick start
 
 ```bash
-pip install -r requirements.txt
-./run_demo.sh                       # synthetic data, fully offline
+./setup.sh          # venv + dependencies + tests
+source .venv/bin/activate
+
+./run_demo.sh       # offline smoke test, no downloads
+
+# first real-data run (fast, ~120 MB)
+python -m giri_landslide.cli run --mode download \
+    --config examples/01_hkh_quickstart.json
 ```
+
+**→ Full step-by-step guide: [`docs/RUNNING_LOCALLY.md`](docs/RUNNING_LOCALLY.md)**
+
+### Example configs
+
+| Config | What it does |
+|---|---|
+| `examples/01_hkh_quickstart.json` | fast first run, 250 m, small downloads |
+| `examples/02_hkh_90m_rainfall.json` | **robust production run**, 90 m, full GLiM |
+| `examples/03_hkh_90m_earthquake.json` | earthquake scenario, 90 m, PGA 0.35 g |
+| `examples/04_hkh_calibrate.json` | weight calibration vs. the COOLR inventory |
+
+## Robust-by-default configuration
+
+The defaults are chosen for **scientific robustness, not the smallest download**.
+Each is a deliberate trade-off:
+
+| Default | Why | Opt down with |
+|---|---|---|
+| **90 m grid** (3 arc-sec) | the manuscript's native resolution | `--res 0.0025` |
+| **Copernicus GLO-90 DEM** — *not* GLO-30 | the slope table (Table 2) was calibrated on ~90 m slope statistics; a finer DEM yields systematically steeper slopes and would silently bias every class | `--dem-source copernicus30` (re-calibrate `SLOPE_BREAKS_DEG` too) |
+| **Full GLiM geodatabase** (1.2M polygons, 1.1 GB) | the 0.5° grid is a single class per ~55 km cell — effectively uniform at hillslope scale | `--glim-grid` |
+| **WorldClim 30s** (~1 km, 1 GB) | coarser products smear orographic rainfall gradients across whole ranges | `--worldclim-res 10m` |
+| **5-fold cross-validated calibration** | a single hold-out split is noisy and often optimistic on small, clustered inventories | — |
+| **Density-matched background sampling** | controls the accessibility bias of citizen-science inventories | — |
+
+First robust run downloads ~2.2 GB, then caches everything in `data/raw/`.
 
 This writes to `./outputs/`:
 

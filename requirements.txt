@@ -3,9 +3,13 @@ numpy>=1.24
 rasterio>=1.3
 requests>=2.28
 
-# Visual quicklook output (optional but recommended)
+# Reading the full-resolution GLiM lithology geodatabase (.gdb / .shp).
+# Required for polygon-level lithology; without it the model falls back to the
+# GLiM 0.5-degree grid.
+fiona>=1.9
+
+# Two-panel quicklook PNG output (optional but recommended)
 matplotlib>=3.6
 
-# Reading a GLiM lithology vector directly (optional; only for --glim vector)
-# fiona>=1.9
-# geopandas>=0.13
+# Test runner (optional)
+pytest>=7.0

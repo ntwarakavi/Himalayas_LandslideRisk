@@ -67,11 +67,18 @@ def test_end_to_end_demo_rainfall():
             out_dir=os.path.join(tmp, "out"),
         )
         out = pipeline.run(cfg, mode="demo")
-        for key in ("susceptibility", "hazard_probability", "summary"):
+        for key in ("susceptibility_classes", "susceptibility_probability",
+                    "hazard_probability", "summary"):
             assert os.path.exists(out[key]), key
 
         import rasterio
-        with rasterio.open(out["susceptibility"]) as src:
+        # the continuous index must be a genuine 0-1 field
+        with rasterio.open(out["susceptibility_probability"]) as src:
+            p = src.read(1)
+            p = p[p != src.nodata]
+            assert p.min() >= 0.0 and p.max() <= 1.0
+            assert len(np.unique(p)) > 5, "index should be continuous"
+        with rasterio.open(out["susceptibility_classes"]) as src:
             a = src.read(1)
             classes = set(int(x) for x in np.unique(a) if x != src.nodata)
             assert classes.issubset({1, 2, 3, 4, 5})
@@ -319,7 +326,8 @@ def test_susceptibility_and_hazard_steps_compose():
                       out_dir=os.path.join(tmp, "out"))
         stepwise = C.Config(name="stepwise", **common)
         s = pipeline.run_susceptibility(stepwise, mode="demo")
-        h = pipeline.run_hazard(stepwise, s["susceptibility"], mode="demo")
+        h = pipeline.run_hazard(stepwise, s["susceptibility_classes"],
+                                mode="demo")
 
         oneshot = C.Config(name="oneshot", **common)
         combined = pipeline.run(oneshot, mode="demo")

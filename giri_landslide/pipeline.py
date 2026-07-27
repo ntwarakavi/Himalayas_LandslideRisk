@@ -234,25 +234,43 @@ def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[
     return paths
 
 
-def _susceptibility_stage(cfg: C.Config, factor_paths: Dict[str, str]) -> str:
-    """Combine factors into S and classify into the 5-class susceptibility map."""
-    _log("susceptibility", f"combining factors ({cfg.weight_mode})")
-    susc_index = _work(cfg, "susc_index.tif")
-    susceptibility.combine_factors(
-        factor_paths["slope"], factor_paths["litho"], factor_paths["veg"],
-        factor_paths["soil"], susc_index, cfg.weights, mode=cfg.weight_mode,
-        block=cfg.block_size)
+def _susceptibility_stage(cfg: C.Config,
+                          factor_paths: Dict[str, str]) -> Dict[str, str]:
+    """Build the susceptibility output(s). Returns {kind: path}.
 
-    if cfg.classification == "quantile":
-        breaks = susceptibility.quantile_breaks(susc_index, block=cfg.block_size)
-        _log("classify", "equal-area quantile breaks")
-    else:
-        breaks = cfg.susceptibility_breaks
+    The continuous probability index is the default: it comes straight from the
+    fitted logistic model, so it needs no class breaks and every pixel is
+    comparable to every other. The 5-class map is kept for compatibility with
+    the manuscript's hazard matrix, which is indexed by class.
+    """
+    out: Dict[str, str] = {}
+    f = (factor_paths["slope"], factor_paths["litho"],
+         factor_paths["veg"], factor_paths["soil"])
 
-    susc_class = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility.tif")
-    susceptibility.classify_susceptibility(susc_index, susc_class, breaks,
-                                           block=cfg.block_size)
-    return susc_class
+    if cfg.output in ("probability", "both"):
+        _log("susceptibility", "continuous probability index (logistic)")
+        prob = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility_prob.tif")
+        susceptibility.probability_index(*f, prob, cfg.weights,
+                                         intercept=cfg.intercept,
+                                         block=cfg.block_size)
+        out["probability"] = prob
+
+    if cfg.output in ("classes", "both") or cfg.trigger:
+        # The hazard matrix is indexed by class, so classes are always built
+        # when a hazard step may follow.
+        _log("susceptibility", f"5-class map ({cfg.weight_mode})")
+        idx = _work(cfg, "susc_index.tif")
+        susceptibility.combine_factors(*f, idx, cfg.weights,
+                                       mode=cfg.weight_mode,
+                                       block=cfg.block_size)
+        breaks = (susceptibility.quantile_breaks(idx, block=cfg.block_size)
+                  if cfg.classification == "quantile"
+                  else cfg.susceptibility_breaks)
+        cls = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility.tif")
+        susceptibility.classify_susceptibility(idx, cls, breaks,
+                                               block=cfg.block_size)
+        out["classes"] = cls
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -516,17 +534,21 @@ def run_susceptibility(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
 
     inputs = resolve_inputs(cfg, mode)
     factor_paths = stage_factors(cfg, grid, inputs)
-    susc_class = _susceptibility_stage(cfg, factor_paths)
+    susc = _susceptibility_stage(cfg, factor_paths)
+    susc_class = susc.get("classes")
 
-    out = {"susceptibility": susc_class,
+    out = {k: v for k, v in
+           (("susceptibility_probability", susc.get("probability")),
+            ("susceptibility_classes", susc_class)) if v}
+    out.update({
            "factor_slope": factor_paths["slope"],
            "factor_lithology": factor_paths["litho"],
            "factor_vegetation": factor_paths["veg"],
-           "factor_soil_moisture": factor_paths["soil"]}
-    hist = _class_histogram(susc_class, 1, 5)
-    total = sum(hist.values()) or 1
-    _log("susceptibility", " ".join(f"class{k}={100*v/total:.1f}%"
-                                    for k, v in hist.items()))
+           "factor_soil_moisture": factor_paths["soil"]})
+    if susc.get("probability"):
+        st = raster_stats(susc["probability"])
+        _log("susceptibility", f"index min={st['min']:.3f} "
+                               f"mean={st['mean']:.3f} max={st['max']:.3f}")
     return out
 
 
@@ -592,9 +614,12 @@ def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
 
     inputs = resolve_inputs(cfg, mode)
     factor_paths = stage_factors(cfg, grid, inputs)
-    susc_class = _susceptibility_stage(cfg, factor_paths)
+    susc = _susceptibility_stage(cfg, factor_paths)
+    susc_class = susc["classes"]
 
-    outputs = {"susceptibility": susc_class}
+    outputs = {k: v for k, v in
+               (("susceptibility_probability", susc.get("probability")),
+                ("susceptibility_classes", susc_class)) if v}
     outputs.update(run_hazard(cfg, susc_class, mode=mode, inputs=inputs))
 
     summary_path = os.path.join(cfg.out_dir, f"{cfg.name}_summary.json")
@@ -614,8 +639,8 @@ def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
 
 
 def _summarise(cfg, mode, grid, factor_paths, outputs) -> dict:
-    susc_hist = _class_histogram(outputs["susceptibility"], 1, 5)
-    return {
+    susc_hist = _class_histogram(outputs["susceptibility_classes"], 1, 5)
+    summary = {
         "name": cfg.name,
         "mode": mode,
         "trigger": cfg.trigger,
@@ -626,6 +651,10 @@ def _summarise(cfg, mode, grid, factor_paths, outputs) -> dict:
         "susceptibility_class_pixels": susc_hist,
         "hazard_probability_stats": raster_stats(outputs["hazard_probability"]),
     }
+    if outputs.get("susceptibility_probability"):
+        summary["susceptibility_index_stats"] = raster_stats(
+            outputs["susceptibility_probability"])
+    return summary
 
 
 def _class_histogram(path: str, lo: int, hi: int) -> Dict[str, int]:

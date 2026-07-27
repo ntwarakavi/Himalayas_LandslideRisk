@@ -34,7 +34,7 @@ def _build_config(args: argparse.Namespace) -> C.Config:
     cfg = C.Config.from_json(args.config) if getattr(args, "config", None) \
         else C.Config()
     simple = ["name", "trigger", "data_dir", "work_dir", "out_dir",
-              "dem_source", "weight_mode", "classification", "climate",
+              "dem_source", "weight_mode", "classification", "output", "climate",
               "climate_period", "climate_model", "worldclim_res"]
     for attr in simple:
         val = getattr(args, attr, None)
@@ -77,6 +77,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     g.add_argument("--weight-mode", dest="weight_mode",
                    choices=["multiplicative", "exponent"])
     g.add_argument("--classification", choices=["fixed", "quantile"])
+    g.add_argument("--output", choices=["probability", "classes", "both"],
+                   help="continuous 0-1 index (default), 5 classes, or both")
     g.add_argument("--no-eq-preset", dest="no_eq_preset", action="store_true",
                    help="keep the full soil-moisture weight for earthquakes")
 
@@ -223,8 +225,10 @@ def _step_hazard(args) -> int:
     susc = args.susceptibility or os.path.join(
         cfg.out_dir, f"{cfg.name}_susceptibility.tif")
     if not os.path.exists(susc):
-        print(f"error: susceptibility map not found: {susc}\n"
-              "Run step4-susceptibility first, or pass --susceptibility PATH.")
+        print(f"error: susceptibility class map not found: {susc}\n"
+              "Run step4-susceptibility first, or pass --susceptibility PATH.\n"
+              "(The hazard matrix is indexed by class, so step 5 needs the "
+              "class map rather than the continuous index.)")
         return 1
     print("STEP 5  Hazard - how likely is a landslide in this scenario?\n")
     print(f"  using susceptibility: {susc}")

@@ -146,9 +146,16 @@ python -m giri_landslide.cli step4-susceptibility \
     --name nepal --bbox 84.0 28.0 84.6 28.5 --res 0.0008333
 ```
 
-Turns each input into a 0–5 factor score, combines them, and cuts the result
-into 5 susceptibility classes. Add `--config outputs/..._calibrated_config.json`
-to use step 3's weights.
+Turns each input into a 0–5 factor score and combines them into a **continuous
+0–1 susceptibility index** — the fitted logistic model evaluated at every pixel,
+so there are no arbitrary class breaks and any two pixels are directly
+comparable. Add `--config outputs/..._calibrated_config.json` to use step 3's
+weights. `--output classes` or `--output both` also writes the 5-class map.
+
+> The index is **relative, not an absolute probability of failure**. It is fitted
+> against background points standing in for absences, so its level depends on how
+> many background points were drawn. 0.8 versus 0.4 tells you the ordering and
+> the separation, not that the first fails 80% of the time.
 
 *Produces:* `outputs/<name>_susceptibility.tif` plus the four factor rasters in
 `data/work/` so you can check any single input.
@@ -190,7 +197,8 @@ python -m giri_landslide.cli run-all --name nepal \
 
 | File | What it means |
 |---|---|
-| `<name>_susceptibility.tif` | 1 = Very Low … 5 = Very High. A landscape property. |
+| `<name>_susceptibility_prob.tif` | **Continuous 0–1 susceptibility index** (default). Straight from the fitted logistic model — no class breaks, every pixel comparable. |
+| `<name>_susceptibility.tif` | 1 = Very Low … 5 = Very High. Built only when a hazard step follows, since the hazard matrix is indexed by class. |
 | `<name>_hazard_probability.tif` | Probability of a damaging landslide **in the scenario you specified**. |
 | `<name>_quicklook.png` | Two panels: susceptibility, then hazard. |
 | `<name>_summary.json` | Grid, weights, class histogram, hazard statistics. |

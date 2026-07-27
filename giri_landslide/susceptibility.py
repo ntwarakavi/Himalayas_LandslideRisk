@@ -7,7 +7,7 @@ then S is reclassified into categories 1..5 (Very Low .. Very High).
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 
@@ -59,6 +59,81 @@ def combine_factors(slope_f: str, litho_f: str, veg_f: str, soil_f: str,
 
     return combine_rasters([slope_f, litho_f, veg_f, soil_f], out_index_path,
                            fn, "float32", -9999.0, block=block)
+
+
+def probability_index(slope_f: str, litho_f: str, veg_f: str, soil_f: str,
+                      out_path: str, weights: C.Weights,
+                      intercept: Optional[float] = None,
+                      block: int = 1024) -> str:
+    """Continuous 0-1 susceptibility index, from the fitted logistic model.
+
+        P = 1 / (1 + exp(-(b + sum_i w_i * log(f_i + 1))))
+
+    This is the same model the calibration fits, evaluated at every pixel, so it
+    needs no class breaks: no empty classes, no quantile ties, and the ordering
+    between two pixels is always meaningful.
+
+    IMPORTANT - this is a *relative* index, not an absolute probability of
+    failure. It is fitted against background points that stand in for absences,
+    so the intercept reflects how many background points were drawn, not how
+    often landslides really occur. Pixel A scoring 0.8 against pixel B at 0.4 is
+    a statement about their ordering and separation, not a claim that A fails
+    80% of the time. Absolute rates need a prevalence correction against a
+    known landslide density.
+
+    With ``intercept=None`` the AOI's own median score is used, which centres
+    the index on 0.5 and keeps it spread across the full range.
+    """
+    w = [weights.slope, weights.lithology, weights.vegetation,
+         weights.soil_moisture]
+
+    def linear(arrs: List[np.ndarray]) -> np.ndarray:
+        clean = [np.where(np.isnan(a), 0.0, a) for a in arrs]
+        z = np.zeros(clean[0].shape, dtype="float64")
+        for wi, a in zip(w, clean):
+            z += wi * np.log(a + 1.0)
+        return z
+
+    if intercept is None:                 # centre on the AOI median
+        intercept = -_median_linear(slope_f, litho_f, veg_f, soil_f, linear,
+                                    block)
+
+    def fn(arrs: List[np.ndarray]) -> np.ndarray:
+        masks = [(a == FACTOR_NODATA) | np.isnan(a) for a in arrs]
+        any_nodata = np.any(masks, axis=0)
+        clean = [np.where(np.isnan(a), 0.0, a) for a in arrs]
+        p = 1.0 / (1.0 + np.exp(-np.clip(linear(arrs) + intercept, -30, 30)))
+        # Hard physical constraints: flat ground and open water cannot fail.
+        p = np.where((clean[0] == 0) | (clean[2] == 0), 0.0, p)
+        # Emit the declared nodata value rather than NaN, so the raster is
+        # self-consistent for readers that honour the nodata tag.
+        return np.where(any_nodata, -9999.0, p)
+
+    return combine_rasters([slope_f, litho_f, veg_f, soil_f], out_path, fn,
+                           "float32", -9999.0, block=block)
+
+
+def _median_linear(slope_f, litho_f, veg_f, soil_f, linear, block) -> float:
+    """Median of the linear predictor over valid, non-flat pixels."""
+    import rasterio
+
+    from .grid import iter_blocks
+
+    sample = []
+    ds = [rasterio.open(p) for p in (slope_f, litho_f, veg_f, soil_f)]
+    try:
+        ref = ds[0]
+        for win in iter_blocks(ref.width, ref.height, block):
+            arrs = [d.read(1, window=win).astype("float64") for d in ds]
+            ok = ~np.any([(a == FACTOR_NODATA) for a in arrs], axis=0)
+            ok &= (arrs[0] > 0) & (arrs[2] > 0)
+            if ok.any():
+                sample.append(linear(arrs)[ok].ravel()[::7])
+    finally:
+        for d in ds:
+            d.close()
+    vals = np.concatenate(sample) if sample else np.array([0.0])
+    return float(np.median(vals))
 
 
 def classify_susceptibility(index_path: str, out_path: str,

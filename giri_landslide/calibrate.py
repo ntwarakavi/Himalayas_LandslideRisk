@@ -391,4 +391,7 @@ def apply_to_config(cfg: C.Config, result: CalibrationResult) -> C.Config:
     )
     c.weight_mode = "exponent"
     c.classification = "quantile"
+    # Carry the fitted intercept so the continuous index uses the calibrated
+    # model rather than re-centring on the AOI median.
+    c.intercept = float(result.intercept)
     return c

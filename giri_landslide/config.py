@@ -280,6 +280,14 @@ class Config:
     # Fit a regional one with `calibrate --fit-lithology`.
     glim_sl: Optional[Dict[str, int]] = None
 
+    # Continuous output. The calibration fits a logistic model, so the same
+    # coefficients give a smooth 0-1 susceptibility index instead of five
+    # arbitrary classes. `intercept` is set by the calibration; without it the
+    # index is centred on the median of the AOI so it still spans 0-1.
+    intercept: Optional[float] = None
+    # "probability" (continuous 0-1), "classes" (1-5), or "both".
+    output: str = "probability"
+
     block_size: int = 1024
     data_dir: str = "data/raw"
     work_dir: str = "data/work"

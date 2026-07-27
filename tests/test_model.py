@@ -246,6 +246,35 @@ def test_quantile_breaks_never_empty_class():
         assert labels == list(range(1, len(breaks) + 1))
 
 
+def test_validate_handles_continuous_index():
+    """Validation must score the continuous index, not only the class map."""
+    import rasterio
+
+    from giri_landslide.model import validate
+    from giri_landslide.utility.grid import Grid
+
+    with tempfile.TemporaryDirectory() as tmp:
+        grid = Grid.from_bbox((84.0, 28.0, 84.5, 28.5), 0.01)   # 50x50
+        rng = np.random.default_rng(0)
+        idx = rng.uniform(0.0, 1.0, grid.shape).astype("float32")
+        path = os.path.join(tmp, "prob.tif")
+        with rasterio.open(path, "w", **grid.profile("float32", -9999.0)) as d:
+            d.write(idx, 1)
+        assert validate.is_continuous(path)
+
+        # Landslides placed only where the index is high must score FR > 1 in
+        # the top bin and produce a monotonic ordering.
+        rows, cols = np.where(idx > 0.9)
+        xs, ys = rasterio.transform.xy(grid.transform, rows, cols)
+        pres = np.column_stack([np.asarray(xs), np.asarray(ys)])
+        bg = inventory.background_points((84.0, 28.0, 84.5, 28.5), 800, path)
+
+        r = validate.validate_susceptibility(path, pres, bg)
+        assert r.frequency_ratio["5"] > 1.0
+        assert r.monotonic, r.frequency_ratio
+        assert r.auc > 0.9, r.auc            # perfect separation by construction
+
+
 def test_compare_susceptibility():
     """Difference map should report the class shift between two runs."""
     import rasterio

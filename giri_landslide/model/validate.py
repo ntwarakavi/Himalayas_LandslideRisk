@@ -52,6 +52,65 @@ class ValidationResult:
         return asdict(self)
 
 
+def is_continuous(susc_path: str) -> bool:
+    """True if the raster holds the continuous index rather than 1-5 classes."""
+    import rasterio
+
+    with rasterio.open(susc_path) as src:
+        return src.dtypes[0].startswith("float")
+
+
+def quantile_bin_edges(susc_path: str, n_bins: int = 5,
+                       block: int = 1024) -> List[float]:
+    """Equal-area edges of the continuous index, for a frequency-ratio table.
+
+    Binning is only for reporting: the AUC is computed on the raw index, so no
+    information is lost to the bin widths.
+    """
+    import rasterio
+
+    from ..utility.grid import iter_blocks
+
+    sample = []
+    with rasterio.open(susc_path) as src:
+        for win in iter_blocks(src.width, src.height, block):
+            a = src.read(1, window=win).astype("float64").ravel()
+            a = a[(a != src.nodata) & np.isfinite(a) & (a > 0)]
+            if a.size:
+                sample.append(a[::7])
+    vals = np.concatenate(sample) if sample else np.array([0.0, 1.0])
+    qs = np.linspace(0, 1, n_bins + 1)[1:-1]
+    edges = sorted({float(v) for v in np.quantile(vals, qs)})
+    if len(edges) < n_bins - 1:
+        # Ties collapsed the quantiles; spread edges over the distinct values
+        # instead so the reporting table keeps its bins.
+        distinct = np.unique(vals)
+        if distinct.size >= n_bins:
+            pick = np.linspace(0, distinct.size - 1, n_bins + 1)[1:-1]
+            edges = sorted({float(distinct[int(i)]) for i in pick})
+    return edges
+
+
+def _binned_areas(susc_path: str, edges: List[float],
+                  block: int = 1024) -> Dict[int, int]:
+    """Pixel count per index bin (bin 1 = lowest)."""
+    import rasterio
+
+    from ..utility.grid import iter_blocks
+
+    counts = {k: 0 for k in range(1, len(edges) + 2)}
+    with rasterio.open(susc_path) as src:
+        for win in iter_blocks(src.width, src.height, block):
+            a = src.read(1, window=win).astype("float64")
+            a = a[(a != src.nodata) & np.isfinite(a)]
+            if not a.size:
+                continue
+            idx = np.digitize(a, edges) + 1
+            for k in counts:
+                counts[k] += int((idx == k).sum())
+    return counts
+
+
 def _class_areas(susc_path: str, block: int = 1024) -> Dict[int, int]:
     """Pixel count per susceptibility class over the whole map."""
     import rasterio
@@ -76,38 +135,51 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
     if len(inventory_points) == 0:
         raise ValueError("no inventory points fall inside the map extent")
 
-    ls = sample_factors_at_points(inventory_points, [susc_path])[:, 0]
-    ls = ls[np.isfinite(ls) & (ls != SUSC_NODATA)]
+    raw = sample_factors_at_points(inventory_points, [susc_path])[:, 0]
+    continuous = is_continuous(susc_path)
+    if continuous:
+        raw = raw[np.isfinite(raw) & (raw != -9999.0)]
+        edges = quantile_bin_edges(susc_path, block=block)
+        areas = _binned_areas(susc_path, edges, block=block)
+        ls = np.digitize(raw, edges) + 1.0    # bin index, 1 = lowest
+    else:
+        raw = raw[np.isfinite(raw) & (raw != SUSC_NODATA)]
+        areas = _class_areas(susc_path, block=block)
+        ls = raw
     if len(ls) == 0:
         raise ValueError("inventory points do not overlap valid map pixels")
-
-    areas = _class_areas(susc_path, block=block)
     total_area = sum(areas.values()) or 1
     total_ls = len(ls)
 
     area_pct, ls_pct, fr = {}, {}, {}
     for k in range(1, 6):
-        a = 100.0 * areas[k] / total_area
+        a = 100.0 * areas.get(k, 0) / total_area
         n = 100.0 * float((ls == k).sum()) / total_ls
         area_pct[str(k)] = round(a, 3)
         ls_pct[str(k)] = round(n, 3)
         fr[str(k)] = round(n / a, 3) if a > 0 else float("nan")
 
     # Monotonicity over the classes that actually occupy area.
-    present = [k for k in range(1, 6) if areas[k] > 0 and np.isfinite(fr[str(k)])]
+    present = [k for k in range(1, 6)
+               if areas.get(k, 0) > 0 and np.isfinite(fr[str(k)])]
     seq = [fr[str(k)] for k in present]
     monotonic = all(b >= a - 1e-9 for a, b in zip(seq, seq[1:]))
 
-    # AUC: landslide classes against background classes.
+    # AUC on the raw values where the map is continuous - binning is only for
+    # the reporting table, so no resolution is given up here.
     if background_points is not None and len(background_points):
         bg = sample_factors_at_points(background_points, [susc_path])[:, 0]
-        bg = bg[np.isfinite(bg) & (bg != SUSC_NODATA)]
+        nod = -9999.0 if continuous else SUSC_NODATA
+        bg = bg[np.isfinite(bg) & (bg != nod)]
+        if continuous:
+            auc = _auc_from_classes(raw, bg)
     else:                       # fall back to the map's own class distribution
-        bg = np.concatenate([np.full(areas[k], k) for k in range(1, 6)
-                             if areas[k]])
+        bg = np.concatenate([np.full(areas.get(k, 0), k) for k in range(1, 6)
+                             if areas.get(k, 0)])
         if len(bg) > 200000:
             bg = bg[:: max(1, len(bg) // 200000)]
-    auc = _auc_from_classes(ls, bg)
+    if not continuous or background_points is None or not len(background_points):
+        auc = _auc_from_classes(ls, bg)
 
     top2_ls = ls_pct["4"] + ls_pct["5"]
     top2_area = area_pct["4"] + area_pct["5"]

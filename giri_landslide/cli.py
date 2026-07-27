@@ -255,13 +255,21 @@ def _step_validate(args) -> int:
     from .input import inventory
     from .model import validate
 
-    susc = args.susceptibility or os.path.join(
-        args.out_dir, f"{args.name}_susceptibility.tif")
-    if not os.path.exists(susc):
-        print(f"error: susceptibility map not found: {susc}")
+    susc = args.susceptibility
+    if not susc:
+        # Prefer the continuous index; fall back to the class map.
+        for suffix in ("_susceptibility_prob.tif", "_susceptibility.tif"):
+            cand = os.path.join(args.out_dir, f"{args.name}{suffix}")
+            if os.path.exists(cand):
+                susc = cand
+                break
+    if not susc or not os.path.exists(susc):
+        print(f"error: no susceptibility map found for '{args.name}' in "
+              f"{args.out_dir}")
         return 1
     print("STEP 6  Validate against a held-out inventory\n")
-    print(f"  map       : {susc}")
+    kind = "continuous index" if validate.is_continuous(susc) else "5 classes"
+    print(f"  map       : {susc}  ({kind})")
     print("  inventories:")
 
     import rasterio

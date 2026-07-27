@@ -1,0 +1,131 @@
+{
+  "name": "sikkim_val",
+  "bbox": [
+    88.0,
+    27.0,
+    88.95,
+    27.6
+  ],
+  "resolution_deg": 0.0025,
+  "trigger": "rainfall",
+  "region_bbox": [
+    60.0,
+    16.0,
+    105.0,
+    39.0
+  ],
+  "weight_mode": "exponent",
+  "classification": "quantile",
+  "inventory_path": "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp",
+  "calibrated_config": null,
+  "slope_breaks": [
+    [
+      7.5,
+      0
+    ],
+    [
+      27.5,
+      2
+    ],
+    [
+      32.5,
+      3
+    ],
+    [
+      35.0,
+      4
+    ],
+    [
+      42.5,
+      5
+    ],
+    [
+      45.0,
+      4
+    ],
+    [
+      50.0,
+      2
+    ],
+    [
+      55.0,
+      1
+    ],
+    [
+      57.5,
+      2
+    ],
+    [
+      Infinity,
+      0
+    ]
+  ],
+  "glim_sl": {
+    "su": 1,
+    "ss": 1,
+    "sm": 3,
+    "py": 3,
+    "va": 3,
+    "vi": 3,
+    "sc": 1,
+    "vb": 2,
+    "mt": 2,
+    "ev": 2,
+    "pa": 2,
+    "pi": 1,
+    "pb": 1,
+    "ig": 0,
+    "wb": 0,
+    "nd": 0
+  },
+  "intercept": -5.119638677711756,
+  "output": "both",
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs",
+  "dem_source": "copernicus90",
+  "dem_path": null,
+  "landcover_source": "worldcover",
+  "landcover_path": null,
+  "glim_full": true,
+  "worldclim_res": "30s",
+  "climate": "current",
+  "climate_period": "2061-2080",
+  "climate_model": "IPSL-CM6A-LR",
+  "climate_res": "2.5m",
+  "glim_path": null,
+  "precip_monthly_dir": null,
+  "vwc_path": null,
+  "trigger_path": null,
+  "scenario_pga_g": 0.3,
+  "scenario_return_period_yr": 100.0,
+  "weights": {
+    "slope": 0.8475116729898814,
+    "lithology": 1.450067656979886,
+    "vegetation": 0.2962135282373799,
+    "soil_moisture": 1.4062071417928517
+  },
+  "susceptibility_breaks": [
+    [
+      5.0,
+      1
+    ],
+    [
+      15.0,
+      2
+    ],
+    [
+      35.0,
+      3
+    ],
+    [
+      75.0,
+      4
+    ],
+    [
+      Infinity,
+      5
+    ]
+  ]
+}

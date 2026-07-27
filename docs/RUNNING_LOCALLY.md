@@ -421,6 +421,28 @@ AUC 0.662, monotonic ordering, classes 4-5 concentrate landslides **2.1x** while
 covering 18% of the map. The model transfers across an international border
 without refitting - a fair result, and real evidence the map generalises.
 
+### Why the NASA GLC / COOLR catalogue is not used for validation
+
+It is tempting to validate against the global catalogue, since it is the only
+source with near-global coverage. It does not work, and the reason is worse than
+reporting bias.
+
+Validating the Himachal map against its 176 Indian GLC records gives AUC 0.518 -
+indistinguishable from random - with 81% of records landing in class 1 and *none
+at all* in classes 2, 4 or 5. That is not a model-failure signature; it is a
+positional one. Querying the records shows why: all 176 share a single
+`location_description`,
+
+    "Uttarakhand and Himachal Pradesh, India"
+
+Two states, roughly 100,000 square kilometres. The points are geocoded to a
+regional centroid, not to landslides. A point placed at state-level precision
+cannot say anything about a 90 m pixel, so any validation against it measures
+the geocoding, not the map.
+
+Use GLC to see roughly *where* landslides get reported. Do not use it to
+calibrate or to validate.
+
 **Always validate before trusting a map in a new area.** Factor behaviour is not
 guaranteed to be stable across the whole HKH: the soil-moisture factor in
 particular depends on how rainfall and relief are arranged locally, and a region

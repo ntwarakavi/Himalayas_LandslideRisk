@@ -206,7 +206,7 @@ Step 3 is only as good as the landslide data behind it. Measured, same pipeline:
 
 | Inventory | Points | How mapped | AUC | Verdict |
 |---|---|---|---|---|
-| NASA GLC / COOLR | 8,634 | media reports | 0.640 | **avoid for calibration** — biased to roads/towns |
+| NASA GLC / COOLR | 8,634 | media reports | 0.640 | **do not calibrate or validate on this** — many records are geocoded to a whole state, not a landslide |
 | Roback Gorkha, Nepal | 24,794 | satellite, earthquake | **0.701** | best for `--trigger earthquake` |
 | Far-West Nepal | 26,348 | satellite, monsoon | 0.563 | best for rainfall — see note |
 | Southern Sikkim, India | 255 | satellite | — | small; regional check |

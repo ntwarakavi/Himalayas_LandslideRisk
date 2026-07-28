@@ -35,7 +35,7 @@ def _build_config(args: argparse.Namespace) -> C.Config:
     cfg = C.Config.from_json(args.config) if getattr(args, "config", None) \
         else C.Config()
     simple = ["name", "trigger", "data_dir", "work_dir", "out_dir",
-              "dem_source", "weight_mode", "classification", "output", "climate",
+              "dem_source", "weight_mode", "classification", "output", "feature_mode", "climate",
               "climate_period", "climate_model", "worldclim_res"]
     for attr in simple:
         val = getattr(args, attr, None)
@@ -80,6 +80,10 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     g.add_argument("--classification", choices=["fixed", "quantile"])
     g.add_argument("--output", choices=["probability", "classes", "both"],
                    help="continuous 0-1 index (default), 5 classes, or both")
+    g.add_argument("--feature-mode", dest="feature_mode",
+                   choices=["continuous", "ordinal"],
+                   help="predictors: full-precision slope/precipitation "
+                        "(default) or the manuscript's integer factor scores")
     g.add_argument("--no-eq-preset", dest="no_eq_preset", action="store_true",
                    help="keep the full soil-moisture weight for earthquakes")
 

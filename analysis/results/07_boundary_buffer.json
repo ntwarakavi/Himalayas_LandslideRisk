@@ -1,0 +1,66 @@
+{
+  "rows": [
+    {
+      "buffer_deg": 0.0,
+      "buffer_km": 0.0,
+      "buffer_cells": 0,
+      "median_sca_ratio": 1.0,
+      "pct_under_half": 1.0,
+      "pct_under_half_edge": 3.77,
+      "mean_abs_dP": 0.0011,
+      "max_abs_dP": 0.82,
+      "pct_dP_over_0.05": 0.449
+    },
+    {
+      "buffer_deg": 0.028,
+      "buffer_km": 3.1,
+      "buffer_cells": 101,
+      "median_sca_ratio": 1.0,
+      "pct_under_half": 0.0,
+      "pct_under_half_edge": 0.0,
+      "mean_abs_dP": 0.0,
+      "max_abs_dP": 0.015,
+      "pct_dP_over_0.05": 0.0
+    },
+    {
+      "buffer_deg": 0.083,
+      "buffer_km": 9.2,
+      "buffer_cells": 299,
+      "median_sca_ratio": 1.0,
+      "pct_under_half": 0.0,
+      "pct_under_half_edge": 0.0,
+      "mean_abs_dP": 0.0,
+      "max_abs_dP": 0.03,
+      "pct_dP_over_0.05": 0.0
+    },
+    {
+      "buffer_deg": 0.167,
+      "buffer_km": 18.5,
+      "buffer_cells": 601,
+      "median_sca_ratio": 1.0,
+      "pct_under_half": 0.0,
+      "pct_under_half_edge": 0.0,
+      "mean_abs_dP": 0.0,
+      "max_abs_dP": 0.03,
+      "pct_dP_over_0.05": 0.0
+    },
+    {
+      "buffer_deg": 0.222,
+      "buffer_km": 24.6,
+      "buffer_cells": 799,
+      "median_sca_ratio": 1.0,
+      "pct_under_half": 0.0,
+      "pct_under_half_edge": 0.0,
+      "mean_abs_dP": 0.0,
+      "max_abs_dP": 0.035,
+      "pct_dP_over_0.05": 0.0
+    }
+  ],
+  "resolution_deg": 0.00027778,
+  "window": [
+    900,
+    1300,
+    1200,
+    1700
+  ]
+}

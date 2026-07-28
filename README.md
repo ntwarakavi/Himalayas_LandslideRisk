@@ -244,6 +244,7 @@ looks good on the landslides it was fitted to.
 | **3 Produce** | 5 | `step5-susceptibility` | Present-day failure probability |
 | | 6 | `step6-hazard` | Rainfall and earthquake scenarios |
 | | 7 | `step7-climate` | CMIP6 futures and the change from today |
+| | 9 | `step9-region` | The above, one state or province at a time |
 | **4 Package** | 8 | `step8-package` | Manifest: products and provenance |
 
 `run-all` executes every phase in sequence.
@@ -322,6 +323,62 @@ answers. A single scenario instead:
 python -m h_sim.cli step6-hazard --name gorkha --return-period 100
 python -m h_sim.cli step6-hazard --name gorkha --trigger earthquake --pga 0.35
 ```
+
+### Phase 3 at regional scale — one province at a time
+
+The region is 4,400 × 2,500 km; at 30 m that is thirteen billion cells, and
+flow routing is not tiled. A regional product is therefore a **sweep over
+administrative units**, not a single run.
+
+```bash
+# what would run, and what it would cost — nothing is computed
+python -m h_sim.cli step9-region --dry-run --res 0.00083333 --countries Nepal Bhutan
+
+# then run it
+python -m h_sim.cli step9-region --name hkh --res 0.00083333 \
+    --fitted-params outputs/gorkha_fitted_params.json
+```
+
+States and provinces come from Natural Earth admin-1 (public domain, one 15 MB
+download). 165 units fall inside the region across the eight countries. Restrict
+with `--countries` or `--units`; add `--with-hazard` or `--with-climate` to run
+those per unit too.
+
+**Calibration is regional, production is per unit.** Fit once (phase 2), then
+sweep. Each unit reads the same fitted parameters; nothing is refitted per
+province.
+
+**Borders cut catchments, so each unit is routed wide and clipped late.** The
+run covers the unit's bounding box grown by `admin_buffer_deg`, and the outputs
+are masked back to the province afterwards. Without that, a cell just inside a
+border gets its catchment truncated at the border and comes out too stable.
+
+The size of that error was measured rather than assumed
+(`analysis/07_boundary_buffer.py`):
+
+| Buffer | Cells losing >½ their catchment | Cells shifting P by >0.05 |
+|---|---|---|
+| none | 1.00 % (3.8 % in the outer ring) | 0.45 % |
+| 0.028° (3 km) | **0.00 %** | **0.00 %** |
+
+Smaller than it sounds, because hillslope contributing areas are hundreds of
+metres, and cells with genuinely long flow paths are valley floors already
+saturated at `w = 1` where more water changes nothing. The default is 0.05°
+(5.5 km) — about twice what was needed on steep crystalline terrain, as margin
+for flatter ground with longer flow paths.
+
+Two practical points:
+
+- **The sweep is resumable.** A unit whose output exists is skipped. A full
+  regional pass is measured in days and something will interrupt it.
+- **Oversize units are reported and skipped**, not attempted — above
+  `admin_max_cells` (40 M by default), since the alternative is an
+  out-of-memory kill part-way through. Xinjiang and Tibet need a coarser grid
+  or a basin-level split.
+- **A sweep routes roughly twice the cells it keeps.** Provinces are irregular
+  and the run is over their bounding boxes: measured on Nepal's Bagmati and
+  Bhojpur, only 51 % and 54 % of the box fell inside the province. That is the
+  price of rectangular tiling, and it is not currently optimised away.
 
 ### Phase 4 — package
 
@@ -462,7 +519,9 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
    PGA fraction is not.
 6. **Flow routing is not tiled.** Contributing area is a property of the whole
    drainage network, so the area of interest is held in memory. The CLI warns
-   above 40 million cells; beyond that, split by basin.
+   above 40 million cells. `step9-region` works around this by sweeping
+   administrative units, but units above that threshold — Xinjiang, Tibet —
+   still need a coarser grid or a basin-level split that is not implemented.
 7. **Calibration regions do not work as implemented** (−0.0004 AUC held out,
    including where geology is varied). Off by default.
 8. **Risk is not implemented.** No exposure, vulnerability or runout model.
@@ -483,6 +542,7 @@ h_sim/
 ├── input/
 │   ├── datasets.py        Dataset registry, cache and availability checks
 │   ├── sources.py         Terrain and climate downloaders
+│   ├── admin.py           States and provinces: the regional sweep's tiles
 │   └── inventory.py       Landslide inventories: fetch, load, sample
 ├── model/
 │   ├── hydrology.py       Priority flood, D-infinity flow, catchment area
@@ -514,6 +574,7 @@ tests/                     48 tests, no network required
 | Calibration regions (optional) | ESA WorldCover 2021 | 10 m | Automatic |
 | Inventories | Gorkha, Far-West Nepal, Sikkim, NASA GLC | Points, polygons | Automatic |
 | Earthquake PGA | GEM seismic hazard map | — | Manual, or scenario value |
+| States and provinces | Natural Earth 1:10m admin-1 | ~1:10 M | Automatic, 15 MB once |
 
 | Inventory | Records | Mapping | Use |
 |---|---|---|---|

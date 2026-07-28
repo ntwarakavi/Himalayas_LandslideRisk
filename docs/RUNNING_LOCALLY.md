@@ -309,6 +309,72 @@ The triggering return period keeps its present-day definition: terrain takes
 far longer than a century to adjust, and redefining the trigger at the same time
 would confound two effects in one map.
 
+## 8b. Regional production, one province at a time
+
+The whole region cannot be a single run: 4,400 × 2,500 km at 30 m is thirteen
+billion cells and flow routing is not tiled. `step9-region` sweeps
+administrative units instead.
+
+Always cost it first — nothing is computed:
+
+```bash
+python -m h_sim.cli step9-region --dry-run --res 0.00083333 \
+    --countries Nepal Bhutan
+```
+
+```
+  cells (M)  country / unit
+  --------------------------------------------------------
+        5.3  Nepal / Bheri
+        5.2  Nepal / Janakpur
+        ...
+```
+
+Then run it, pointing at the parameters fitted once for the region:
+
+```bash
+python -m h_sim.cli step9-region --name hkh --res 0.00083333 \
+    --fitted-params outputs/gorkha_fitted_params.json
+```
+
+Useful flags: `--countries`, `--units` to restrict; `--with-hazard` and
+`--with-climate` to run those per unit as well; `--no-resume` to redo units
+that already have output.
+
+Each unit writes `<name>_<country>_<unit>_susceptibility_prob.tif` and friends,
+plus a `_unit.json` marker. A region-wide table lands in
+`<name>_region_summary.json`, sorted so the worst provinces come first:
+
+```
+  unstable %   mean P   unit
+  --------------------------------------------------------
+      20.97   0.2307   Nepal / Bagmati
+      15.06   0.1701   Nepal / Bhojpur
+```
+
+Four things to know before starting a long sweep:
+
+- **Calibrate once, sweep many.** Every unit reads the same fitted parameters.
+  Nothing is refitted per province, and it should not be — a province is an
+  administrative unit, not a soil unit.
+- **It is resumable.** A unit whose `_unit.json` exists is skipped. A full pass
+  is measured in days; something will interrupt it.
+- **Each unit is routed wide and clipped late**, by `admin_buffer_deg`
+  (0.05°, 5.5 km), so catchments are not truncated at borders. That default is
+  measured, not guessed — see [RESULTS.md §6](RESULTS.md).
+- **Budget about twice the cells you keep.** Provinces are irregular and runs
+  are over bounding boxes; roughly half of each box falls outside its province
+  and is discarded at the clip.
+
+Oversize units are listed and skipped rather than attempted:
+
+```
+[h-sim] region   3 units exceed 40,000,000 cells and are skipped
+```
+
+Lower `--res` for those, or leave them for a basin-level split that is not
+implemented yet.
+
 ## 9. Packaging the deliverables
 
 ```bash

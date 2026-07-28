@@ -16,6 +16,7 @@ than streaming it in blocks. Everything else is windowed.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -889,6 +890,190 @@ def quicklook(prob_path: str, out_png: str) -> str:
 # ---------------------------------------------------------------------------
 # whole workflow
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# step 9: regional sweep, one state or province at a time
+# ---------------------------------------------------------------------------
+
+def _clip_to_unit(path: str, mask, grid: Grid, out_path: str) -> str:
+    """Blank a raster outside the administrative unit it belongs to."""
+    with rasterio.open(path) as src:
+        arr = src.read(1)
+        prof = src.profile.copy()
+        nod = src.nodata
+    arr = arr.copy()
+    arr[~mask] = nod if nod is not None else 0
+    with rasterio.open(out_path, "w", **prof) as dst:
+        dst.write(arr, 1)
+    return out_path
+
+
+def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
+                   hazard: bool = False, climate: bool = False
+                   ) -> Dict[str, object]:
+    """Produce maps for one state or province.
+
+    The run is done over the unit's bounding box **grown by
+    ``cfg.admin_buffer_deg``**, and the outputs are clipped back to the unit
+    afterwards. That ordering is the point: a provincial border cuts
+    catchments, so routing over the clipped box alone starts every catchment at
+    the border and hands the cells just inside it too little upslope area.
+    Running wide and clipping late lets flow enter from outside.
+
+    The error is smaller than it sounds - measured at 1% of cells, all in the
+    outer ring, and removed entirely by 3 km of buffer - because hillslope
+    contributing areas are hundreds of metres, not tens of kilometres. See
+    ``admin_buffer_deg`` and analysis/07_boundary_buffer.py.
+    """
+    from .input import admin
+
+    sub = copy.deepcopy(cfg)
+    sub.name = f"{cfg.name}_{unit.slug}"
+    sub.bbox = admin.buffered_bbox(unit.bbox, cfg.admin_buffer_deg)
+    # The buffer may push the box outside the study region; clipping keeps it
+    # legal without shrinking the unit itself.
+    sub.bbox = (max(sub.bbox[0], cfg.region_bbox[0]),
+                max(sub.bbox[1], cfg.region_bbox[1]),
+                min(sub.bbox[2], cfg.region_bbox[2]),
+                min(sub.bbox[3], cfg.region_bbox[3]))
+    # Fitted parameters are regional, not per unit: resolve them once from the
+    # parent run rather than looking for a fit named after the province.
+    sub.fitted_params = (cfg.fitted_params
+                         or _out(cfg, "fitted_params.json"))
+
+    _log("unit", f"{unit.country} / {unit.name}  "
+                 f"({sub.cell_count():,} cells incl. buffer)")
+
+    out: Dict[str, object] = {"unit": unit.as_dict()}
+    base = run_susceptibility(sub, mode=mode)
+    if hazard:
+        out["hazard"] = run_hazard_suite(sub, mode=mode)
+    if climate:
+        out["climate"] = run_climate(sub, mode=mode)
+
+    # Clip every raster the unit produced back to the province outline.
+    grid = Grid.from_bbox(sub.clipped_bbox(), sub.resolution_deg)
+    mask = admin.unit_mask(unit, grid)
+    coverage = float(mask.mean())
+    clipped = {}
+    for key, path in base.items():
+        if isinstance(path, str) and path.endswith(".tif"):
+            clipped[key] = _clip_to_unit(path, mask, grid, path)
+    out["maps"] = clipped
+    out["summary"] = base.get("summary")
+
+    with rasterio.open(base["probability"]) as src:
+        p = src.read(1).astype("float64")
+        p[(p == src.nodata) | ~mask] = np.nan
+    out["stats"] = {
+        "cells_in_unit": int(mask.sum()),
+        "buffer_fraction": round(1.0 - coverage, 3),
+        "mean_probability": _safe(np.nanmean, p),
+        "unstable_area_pct": _area_above(p, 0.5),
+        "p90_probability": _safe(lambda a: np.nanpercentile(a, 90), p),
+    }
+    _log("unit", f"{unit.name}: {out['stats']['unstable_area_pct']:.1f}% "
+                 f"above 0.5, mean P {out['stats']['mean_probability']:.4f}")
+    return out
+
+
+def _safe(fn, arr) -> float:
+    ok = np.isfinite(arr)
+    return round(float(fn(arr[ok])), 4) if ok.any() else float("nan")
+
+
+def run_region(cfg: C.Config, mode: str = "download",
+               countries: Optional[Sequence[str]] = None,
+               names: Optional[Sequence[str]] = None,
+               hazard: bool = False, climate: bool = False,
+               dry_run: bool = False, resume: bool = True
+               ) -> Dict[str, object]:
+    """STEP 9 - sweep the region one administrative unit at a time.
+
+    Units are run independently and their outputs written per unit, so the
+    sweep is restartable: a unit whose summary already exists is skipped unless
+    ``resume`` is off. That matters because a full regional pass is measured in
+    days, and something will interrupt it.
+
+    Units needing more than ``cfg.admin_max_cells`` are reported and skipped
+    rather than attempted. Flow routing holds the area in memory, so the
+    alternative to skipping is an out-of-memory kill part-way through a sweep.
+    """
+    from .input import admin
+
+    _ensure_dirs(cfg)
+    shp = cfg.admin_path or admin.download_admin1(cfg.data_dir)
+    if not shp:
+        raise RuntimeError("no administrative boundaries available; "
+                           + admin.ADMIN_SOURCE_INFO)
+
+    units = admin.load_units(shp, cfg.region_bbox,
+                             countries=countries or cfg.admin_countries,
+                             names=names)
+    _log("region", f"{len(units)} units inside the study region")
+
+    rows = admin.summarise(units, cfg.resolution_deg, cfg.admin_buffer_deg)
+    too_big = [r for r in rows if r["cells"] > cfg.admin_max_cells]
+    runnable = [u for u in units
+                if u.cell_count(cfg.resolution_deg, cfg.admin_buffer_deg)
+                <= cfg.admin_max_cells]
+
+    if too_big:
+        _log("region", f"{len(too_big)} units exceed "
+                       f"{cfg.admin_max_cells:,} cells and are skipped")
+    total = sum(u.cell_count(cfg.resolution_deg, cfg.admin_buffer_deg)
+                for u in runnable)
+    _log("region", f"{len(runnable)} runnable, {total / 1e6:,.0f} million "
+                   "cells in total")
+
+    report: Dict[str, object] = {
+        "resolution_deg": cfg.resolution_deg,
+        "buffer_deg": cfg.admin_buffer_deg,
+        "n_units_found": len(units),
+        "n_units_runnable": len(runnable),
+        "skipped_too_large": too_big,
+        "plan": rows,
+        "units": [],
+    }
+    if dry_run:
+        path = _out(cfg, "region_plan.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2)
+        report["summary"] = path
+        _log("region", f"plan only -> {path}")
+        return report
+
+    done, failed = 0, []
+    for i, unit in enumerate(runnable, start=1):
+        marker = os.path.join(cfg.out_dir,
+                              f"{cfg.name}_{unit.slug}_unit.json")
+        if resume and os.path.exists(marker):
+            with open(marker, encoding="utf-8") as fh:
+                report["units"].append(json.load(fh))
+            _log("skip", f"[{i}/{len(runnable)}] {unit.name} already done")
+            continue
+        _log("region", f"[{i}/{len(runnable)}] {unit.country} / {unit.name}")
+        try:
+            res = run_admin_unit(cfg, unit, mode=mode, hazard=hazard,
+                                 climate=climate)
+        except Exception as exc:                          # noqa: BLE001
+            _log("FAILED", f"{unit.name}: {type(exc).__name__}: {exc}")
+            failed.append({"unit": unit.as_dict(), "error": str(exc)})
+            continue
+        with open(marker, "w", encoding="utf-8") as fh:
+            json.dump(res, fh, indent=2, default=str)
+        report["units"].append(res)
+        done += 1
+
+    report["n_completed"] = done
+    report["failed"] = failed
+    path = _out(cfg, "region_summary.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2, default=str)
+    report["summary"] = path
+    _log("done", f"{done} units produced, {len(failed)} failed -> {path}")
+    return report
+
 
 # ---------------------------------------------------------------------------
 # step 8: package the deliverables

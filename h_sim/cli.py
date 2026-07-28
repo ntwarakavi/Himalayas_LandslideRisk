@@ -20,6 +20,8 @@ Nothing is ever re-downloaded and the expensive stage is cached.
       step6-hazard         rainfall and earthquake scenarios
       step7-climate        CMIP6 futures, and the change from today
 
+      step9-region         sweep the region, one state or province at a time
+
     PACKAGE
       step8-package        manifest: what was produced and what it means
 
@@ -435,6 +437,56 @@ def _step_package(args) -> int:
     return 0
 
 
+def _step_region(args) -> int:
+    cfg = _build_config(args)
+    print("STEP 9  Regional sweep, one state or province at a time\n")
+    if _needs_fit(cfg) and not args.dry_run:
+        print("  note: no fitted parameters found, so every unit uses SINMAP's "
+              "generic\n        ranges. Calibrate once for the region "
+              "(step3-fit) before a real sweep.\n")
+    report = pipeline.run_region(
+        cfg, mode=args.mode, countries=args.countries, names=args.units,
+        hazard=args.with_hazard, climate=args.with_climate,
+        dry_run=args.dry_run,
+        resume=not args.no_resume)
+
+    if args.dry_run:
+        print(f"\n  {report['n_units_found']} units, "
+              f"{report['n_units_runnable']} runnable at "
+              f"{report['resolution_deg']} deg\n")
+        print("  cells (M)  country / unit")
+        print("  " + "-" * 56)
+        for r in report["plan"][:25]:
+            flag = "  SKIP" if r["cells"] > cfg.admin_max_cells else ""
+            print(f"  {r['cells'] / 1e6:>9.1f}  {r['country']} / "
+                  f"{r['name']}{flag}")
+        if len(report["plan"]) > 25:
+            print(f"  ... and {len(report['plan']) - 25} more")
+        print(f"\n  Plan -> {report['summary']}")
+        return 0
+
+    rows = sorted((u for u in report["units"] if u.get("stats")),
+                  key=lambda u: -u["stats"]["unstable_area_pct"])
+    if rows:
+        print("\n  unstable %   mean P   unit")
+        print("  " + "-" * 56)
+        for u in rows[:20]:
+            s = u["stats"]
+            print(f"  {s['unstable_area_pct']:>9.2f}   {s['mean_probability']:>6.4f}   "
+                  f"{u['unit']['country']} / {u['unit']['name']}")
+        if len(rows) > 20:
+            print(f"  ... and {len(rows) - 20} more")
+    if report.get("failed"):
+        print(f"\n  {len(report['failed'])} unit(s) failed:")
+        for f in report["failed"][:5]:
+            print(f"    {f['unit']['name']}: {f['error'][:70]}")
+    print(f"\n  Summary -> {report['summary']}")
+    print("\n  Each unit was routed over its bounding box plus a "
+          f"{cfg.admin_buffer_deg} deg buffer\n  and clipped back afterwards, "
+          "so catchments are not truncated at borders.")
+    return 0
+
+
 def _run_all(args) -> int:
     rc = _step_download(args)
     if rc:
@@ -512,6 +564,22 @@ def main(argv: Optional[List[str]] = None) -> int:
                         "(default: config climate_suite)")
     _mode(p); _add_common(p)
 
+    p = sub.add_parser("step9-region", aliases=["region"],
+                       help="sweep the region one state or province at a time")
+    p.add_argument("--dry-run", action="store_true",
+                   help="list the units and their cost, run nothing")
+    p.add_argument("--countries", nargs="+",
+                   help="restrict to these countries (default: all HKH)")
+    p.add_argument("--units", nargs="+",
+                   help="restrict to these state/province names")
+    p.add_argument("--with-hazard", dest="with_hazard", action="store_true",
+                   help="also run every trigger scenario per unit")
+    p.add_argument("--with-climate", dest="with_climate", action="store_true",
+                   help="also run the climate sweep per unit")
+    p.add_argument("--no-resume", action="store_true",
+                   help="redo units that already have outputs")
+    _mode(p); _add_common(p)
+
     p = sub.add_parser("step8-package", aliases=["package"],
                        help="write the manifest of products and provenance")
     _add_common(p)
@@ -547,6 +615,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "step6-hazard": _step_hazard, "hazard": _step_hazard,
         "step7-climate": _step_climate, "climate": _step_climate,
         "step8-package": _step_package, "package": _step_package,
+        "step9-region": _step_region, "region": _step_region,
         "run-all": _run_all, "run": _run_all,
     }
     return handlers[cmd](args)

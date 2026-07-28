@@ -614,6 +614,123 @@ def test_climate_sweep_produces_maps_and_changes():
         assert fut["mean_change"] >= 0.0
 
 
+# ---------------------------------------------------------------------------
+# regional sweep by administrative unit
+# ---------------------------------------------------------------------------
+
+def _fake_admin_layer(tmp, boxes) -> str:
+    """A GeoJSON standing in for Natural Earth, so tests need no download."""
+    feats = []
+    for name, (w, s, e, n) in boxes.items():
+        feats.append({
+            "type": "Feature",
+            "properties": {"name": name, "admin": "Testland"},
+            "geometry": {"type": "Polygon", "coordinates": [[
+                [w, s], [e, s], [e, n], [w, n], [w, s]]]}})
+    path = os.path.join(tmp, "admin.geojson")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"type": "FeatureCollection", "features": feats}, fh)
+    return path
+
+
+def test_admin_units_are_clipped_to_the_region():
+    from h_sim.input import admin
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = _fake_admin_layer(tmp, {
+            "Inside": (84.0, 28.0, 84.5, 28.5),
+            "Straddling": (59.0, 15.0, 61.0, 17.0),   # half outside the HKH
+            "Outside": (0.0, 0.0, 1.0, 1.0),
+            "Sliver": (84.0, 28.0, 84.005, 28.005),
+        })
+        units = admin.load_units(path, C.HKH_BBOX)
+        names = {u.name for u in units}
+
+        assert "Inside" in names
+        assert "Outside" not in names, "unit outside the region must be dropped"
+        assert "Sliver" not in names, "unit too small to route must be dropped"
+
+        strad = [u for u in units if u.name == "Straddling"][0]
+        assert strad.bbox[0] == C.HKH_BBOX[0], "should clip to the region edge"
+        assert strad.bbox[1] == C.HKH_BBOX[1]
+
+
+def test_admin_slug_is_unique_and_filesystem_safe():
+    from h_sim.input import admin
+
+    a = admin.AdminUnit("Jammu & Kashmir", "India", (75.0, 32.0, 76.0, 33.0))
+    b = admin.AdminUnit("Jammu & Kashmir", "Pakistan", (74.0, 33.0, 75.0, 34.0))
+    assert a.slug != b.slug
+    for s in (a.slug, b.slug):
+        assert all(c.isalnum() or c == "_" for c in s), s
+    assert a.slug == "india_jammu_kashmir"
+
+
+def test_buffer_grows_the_box_and_costs_cells():
+    from h_sim.input import admin
+
+    u = admin.AdminUnit("X", "Y", (84.0, 28.0, 85.0, 29.0))
+    assert admin.buffered_bbox(u.bbox, 0.0) == u.bbox
+    assert admin.buffered_bbox(u.bbox, 0.5) == (83.5, 27.5, 85.5, 29.5)
+
+    plain = u.cell_count(0.001)
+    buffered = u.cell_count(0.001, 0.05)
+    assert plain == 1000 * 1000
+    assert buffered == 1100 * 1100          # the buffer is not free
+
+
+def test_regional_sweep_clips_each_unit_and_is_resumable():
+    """Two adjacent units must not both claim the border cells."""
+    import rasterio
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="reg", resolution_deg=0.005)
+        cfg.admin_buffer_deg = 0.02
+        cfg.admin_path = _fake_admin_layer(tmp, {
+            "West": (84.0, 28.0, 84.1, 28.2),
+            "East": (84.1, 28.0, 84.2, 28.2),
+        })
+
+        report = pipeline.run_region(cfg, mode="demo")
+        assert report["n_units_runnable"] == 2
+        assert report["n_completed"] == 2
+        assert not report["failed"], report["failed"]
+
+        # Every unit produced a map, and each blanked the ground outside itself.
+        for u in report["units"]:
+            prob = u["maps"]["probability"]
+            assert os.path.exists(prob)
+            with rasterio.open(prob) as src:
+                a = src.read(1)
+                valid = a != src.nodata
+            assert valid.any(), "unit produced an empty map"
+            assert not valid.all(), "buffer region should be blanked"
+            assert u["stats"]["cells_in_unit"] > 0
+
+        # Re-running skips completed units rather than redoing them.
+        again = pipeline.run_region(cfg, mode="demo")
+        assert again["n_completed"] == 0
+        assert len(again["units"]) == 2
+
+
+def test_regional_dry_run_costs_without_running():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="plan", resolution_deg=0.005)
+        cfg.admin_path = _fake_admin_layer(tmp, {
+            "Small": (84.0, 28.0, 84.1, 28.1),
+            "Huge": (60.0, 16.0, 100.0, 38.0),
+        })
+        cfg.admin_max_cells = 1_000_000
+
+        report = pipeline.run_region(cfg, mode="demo", dry_run=True)
+        assert report["n_units_found"] == 2
+        assert report["n_units_runnable"] == 1, "the huge unit must be skipped"
+        assert report["skipped_too_large"][0]["name"] == "Huge"
+        assert report["plan"][0]["cells"] > report["plan"][-1]["cells"]
+        # Nothing was produced.
+        assert not [f for f in os.listdir(cfg.out_dir) if f.endswith(".tif")]
+
+
 def test_package_manifest_carries_provenance():
     with tempfile.TemporaryDirectory() as tmp:
         cfg = _demo_config(tmp, name="pack", resolution_deg=0.005)

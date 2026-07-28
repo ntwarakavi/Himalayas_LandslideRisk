@@ -1,6 +1,6 @@
 # H-SIM experiments
 
-Six scripts, each answering one question about the model. They share sampling
+Seven scripts, each answering one question about the model. They share sampling
 and fold logic through `common.py`, so every comparison holds the presence
 points, the background points and the spatial folds fixed and varies one thing.
 
@@ -11,6 +11,7 @@ python analysis/03_domain.py               # where does the model stop working?
 python analysis/04_sensitivity.py          # what rests on the two unfitted conventions?
 python analysis/05_inventory_geometry.py   # where should a polygon inventory be sampled?
 python analysis/06_calibration_regions.py  # do per-lithology parameters ever help?
+python analysis/07_boundary_buffer.py      # how wide a buffer does a province sweep need?
 ```
 
 These study the SINMAP model, which is the only model in the repository. Two

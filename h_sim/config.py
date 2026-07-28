@@ -212,6 +212,34 @@ class Config:
     #: Extra outputs that cost almost nothing once the fit exists.
     write_critical_acceleration: bool = True
 
+    # Regional sweep (step9) -------------------------------------------------
+    #: Polygon layer of states and provinces. None downloads Natural Earth
+    #: admin-1; supply a national dataset instead if you have one.
+    admin_path: Optional[str] = None
+    #: Countries to sweep. None means every HKH member country.
+    admin_countries: Optional[List[str]] = None
+    #: How far outside a unit to route flow before clipping the map back to it.
+    #: A provincial border cuts catchments, so a cell just inside one is handed
+    #: too little upslope area if the DEM stops at the border.
+    #:
+    #: Measured rather than assumed (analysis/07_boundary_buffer.py): with no
+    #: buffer the damage is confined to the outer ring - 1% of cells lose more
+    #: than half their catchment area, and 0.4% shift failure probability by
+    #: more than 0.05. A buffer of 0.028 deg (3 km) removed it entirely. The
+    #: effect is small because hillslope contributing areas are hundreds of
+    #: metres, and the cells with genuinely long flow paths are valley floors
+    #: already saturated at w = 1, where more water changes nothing.
+    #:
+    #: 0.05 deg (5.5 km) is roughly twice what was needed on steep crystalline
+    #: terrain, as margin for flatter ground with longer flow paths. Raising it
+    #: is cheap insurance only up to a point: buffering a 1x1 deg province by
+    #: 0.25 deg would grow it to 2.25x the cells for no measured gain.
+    admin_buffer_deg: float = 0.05
+    #: Units larger than this are reported and skipped rather than attempted.
+    #: Flow routing holds the area in memory, so the alternative is an
+    #: out-of-memory kill part-way through a multi-day sweep.
+    admin_max_cells: int = 40_000_000
+
     #: Scenarios step6 evaluates: rainfall return periods (years) and peak
     #: ground accelerations (g). Each produces its own map.
     return_periods_yr: List[float] = field(

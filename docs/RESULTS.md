@@ -291,7 +291,49 @@ little left to discriminate.
 **A seismic scenario must be quoted as a range over this parameter, never as a
 single number.** A rainfall scenario need not be.
 
-## 6. Protocol corrections made along the way
+## 6. How wide a buffer a province-by-province sweep needs
+
+`analysis/07_boundary_buffer.py` — a regional run is cut into states and
+provinces, and a provincial border crosses catchments. Routing over a box
+clipped at the border starts every catchment there, so cells just inside get
+too little upslope area. `pipeline.run_admin_unit` routes over a buffered box
+and clips the output back; this measures whether that is necessary and how wide
+the buffer has to be.
+
+A 400 × 500 cell window inside the cached 30 m Gorkha DEM stands in for a
+province. It is routed alone and with increasing buffers, and compared against
+the same cells taken from routing the full extent.
+
+| Buffer | | Median SCA ratio | Cells losing >½ | ... in the outer ring | Mean \|ΔP\| | Cells with \|ΔP\| > 0.05 |
+|---|---|---|---|---|---|---|
+| none | 0 km | 1.0000 | 1.00 % | 3.77 % | 0.00110 | 0.449 % |
+| 0.028° | 3.1 km | 1.0000 | **0.00 %** | **0.00 %** | **0.00000** | **0.000 %** |
+| 0.083° | 9.2 km | 1.0000 | 0.00 % | 0.00 % | 0.00000 | 0.000 % |
+| 0.167° | 18.5 km | 1.0000 | 0.00 % | 0.00 % | 0.00000 | 0.000 % |
+| 0.222° | 24.6 km | 1.0000 | 0.00 % | 0.00 % | 0.00000 | 0.000 % |
+
+**The truncation is real but far smaller and more local than expected, and 3 km
+of buffer removes it entirely.** The median cell is unaffected even with no
+buffer at all; the damage is confined to the outermost ring, where 3.8 % of
+cells lose more than half their catchment area.
+
+The reason is the scale mismatch. Hillslope contributing areas — the ones the
+wetness term actually discriminates on — are hundreds of metres. Cells with
+genuinely long flow paths are valley floors, and those are already saturated at
+`w = 1`, where losing upslope area changes nothing because the term is capped.
+
+This changed the default: `admin_buffer_deg` was set to 0.25° on the assumption
+that catchments needed tens of kilometres, and is now 0.05° (5.5 km), roughly
+twice the measured requirement. That is not a cosmetic change — buffering a
+1° × 1° province by 0.25° grows it to 2.25× the cells, against 1.21× at 0.05°,
+for no measured gain.
+
+One caveat on scope: this was measured on steep crystalline terrain at 30 m.
+Flatter ground with longer flow paths could push the requirement out, which is
+why the default carries a factor of two rather than sitting at the measured
+edge.
+
+## 7. Protocol corrections made along the way
 
 Two defects in the experimental setup were found and fixed while running these,
 and both changed results, so they are recorded rather than quietly repaired.
@@ -312,7 +354,7 @@ interrupted write left a truncated GeoTIFF that later runs failed to open. Fixed
 by writing through a temporary and renaming, and by caching the wettest-month
 raster with the same grid check the terrain already used.
 
-## 7. What did not work
+## 8. What did not work
 
 Collected in one place, because a method paper that reports only its successes
 is not much use.
@@ -324,7 +366,7 @@ is not much use.
 | Crown rather than centroid sampling | +0.017 Far-West, −0.006 Gorkha | Not wired into the pipeline; documented |
 | Refitting on the monsoon inventory to escape the earthquake trigger | Hypothesis refuted — scores 0.16 *lower* | Reported as a domain-of-validity limit |
 
-## 8. Which model to use
+## 9. Which model to use
 
 Every model fitted on Gorkha at 30 m and
 applied **unchanged** to two other catchments, scored against their own
@@ -359,7 +401,7 @@ resembling the target, and validate locally before relying on it. Do not choose
 a model on its home-ground score — on this evidence that selects almost exactly
 the wrong one.
 
-## 9. What the physics actually buys
+## 10. What the physics actually buys
 
 The benchmark says plainly that the mechanical model does not out-discriminate a
 logistic regression on the same two variables. Four things it does do, none of

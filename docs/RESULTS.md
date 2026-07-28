@@ -1,6 +1,6 @@
 # Results
 
-What HIMA-SLIDE does, measured. Every number here comes from a script in
+What H-SIM does, measured. Every number here comes from a script in
 [`../analysis/`](../analysis/) and a JSON in `analysis/results/`; the protocol is
 described in [`../analysis/README.md`](../analysis/README.md).
 

@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hima-slide"
+name = "h-sim"
 version = "0.2.0"
-description = "HIMA-SLIDE: Himalayan Integrated Model for Assessment of Slope Instability and Debris Erosion"
+description = "H-SIM: Himalayan Slope Instability Model - physically based landslide hazard for the Hindu Kush Himalaya"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -20,10 +20,10 @@ viz = ["matplotlib>=3.6"]
 vector = ["fiona>=1.9", "geopandas>=0.13"]
 
 [project.scripts]
-hima-slide = "hima_slide.cli:main"
+h-sim = "h_sim.cli:main"
 
 [tool.setuptools]
-packages = ["hima_slide", "hima_slide.input", "hima_slide.model", "hima_slide.utility"]
+packages = ["h_sim", "h_sim.input", "h_sim.model", "h_sim.utility"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

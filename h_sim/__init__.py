@@ -1,14 +1,12 @@
-"""HIMA-SLIDE - Himalayan Integrated Model for Assessment of Slope
-Instability and Debris Erosion.
+"""H-SIM - Himalayan Slope Instability Model.
 
 A physically based landslide model for the Hindu Kush Himalaya: an open-source,
 end-to-end implementation of infinite-slope stability under steady-state
 wetness, fitted to mapped landslide inventories.
 
-The model covers the *slope instability* half of its name - where a soil column
-stops holding. Debris transport after failure is not implemented: HIMA-SLIDE
-says where material detaches, not where it travels or comes to rest. See
-``model/risk.py`` for what a runout stage would need.
+The model resolves where a soil column stops holding. What happens to the
+material afterwards - runout, deposition, erosion along the track - is out of
+scope; see ``model/risk.py`` for what a runout stage would need.
 
 Methods:
 

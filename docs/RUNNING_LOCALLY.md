@@ -1,4 +1,4 @@
-# Running HIMA-SLIDE locally
+# Running H-SIM locally
 
 A practical guide: what to install, what to run, how long each step takes, and
 what the output means. For the model itself — the mechanics, the fitting, and
@@ -63,8 +63,8 @@ inventory.
 Two commands. The first fetches data, the second builds a map.
 
 ```bash
-python -m hima_slide.cli step2-download --config configs/01_quickstart.json
-python -m hima_slide.cli step5-susceptibility --config configs/01_quickstart.json
+python -m h_sim.cli step2-download --config configs/01_quickstart.json
+python -m h_sim.cli step5-susceptibility --config configs/01_quickstart.json
 ```
 
 About 120 MB and a few minutes. This uses SINMAP's generic parameter ranges
@@ -118,8 +118,8 @@ first look. Full numbers in [RESULTS.md](RESULTS.md).
 This is the step that turns a plausible map into a defensible one.
 
 ```bash
-python -m hima_slide.cli step2-download --config configs/02_calibrate_gorkha.json
-python -m hima_slide.cli step3-fit --config configs/02_calibrate_gorkha.json
+python -m h_sim.cli step2-download --config configs/02_calibrate_gorkha.json
+python -m h_sim.cli step3-fit --config configs/02_calibrate_gorkha.json
 ```
 
 The fit searches 48 parameter sets and cross-validates twice. On the Gorkha
@@ -161,7 +161,7 @@ automatically when `--name` matches, or point at it explicitly with
 ### Choosing an inventory
 
 ```bash
-python -m hima_slide.cli step3-fit --name farwest \
+python -m h_sim.cli step3-fit --name farwest \
     --bbox 80.558 28.913 81.592 29.856 --res 0.00083333 \
     --inventory data/raw/inventory/farwest/<file>.shp
 ```
@@ -194,7 +194,7 @@ close the gap. See [RESULTS.md §4](RESULTS.md).
 ## 6. Validating
 
 ```bash
-python -m hima_slide.cli step4-validate --name gorkha \
+python -m h_sim.cli step4-validate --name gorkha \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
 ```
 
@@ -231,10 +231,10 @@ scalar in the factor of safety, so hazard and stability share a code path.
 
 ```bash
 # a 100-year storm
-python -m hima_slide.cli step6-hazard --name gorkha --return-period 100
+python -m h_sim.cli step6-hazard --name gorkha --return-period 100
 
 # 0.35 g of shaking
-python -m hima_slide.cli step6-hazard --name gorkha \
+python -m h_sim.cli step6-hazard --name gorkha \
     --trigger earthquake --pga 0.35
 ```
 
@@ -255,7 +255,7 @@ probability under a scenario is not.
 
 For a real seismic hazard grid rather than a uniform value, set `pga_path` to a
 PGA raster in g (the GEM global model is the usual source — see
-`python -m hima_slide.cli info`).
+`python -m h_sim.cli info`).
 
 ## 8. Current and future climate
 
@@ -264,10 +264,10 @@ parameters, terrain and the meaning of a return period are all unchanged.
 
 ```bash
 # the scenarios named in the config
-python -m hima_slide.cli step7-climate --config configs/03_production_gorkha.json
+python -m h_sim.cli step7-climate --config configs/03_production_gorkha.json
 
 # or name them directly
-python -m hima_slide.cli step7-climate --name gorkha \
+python -m h_sim.cli step7-climate --name gorkha \
     --scenarios current ssp245:2061-2080 ssp585:2081-2100
 ```
 
@@ -312,7 +312,7 @@ would confound two effects in one map.
 ## 9. Packaging the deliverables
 
 ```bash
-python -m hima_slide.cli step8-package --name gorkha
+python -m h_sim.cli step8-package --name gorkha
 ```
 
 Nothing is recomputed and nothing is copied. This catalogues what exists and
@@ -328,7 +328,7 @@ not a deliverable.
 Fits separate soil parameters per rock type or land-cover class:
 
 ```bash
-python -m hima_slide.cli step3-fit --name gorkha \
+python -m h_sim.cli step3-fit --name gorkha \
     --calibration-regions lithology --inventory <path>
 ```
 

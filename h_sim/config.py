@@ -1,4 +1,4 @@
-"""HIMA-SLIDE run configuration, and the model's few free parameters.
+"""H-SIM run configuration, and the model's few free parameters.
 
 The physical model has far fewer knobs than a heuristic index does, because the
 form of the response is fixed by mechanics rather than chosen. What remains is

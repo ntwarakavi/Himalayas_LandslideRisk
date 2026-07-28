@@ -5,7 +5,7 @@ package does not yet have:
 
     risk = hazard x exposure x vulnerability
 
-``hazard`` is produced by :mod:`hima_slide.model.hazard` as a probability
+``hazard`` is produced by :mod:`h_sim.model.hazard` as a probability
 per scenario event. ``exposure`` and ``vulnerability`` are absent.
 
 Scope required to complete this stage
@@ -51,5 +51,5 @@ def compute_risk(*args, **kwargs):
         "The risk stage is not implemented: it needs an exposure layer (roads, "
         "rail, population), a vulnerability model, a runout model, and a "
         "failure probability anchored to observed landslide frequency. See "
-        "hima_slide/model/risk.py for the full scope."
+        "h_sim/model/risk.py for the full scope."
     )

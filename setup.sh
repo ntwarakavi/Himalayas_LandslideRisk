@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-off local setup for HIMA-SLIDE.
+# One-off local setup for H-SIM.
 #
 #   ./setup.sh              install deps into .venv and verify
 #   ./setup.sh --with-data  also pre-fetch the quickstart datasets (~120 MB)
@@ -22,7 +22,7 @@ echo "==> Installing dependencies"
 python -m pip install --upgrade pip -q
 python -m pip install -r requirements.txt
 
-# Editable install, so `python -m hima_slide.cli` works from any directory
+# Editable install, so `python -m h_sim.cli` works from any directory
 # rather than only from the repository root.
 echo "==> Installing the package (editable)"
 python -m pip install -e . --no-deps -q
@@ -49,7 +49,7 @@ python -m pytest tests/ -q
 
 if [[ "$WITH_DATA" == "1" ]]; then
     echo "==> Pre-fetching the quickstart datasets (~120 MB, one-off)"
-    python -m hima_slide.cli step2-download --config configs/01_quickstart.json
+    python -m h_sim.cli step2-download --config configs/01_quickstart.json
 fi
 
 cat <<'EOF'
@@ -63,12 +63,12 @@ Next steps:
     ./scripts/run_demo.sh                        # offline, no downloads
 
     # phase 1 + 3: fetch data and build a map with generic parameters
-    python -m hima_slide.cli step2-download        --config configs/01_quickstart.json
-    python -m hima_slide.cli step5-susceptibility  --config configs/01_quickstart.json
+    python -m h_sim.cli step2-download        --config configs/01_quickstart.json
+    python -m h_sim.cli step5-susceptibility  --config configs/01_quickstart.json
 
     # phase 2: calibrate to real landslides, then validate on another inventory
-    python -m hima_slide.cli step3-fit      --config configs/02_calibrate_gorkha.json
-    python -m hima_slide.cli step4-validate --name gorkha --inventory <path>
+    python -m h_sim.cli step3-fit      --config configs/02_calibrate_gorkha.json
+    python -m h_sim.cli step4-validate --name gorkha --inventory <path>
 
 See docs/RUNNING_LOCALLY.md for the full walkthrough.
 EOF

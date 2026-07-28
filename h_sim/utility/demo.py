@@ -80,7 +80,7 @@ def make_demo_inputs(grid: Grid, data_dir: str,
                      scen=None) -> Dict[str, object]:
     """Create synthetic inputs on ``grid``; return a paths dict for the pipeline.
 
-    ``scen`` is a :class:`hima_slide.model.climate.ClimateScenario`. Only
+    ``scen`` is a :class:`h_sim.model.climate.ClimateScenario`. Only
     the precipitation depends on it, which mirrors the real model: climate
     enters through recharge and nothing else.
     """

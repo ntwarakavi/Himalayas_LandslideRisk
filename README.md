@@ -1,9 +1,8 @@
-# HIMA-SLIDE
+# H-SIM
 
-**Hi**malayan Integrated **M**odel for **A**ssessment of **Sl**ope
-**I**nstability and **D**ebris **E**rosion — a physically based slope-stability
-model for the Hindu Kush Himalaya: Afghanistan, Pakistan, India, Nepal, Bhutan,
-Bangladesh, China and Myanmar.
+**H**imalayan **S**lope **I**nstability **M**odel — a physically based
+slope-stability model for the Hindu Kush Himalaya: Afghanistan, Pakistan,
+India, Nepal, Bhutan, Bangladesh, China and Myanmar.
 
 The model is SINMAP — infinite-slope stability closed by a steady-state
 hydrology — computed over D-infinity flow routing, extended with a pseudo-static
@@ -11,12 +10,6 @@ term for seismic loading, and fitted to mapped landslide inventories. It runs
 under present-day climate and under CMIP6 futures.
 
 There is one model in this repository. Everything below describes it.
-
-> **On the name.** HIMA-SLIDE implements the *slope instability* half: it
-> predicts where a soil column stops holding. Debris transport after failure —
-> runout, deposition, erosion along the track — is **not implemented**. The
-> model says where material detaches, not where it goes. That stage is scoped
-> in `model/risk.py` and listed under [Limits](#limits).
 
 **Contents** — [The model](#the-model) · [Install](#install) ·
 [How to run](#how-to-run) · [Climate](#climate-current-and-future) ·
@@ -211,8 +204,8 @@ source .venv/bin/activate
 directory:
 
 ```bash
-hima-slide --help                     # console script
-python -m hima_slide.cli --help       # module form, used throughout these docs
+h-sim --help                     # console script
+python -m h_sim.cli --help       # module form, used throughout these docs
 ```
 
 If `rasterio` will not build from source, use conda, which ships binary wheels:
@@ -258,8 +251,8 @@ looks good on the landslides it was fitted to.
 ### Phase 1 — set up
 
 ```bash
-python -m hima_slide.cli step1-check
-python -m hima_slide.cli step2-download --config configs/02_calibrate_gorkha.json
+python -m h_sim.cli step1-check
+python -m h_sim.cli step2-download --config configs/02_calibrate_gorkha.json
 ```
 
 `step1-check` reports each dataset as cached, reachable, blocked or manual-only,
@@ -271,7 +264,7 @@ GLiM geodatabase come down only if a run asks for calibration regions.
 ### Phase 2 — calibrate and validate
 
 ```bash
-python -m hima_slide.cli step3-fit --config configs/02_calibrate_gorkha.json
+python -m h_sim.cli step3-fit --config configs/02_calibrate_gorkha.json
 ```
 
 ```
@@ -300,7 +293,7 @@ python -m hima_slide.cli step3-fit --config configs/02_calibrate_gorkha.json
 Then validate against an inventory the fit never saw:
 
 ```bash
-python -m hima_slide.cli step4-validate --name gorkha \
+python -m h_sim.cli step4-validate --name gorkha \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
 ```
 
@@ -316,9 +309,9 @@ Nepal and Sikkim survey only about 60 % of their own bounding boxes.
 ### Phase 3 — produce
 
 ```bash
-python -m hima_slide.cli step5-susceptibility --config configs/03_production_gorkha.json
-python -m hima_slide.cli step6-hazard        --config configs/03_production_gorkha.json --all
-python -m hima_slide.cli step7-climate       --config configs/03_production_gorkha.json
+python -m h_sim.cli step5-susceptibility --config configs/03_production_gorkha.json
+python -m h_sim.cli step6-hazard        --config configs/03_production_gorkha.json --all
+python -m h_sim.cli step7-climate       --config configs/03_production_gorkha.json
 ```
 
 `step6 --all` runs every return period and PGA in the config, each producing its
@@ -326,14 +319,14 @@ own map — they are different questions and a user needs to know which one a ma
 answers. A single scenario instead:
 
 ```bash
-python -m hima_slide.cli step6-hazard --name gorkha --return-period 100
-python -m hima_slide.cli step6-hazard --name gorkha --trigger earthquake --pga 0.35
+python -m h_sim.cli step6-hazard --name gorkha --return-period 100
+python -m h_sim.cli step6-hazard --name gorkha --trigger earthquake --pga 0.35
 ```
 
 ### Phase 4 — package
 
 ```bash
-python -m hima_slide.cli step8-package --name gorkha
+python -m h_sim.cli step8-package --name gorkha
 ```
 
 Writes `<name>_manifest.json`: every product, plus the fitted parameters, the
@@ -360,10 +353,10 @@ evaluates the baseline first, for this reason.
 
 ```bash
 # the config's climate_suite
-python -m hima_slide.cli step7-climate --config configs/03_production_gorkha.json
+python -m h_sim.cli step7-climate --config configs/03_production_gorkha.json
 
 # or name scenarios directly
-python -m hima_slide.cli step7-climate --name gorkha \
+python -m h_sim.cli step7-climate --name gorkha \
     --scenarios current ssp245:2061-2080 ssp585:2081-2100
 ```
 
@@ -454,8 +447,8 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
 ## Limits
 
 1. **Shallow translational failure only.** No deep-seated slides, rock falls,
-   or debris runout — despite what the acronym promises. The model says where
-   material detaches, not where it arrives.
+   or debris runout. The model says where material detaches, not where it
+   arrives; a runout stage is scoped in `model/risk.py`.
 2. **Domain of validity.** Skill is 0.816 on soil-mantled crystalline terrain
    and 0.656 in the weak sedimentary hill country of Far-Western Nepal, and
    refitting locally does not recover the difference — the limit is the
@@ -483,7 +476,7 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
 ## Repository layout
 
 ```
-hima_slide/
+h_sim/
 ├── config.py              Run configuration, region and scenario defaults
 ├── pipeline.py            Stage orchestration, the four phases
 ├── cli.py                 Command-line workflow

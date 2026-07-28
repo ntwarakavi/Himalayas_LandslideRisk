@@ -1,4 +1,4 @@
-"""HIMA-SLIDE orchestration: data -> terrain -> stability -> hazard.
+"""H-SIM orchestration: data -> terrain -> stability -> hazard.
 
 The pipeline runs in discrete, independently inspectable steps and writes every
 intermediate raster to ``work_dir`` so a run can be stopped and resumed, or a
@@ -58,7 +58,7 @@ def _uniform_raster(grid: Grid, value: float, out_path: str,
 
 
 def _log(step: str, msg: str = "") -> None:
-    print(f"[hima] {step:<22} {msg}")
+    print(f"[h-sim] {step:<22} {msg}")
 
 
 def _read(path: str) -> np.ndarray:
@@ -943,7 +943,7 @@ def run_package(cfg: C.Config) -> Dict[str, str]:
     manifest = {
         "name": cfg.name,
         "model": "SINMAP infinite-slope stability over D-infinity flow routing",
-        "package_version": __import__("hima_slide").__version__,
+        "package_version": __import__("h_sim").__version__,
         "area": area,
         "calibration": {
             "inventory": fit.get("inventory"),

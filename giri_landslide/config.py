@@ -298,6 +298,11 @@ class Config:
     # back to `weights` when absent.
     feature_weights: Optional[Dict[str, float]] = None
 
+    # Block size for spatial-block cross-validation, in degrees. Must exceed the
+    # range over which terrain and landslide density are correlated, or the
+    # scheme collapses towards a random split. 0.25 deg is about 25 km.
+    cv_block_deg: float = 0.25
+
     block_size: int = 1024
     data_dir: str = "data/raw"
     work_dir: str = "data/work"

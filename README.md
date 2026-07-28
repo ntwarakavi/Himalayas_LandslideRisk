@@ -150,8 +150,20 @@ python -m giri_landslide.cli step3-calibrate \
 ```
 
 Writes `outputs/<name>_calibrated_config.json` for use in step 4, and a report
-containing the weights, the cross-validated AUC and any data-quality warnings.
-A cross-validated AUC below 0.7 indicates the weights should not be relied on.
+containing the weights, cross-validated AUC and any data-quality warnings.
+
+Two cross-validation schemes are reported. A **random** split assigns points to
+folds independently; because landslides cluster and terrain is autocorrelated,
+test points usually have training points on the same hillside, so the score
+flatters the model. A **spatial-block** split (`cv_block_deg`, 0.25° by default)
+assigns whole blocks to folds, so no test point has training data nearby.
+
+Measured on Gorkha, the two give almost the same mean — 0.726 random against
+0.724 spatial — so the relationship does hold on ground the fit has not seen.
+The difference is in the spread: fold-to-fold standard deviation is 0.004 under
+the random split and **0.055** under the spatial one, with block AUC ranging
+from 0.635 to 0.802. The mean therefore describes no particular place, and the
+spatial spread is the range to expect when applying the map somewhere new.
 
 ### 4. Susceptibility
 

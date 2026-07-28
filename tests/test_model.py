@@ -279,6 +279,31 @@ def test_continuous_features_reduce_ties():
         assert n_cont > 10 * n_ord, (n_ord, n_cont)
 
 
+def test_spatial_blocks_separate_train_and_test():
+    """A spatial fold must withhold whole blocks, not scattered points."""
+    from giri_landslide.model import crossval
+
+    rng = np.random.default_rng(0)
+    bbox = (84.0, 27.0, 86.0, 29.0)
+    pts = np.column_stack([rng.uniform(84.0, 86.0, 2000),
+                           rng.uniform(27.0, 29.0, 2000)])
+    folds = crossval.spatial_block_folds(pts, bbox, n_folds=5, block_deg=0.5)
+
+    assert set(np.unique(folds)).issubset(set(range(5)))
+    # Points sharing a block must share a fold: that is what makes the split
+    # spatial rather than random.
+    col = np.floor((pts[:, 0] - bbox[0]) / 0.5).astype(int)
+    row = np.floor((pts[:, 1] - bbox[1]) / 0.5).astype(int)
+    block = row * 100 + col
+    for b in np.unique(block):
+        assert len(np.unique(folds[block == b])) == 1, f"block {b} was split"
+
+    # A random split, by contrast, mixes folds within a block.
+    rnd = crossval.random_folds(len(pts), n_folds=5)
+    mixed = sum(len(np.unique(rnd[block == b])) > 1 for b in np.unique(block))
+    assert mixed > 0.9 * len(np.unique(block))
+
+
 def test_validate_handles_continuous_index():
     """Validation must score the continuous index, not only the class map."""
     import rasterio

@@ -384,6 +384,25 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
     _log("calibrate", "fitting logistic model on log-factors")
     result = calibrate.calibrate(pres_feats, bg_feats,
                                  feature_mode=cfg.feature_mode)
+
+    # The AUC above comes from a random split, which is optimistic when the
+    # data are spatially clustered. Score a spatial-block split alongside it so
+    # the difference is visible rather than implicit.
+    from .model import crossval
+    cv = {}
+    for scheme in ("random", "spatial"):
+        try:
+            cv[scheme] = crossval.cross_validate(
+                presence, background, pres_feats, bg_feats,
+                cfg.feature_mode, bbox, scheme=scheme,
+                block_deg=cfg.cv_block_deg)
+        except Exception as exc:                      # noqa: BLE001
+            _log("crossval", f"{scheme} skipped ({exc})")
+    if cv:
+        for s, r in cv.items():
+            _log("crossval", f"{s:8s} AUC {r['auc_mean']:.3f} "
+                             f"+/- {r['auc_std']:.3f} "
+                             f"({r['n_folds_scored']} folds)")
     _log("calibrate", f"held-out AUC = {result.auc:.3f}  "
                       f"weights = {result.weights}")
 
@@ -414,6 +433,29 @@ def run_calibration(cfg: C.Config, mode: str = "demo",
     cal_cfg.to_json(cal_path)
     report_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibration.json")
     report = result.to_dict()
+    if cv:
+        report["cross_validation"] = cv
+        rnd, spa = cv.get("random"), cv.get("spatial")
+        if rnd and spa and np.isfinite(spa["auc_mean"]):
+            gap = rnd["auc_mean"] - spa["auc_mean"]
+            # Only a substantial gap indicates the random split is coasting on
+            # spatial autocorrelation; a small one means the relationship holds
+            # on ground the fit has not seen.
+            if gap > 0.03:
+                report.setdefault("warnings", []).append(
+                    f"random-split AUC exceeds spatial-block AUC by {gap:.3f}: "
+                    "the random figure is inflated by spatial autocorrelation, "
+                    f"so treat {spa['auc_mean']:.3f} as the within-region score")
+            # Spread across blocks matters independently of the mean. A model
+            # that averages well but swings widely is unreliable in any one
+            # place, which a random split cannot reveal.
+            if spa["auc_std"] > 0.04:
+                lo, hi = min(spa["auc_folds"]), max(spa["auc_folds"])
+                report.setdefault("warnings", []).append(
+                    f"performance varies markedly by area (block AUC {lo:.2f} "
+                    f"to {hi:.2f}, sd {spa['auc_std']:.3f}): the mean describes "
+                    "no particular location, so expect this spread when "
+                    "applying the map somewhere new")
     if slope_diag:
         report["slope_breaks"] = slope_breaks
         report["slope_diagnostics"] = slope_diag

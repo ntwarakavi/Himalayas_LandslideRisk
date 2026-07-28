@@ -433,6 +433,12 @@ Roads are cut into 500 m segments before scoring, because a way can be fifty
 kilometres long and one number for all of it tells a maintainer nothing about
 where to go.
 
+On Gorkha at 30 m — 639 settlements, 18,109 road segments, 6,994 km — the
+reaching term averages **0.106** against **0.024** for the ground the settlement
+stands on, and exceeds it for **67 %** of settlements. Sampling the map at the
+point would have called two-thirds of them safe. Full numbers in
+[docs/RESULTS.md §11](docs/RESULTS.md).
+
 **Every asset is scored under several climates.** The default is the present day
 plus the two CMIP6 windows inside a 20–30 year planning horizon, under an
 intermediate and a very high pathway:
@@ -445,6 +451,13 @@ Change against the present day is the only comparison that means anything: a
 future recharge field is normalised by the present-day reference, so its
 absolute value is interpretable only relative to today. Override with
 `--risk-climate`; the present day is always included.
+
+Measured on Gorkha, that change is **small**: 321 settlements exposed today
+against 323 by 2041-2060, and 4,873 km of road against 4,908 km, on a mean score
+that moves by 0.0017 — well inside the ±0.020 spread on the model's own held-out
+AUC. Note also that SSP2-4.5 comes out slightly *wetter* than SSP5-8.5 over this
+box in the 2041-2060 window. That is a property of one GCM over one catchment,
+not a result: quote the spread across pathways, not their order.
 
 **Exposure data.** Settlements are OpenStreetMap `place=city|town|village|hamlet`
 nodes via Overpass, with GeoNames as a fallback; roads are OSM `highway=*` ways

@@ -22,6 +22,8 @@ the most informative quantity in this document.
 | Do calibration regions help? | No, in either area: −0.0004 AUC |
 | What rests on the unfitted conventions? | Rainfall, almost nothing. Seismic, a great deal |
 | So which model should I use? | The mechanical one — it degrades least when moved (§8) |
+| What do the maps mean for towns and roads? | Two-thirds of settlements are scored by what is above them, not what they sit on (§11) |
+| Does near-term climate change move that? | Barely — +2 settlements and +35 km of road by 2041-2060, inside the model's own error (§11) |
 
 Then what *does* the physics buy? Not discrimination. It buys three interpretable
 parameters instead of a fitted surface, near-total insensitivity to spatial
@@ -365,6 +367,7 @@ is not much use.
 | Lithology calibration regions | −0.0004 AUC held out, in both areas | Yes, off by default; the negative result is specific to GLiM level-1 |
 | Crown rather than centroid sampling | +0.017 Far-West, −0.006 Gorkha | Not wired into the pipeline; documented |
 | Refitting on the monsoon inventory to escape the earthquake trigger | Hypothesis refuted — scores 0.16 *lower* | Reported as a domain-of-validity limit |
+| Scoring an asset by the worst reaching cell | Saturates: 56 % of settlements in the top band | Replaced by a proximity-weighted mean (§11) |
 
 ## 9. Which model to use
 
@@ -425,3 +428,88 @@ which is an AUC:
 And what it does not buy: better separation of mapped landslides than
 conventional statistics, or any protection against being applied where its
 assumptions do not hold. Section 4 is the honest boundary.
+
+## 11. Exposure: what the maps mean for settlements and roads
+
+Measured on the Gorkha 30 m map, over 84.5-85.3 E, 27.6-28.2 N: **639
+OpenStreetMap settlements** and **7,851 road ways**, cut into **18,109 segments
+of 500 m** totalling 6,994 km.
+
+### The scoring statistic matters more than the angle
+
+The first implementation scored an asset by the *highest* failure probability
+among the cells that could reach it. That statistic does not survive contact
+with Himalayan relief.
+
+| | Maximum over reaching cells | Proximity-weighted mean |
+|---|---|---|
+| Settlements in the top band | 3,199 of 5,677 (**56 %**) | 23 of 639 (**3.6 %**) |
+| Mean over all settlements | 0.547 | 0.106 |
+
+A 2 km search radius at 30 m puts a few thousand cells above a typical valley
+settlement — the median settlement here has **2,300 reaching cells**, the 90th
+percentile 2,175 and the 99th over 5,000. With 7.3 % of the Gorkha landscape
+above P = 0.6, the probability that *none* of several thousand upslope cells
+clears that bar is negligible. The maximum was therefore reporting the size of
+the search window, not the exposure of the town.
+
+`reaching_max` is still written per asset, because "the worst single cell above
+this place" is a real diagnostic. It is not banded and not the headline.
+
+### Reach dominates the on-site term, which is the point
+
+| Quantity | Mean over 639 settlements |
+|---|---|
+| Failure probability of the cell the settlement sits on | 0.024 |
+| Proximity-weighted probability of ground that can reach it | **0.106** |
+| Settlements where the reaching term exceeds the on-site term | **67 %** |
+
+Sampling susceptibility at a town's coordinates would have reported a mean of
+0.024 and called two-thirds of these settlements safe. The exception is the top
+of the ranking, which is dominated by the on-site term: the highest-scoring
+places are OSM nodes that fall on ground the model calls unconditionally
+unstable. Those are worth checking individually — a hamlet node placed on a
+cliff is as likely to be a geocoding artefact as a settlement in real danger.
+
+### Present day, and four near-term futures
+
+| Climate | Settlements exposed | Road km exposed | Mean settlement score |
+|---|---|---|---|
+| present day | 321 | 4,873.0 | 0.116 |
+| SSP2-4.5 2021-2040 | 322 | 4,886.7 | 0.117 |
+| SSP5-8.5 2021-2040 | 322 | 4,887.2 | 0.117 |
+| SSP2-4.5 2041-2060 | 323 | 4,908.1 | 0.118 |
+| SSP5-8.5 2041-2060 | 323 | 4,897.6 | 0.118 |
+
+Exposed means a score at or above 0.08. Over a 20 to 30 year horizon the signal
+is **small**: two more settlements and 35 km more road at worst, on a mean score
+that moves by 0.0017. That is consistent with the raster-level result — the
+unstable fraction moves from 10.5 % to 10.7 % — and with the mechanism: once the
+wetness term is capped at saturation on the convergent ground where failures
+concentrate, more water changes nothing there.
+
+Two things in that table are worth not glossing over. **SSP2-4.5 exceeds
+SSP5-8.5 in the 2041-2060 window**, in both columns. This is not an error: the
+IPSL-CM6A-LR wettest-month field over this box gives a recharge multiplier with
+median 1.12 under SSP2-4.5 against 1.08 under SSP5-8.5. Monsoon precipitation
+does not respond monotonically to forcing in a single model over a single
+catchment, and a suite of one GCM cannot separate that from noise. Quote the
+spread, not the ordering.
+
+**And the changes are smaller than the model's own uncertainty.** Held-out AUC
+on this terrain is 0.816 ± 0.020; a shift of 0.0017 in a mean exposure score is
+far inside that. The honest reading is that near-term climate change is not what
+determines exposure in this catchment — where the roads and houses are is.
+
+### Data provenance, and one failure worth recording
+
+Both layers came from OpenStreetMap on the run reported here. An earlier run of
+the same area returned **6 road ways** instead of 7,851, because Overpass
+answered 406 from one mirror and 429 from another, and the model fell back to
+Natural Earth trunk routes. Neither code meant what it appeared to: both mirrors
+reject requests carrying no User-Agent, and the 429 body — "please include a
+meaningful User-Agent string to avoid rate-limiting" — reads as throttling. The
+fallback is still there and still labelled in each feature's `source` field, but
+a road layer of a few dozen segments across a district is the signature of it
+having fired.
+

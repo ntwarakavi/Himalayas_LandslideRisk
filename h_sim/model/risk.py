@@ -417,12 +417,13 @@ def score_roads(index: ReachIndex, roads, probs: Dict[str, np.ndarray],
 # ---------------------------------------------------------------------------
 
 def _band_counts(rows: Sequence[dict], key: Optional[str],
-                 weight: Optional[str] = None) -> Dict[str, float]:
+                 weight: Optional[str] = None,
+                 scale: float = 1.0) -> Dict[str, float]:
     acc = {b: 0.0 for b in BAND_ORDER}
     for r in rows:
         rec = r["scenarios"][key] if key else r
         acc[rec["band"]] += (r.get(weight) or 0) if weight else 1
-    return {k: round(v, 1) for k, v in acc.items()}
+    return {k: round(v * scale, 1) for k, v in acc.items()}
 
 
 def scenario_stats(settlements: Sequence[dict], roads: Sequence[dict],
@@ -448,7 +449,8 @@ def scenario_stats(settlements: Sequence[dict], roads: Sequence[dict],
         "road_km_exposed": round(exposed_km, 1),
         "road_pct_exposed": round(100.0 * exposed_km / road_km, 1)
         if road_km else 0.0,
-        "road_km_by_band": _band_counts(roads, key, "length_m"),
+        # length_m is metres; the field is kilometres, so scale on the way out.
+        "road_km_by_band": _band_counts(roads, key, "length_m", 1e-3),
     }
 
 

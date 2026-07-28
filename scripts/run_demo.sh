@@ -29,7 +29,8 @@ python -m h_sim.cli step10-risk $COMMON \
 
 echo
 echo ">> step11 map: one HTML page of the lot"
-python -m h_sim.cli step11-map $COMMON | tail -6
+python -m h_sim.cli step11-map --name demo \
+    --bbox 83.0 27.5 83.2 27.7 --res 0.002 | tail -6
 
 echo
 echo "=============== PHASE 4  PACKAGE =============="
@@ -54,6 +55,9 @@ Products:
   outputs/demo_critical_acceleration.tif    Newmark yield coefficient (g)
   outputs/demo_hazard_*_prob.tif            one raster per trigger scenario
   outputs/demo_climate_*_change.tif         future minus present day
+  outputs/demo_risk_settlements.json        every settlement, every scenario
+  outputs/demo_risk_roads.json              every 500 m segment, every scenario
+  outputs/demo_webmap/index.html            open it; no web server needed
   outputs/demo_manifest.json                what everything is, and its provenance
 
 Phase 2 (calibration and validation) is skipped here because it needs a real

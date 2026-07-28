@@ -129,29 +129,133 @@ def _write_png_numpy(rgba: np.ndarray, path: str) -> None:
 # GeoJSON assembly
 # ---------------------------------------------------------------------------
 
+#: Coordinate precision written to the page. Five decimal places is about a
+#: metre, which is finer than the 30 m grid the scores came from; full float
+#: repr triples the file for no visible difference.
+COORD_DP = 5
+
+#: Fields kept for scenarios other than the present day. The rest - the source
+#: cell count, its relief and its distance - are properties of the reach
+#: geometry, which does not change with climate, so carrying them per scenario
+#: multiplies the page size to restate the same numbers.
+SCENARIO_FIELDS = ("score", "on_site", "reaching", "reaching_max")
+
+#: Written once at the top level and read from there; anything else is either
+#: a per-scenario score or something the page derives.
+IDENTITY_FIELDS = ("name", "place", "population", "highway", "segment",
+                   "length_m", "source")
+
+
+def _thin(rec: dict, baseline: str = "current") -> dict:
+    """Keep what the page reads and nothing else.
+
+    A road segment carries five scenario records; at 18,000 segments the
+    difference between writing everything and writing what is read is tens of
+    megabytes, which is the difference between a page that opens and one that
+    does not. Two things go: the top-level copy of the present-day scores,
+    which duplicates ``scenarios[baseline]``, and the band label, which the
+    page recomputes from the score.
+    """
+    out = {k: rec[k] for k in IDENTITY_FIELDS if k in rec}
+    scen = rec.get("scenarios")
+    if scen:
+        out["scenarios"] = {
+            sk: {f: sv[f] for f in
+                 (SCENARIO_FIELDS if sk != baseline
+                  else [f for f in sv if f != "band"])
+                 if f in sv}
+            for sk, sv in scen.items()}
+    else:
+        out.update({k: v for k, v in rec.items()
+                    if k not in ("lon", "lat", "coords", "band")})
+    return out
+
+
+def _round(xy) -> List[float]:
+    return [round(float(xy[0]), COORD_DP), round(float(xy[1]), COORD_DP)]
+
+
+#: Douglas-Peucker tolerance for road geometry on the page, in metres. Half a
+#: 30 m cell: finer than the grid the scores were computed on, so nothing
+#: visible is lost, while OSM's native node density - about 23 vertices per
+#: 500 m segment - is roughly halved.
+SIMPLIFY_TOLERANCE_M = 15.0
+
+
+def simplify(coords: Sequence[Sequence[float]],
+             tolerance_m: float = SIMPLIFY_TOLERANCE_M
+             ) -> List[Sequence[float]]:
+    """Douglas-Peucker, iterative, in approximate local metres.
+
+    Degrees are converted to metres with a fixed scale for the line's mean
+    latitude. Over a 500 m segment that is exact enough for a display
+    tolerance, and it avoids a projection dependency for a cosmetic step.
+    """
+    if len(coords) < 3 or tolerance_m <= 0:
+        return list(coords)
+
+    import math
+    lat0 = sum(c[1] for c in coords) / len(coords)
+    kx = 111320.0 * math.cos(math.radians(lat0))
+    ky = 110540.0
+    pts = [(c[0] * kx, c[1] * ky) for c in coords]
+
+    keep = [False] * len(pts)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        ax, ay = pts[i]
+        bx, by = pts[j]
+        dx, dy = bx - ax, by - ay
+        norm = math.hypot(dx, dy)
+        best, at = -1.0, -1
+        for k in range(i + 1, j):
+            px, py = pts[k]
+            d = (abs(dy * px - dx * py + bx * ay - by * ax) / norm if norm > 0
+                 else math.hypot(px - ax, py - ay))
+            if d > best:
+                best, at = d, k
+        if best > tolerance_m:
+            keep[at] = True
+            stack.append((i, at))
+            stack.append((at, j))
+    return [c for c, k in zip(coords, keep) if k]
+
+
 def points_geojson(rows: Sequence[dict], lon_key: str = "lon",
                    lat_key: str = "lat",
-                   props: Optional[Sequence[str]] = None) -> dict:
+                   props: Optional[Sequence[str]] = None,
+                   baseline: str = "current") -> dict:
     feats = []
     for r in rows:
-        p = ({k: r.get(k) for k in props} if props
-             else {k: v for k, v in r.items() if k not in (lon_key, lat_key)})
+        p = ({k: r.get(k) for k in props} if props else _thin(r, baseline))
         feats.append({"type": "Feature",
                       "properties": p,
                       "geometry": {"type": "Point",
-                                   "coordinates": [r[lon_key], r[lat_key]]}})
+                                   "coordinates": _round((r[lon_key],
+                                                          r[lat_key]))}})
     return {"type": "FeatureCollection", "features": feats}
 
 
-def lines_geojson(rows: Sequence[dict]) -> dict:
+def lines_geojson(rows: Sequence[dict], baseline: str = "current",
+                  tolerance_m: float = SIMPLIFY_TOLERANCE_M) -> dict:
+    """Scored road segments as a FeatureCollection.
+
+    The geometry is simplified for display only. Scores were computed on the
+    full vertex list before this ran, so nothing here changes a number - it
+    changes how many points the browser has to draw.
+    """
     feats = []
     for r in rows:
-        p = {k: v for k, v in r.items() if k != "coords"}
         feats.append({"type": "Feature",
-                      "properties": p,
+                      "properties": _thin(r, baseline),
                       "geometry": {"type": "LineString",
-                                   "coordinates": [list(c)
-                                                   for c in r["coords"]]}})
+                                   "coordinates": [
+                                       _round(c) for c in
+                                       simplify(r["coords"], tolerance_m)]}})
     return {"type": "FeatureCollection", "features": feats}
 
 
@@ -170,13 +274,21 @@ def write_data(out_dir: str, name: str, obj) -> str:
     local map: double-click it. A ``<script src>`` is not blocked, so the data
     ships as an assignment into a namespace the page reads. The cost is a few
     bytes of wrapper; the benefit is that the map works without a web server.
+
+    The payload is a **string** handed to ``JSON.parse``, not an object
+    literal. A JavaScript engine parses an object literal through its full
+    expression grammar; ``JSON.parse`` runs a dedicated parser over a flat
+    string. Measured on the Gorkha road layer - 18,109 segments - that is
+    460 ms against 255 ms, for about 10 % more bytes from the escaping.
     """
     path = os.path.join(out_dir, f"{name}.js")
+    # Encoding twice yields a JSON string literal, which is also a valid
+    # JavaScript one: every escape JSON produces is an escape JS understands.
+    payload = json.dumps(json.dumps(obj))
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("window.HSIM_DATA=window.HSIM_DATA||{};\n"
-                 f"window.HSIM_DATA[{json.dumps(name)}]=")
-        json.dump(obj, fh)
-        fh.write(";\n")
+                 f"window.HSIM_DATA[{json.dumps(name)}]="
+                 f"JSON.parse({payload});\n")
     return f"{name}.js"
 
 
@@ -252,6 +364,8 @@ def build(out_dir: str, title: str, bounds: Dict[str, float],
     html = html.replace("__SUMMARY__", json.dumps(summary or {}))
     html = html.replace("__META__", json.dumps(meta or {}))
     html = html.replace("__BANDS__", json.dumps(BAND_COLOURS))
+    from .model.risk import RISK_BANDS
+    html = html.replace("__EDGES__", json.dumps([list(b) for b in RISK_BANDS]))
     html = html.replace("__RAMP__", json.dumps(
         [[s, f"rgb({int(c[0])},{int(c[1])},{int(c[2])})"]
          for s, c in PROB_COLOURS]))
@@ -356,6 +470,7 @@ const LAYERS  = __LAYERS__;
 const SUMMARY = __SUMMARY__;
 const META    = __META__;
 const BANDS   = __BANDS__;
+const EDGES   = __EDGES__;   // [upper bound, label], ascending
 const RAMP    = __RAMP__;
 
 // Climate scenarios the run was scored under. The first is always the present
@@ -397,7 +512,14 @@ if (HAVE_MAP) {
     'and are unaffected.</div>';
 }
 
+// The band is derived, not stored: repeating "very high" five times per road
+// segment across 18,000 segments costs a megabyte to say what the score says.
+function bandOf(score) {
+  for (const [edge, label] of EDGES) if (score < edge) return label;
+  return EDGES[EDGES.length - 1][1];
+}
 function bandColour(b) { return BANDS[b] || '#888'; }
+function bandFor(rec) { return rec.band || bandOf(rec.score); }
 function row(k, v) { return v === null || v === undefined || v === ''
   ? '' : `<div><span class="kv">${k}:</span> ${v}</div>`; }
 function num(v, d) { return (v ?? 0).toLocaleString(undefined,
@@ -438,7 +560,7 @@ function scenarioRows(p) {
       if (!r) return '';
       const d = r.score - b;
       return `<tr${sc.key === STATE.key ? ' style="font-weight:600"' : ''}>
-        <td><span class="chip" style="background:${bandColour(r.band)}"></span>${sc.short || sc.key}</td>
+        <td><span class="chip" style="background:${bandColour(bandFor(r))}"></span>${sc.short || sc.key}</td>
         <td class="num">${r.score.toFixed(3)}</td>
         <td class="num">${sc.key === BASE ? '<span class="kv">—</span>'
                                           : signed(d, 3)}</td></tr>`;
@@ -447,13 +569,17 @@ function scenarioRows(p) {
 
 function assetPopup(p, title, extra) {
   const c = cur(p);
+  // Reach geometry is a property of the terrain, not of the climate, so it is
+  // stored once against the present day rather than repeated per scenario.
+  const g = at(p, BASE);
   return `<b>${title}</b><br>${extra}
     <hr style="border:none;border-top:1px solid #ccc;margin:6px 0">
-    ${row('exposure', `<b>${c.score}</b> (${c.band})`)}
+    ${row('exposure', `<b>${c.score}</b> (${bandFor(c)})`)}
     ${row('reaching', c.reaching)}
     ${row('on site', c.on_site)}
-    ${row('worst source', c.n_sources
-         ? `${c.source_relief_m} m above, ${c.source_distance_m} m away` : 'none')}
+    ${row('worst source', g.n_sources
+         ? `${g.source_relief_m} m above, ${g.source_distance_m} m away`
+         : 'none')}
     ${scenarioRows(p)}`;
 }
 
@@ -467,7 +593,7 @@ function settlementLayer(gj) {
   return L.geoJSON(gj, {
     pointToLayer: (f, latlng) => L.circleMarker(latlng, {
       radius: markerRadius(f.properties),
-      fillColor: bandColour(cur(f.properties).band), color: '#00000055',
+      fillColor: bandColour(bandFor(cur(f.properties))), color: '#00000055',
       weight: 1, fillOpacity: 0.92}),
     onEachFeature: (f, l) => {
       const p = f.properties;
@@ -479,7 +605,7 @@ function settlementLayer(gj) {
 
 function roadStyle(f) {
   const c = cur(f.properties);
-  return {color: bandColour(c.band),
+  return {color: bandColour(bandFor(c)),
           weight: c.score >= (SUMMARY.exposed_threshold ?? 0.08) ? 4 : 2.5,
           opacity: 0.9};
 }
@@ -506,7 +632,7 @@ function restyle() {
   const sc = SCENARIOS.find(s => s.key === STATE.key) || SCENARIOS[0];
   if (rasterOverlay && sc.raster) rasterOverlay.setUrl(sc.raster);
   if (settlements) settlements.eachLayer(l => l.setStyle(
-    {fillColor: bandColour(cur(l.feature.properties).band)}));
+    {fillColor: bandColour(bandFor(cur(l.feature.properties)))}));
   if (roads) roads.setStyle(roadStyle);
   drawStats();
 }
@@ -610,7 +736,7 @@ function drawWorst() {
   const ranked = rows.slice().map(w => {
     const r = (w.scenarios && w.scenarios[key]) || w;
     const b = (w.scenarios && w.scenarios[BASE]) || w;
-    return {name: w.name, score: r.score, band: r.band, delta: r.score - b.score};
+    return {name: w.name, score: r.score, band: bandFor(r), delta: r.score - b.score};
   }).sort((a, b) => b.score - a.score);
   el.innerHTML = `<h2>Most exposed settlements</h2><div class="scroll"><table>
       <tr><th>Place</th><th class="num">Score</th><th class="num">vs now</th></tr>` +

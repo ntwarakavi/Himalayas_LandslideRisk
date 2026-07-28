@@ -1154,6 +1154,9 @@ def test_batch_scoring_carries_every_scenario():
     assert set(s["scenarios"]) == set(probs)
     assert s["change"]["ssp585_2041-2060"]["mean_settlement_score"] > 0
     assert s["n_settlements"] == 1
+    # road_km_by_band is kilometres; length_m is metres
+    banded = sum(s["scenarios"]["current"]["road_km_by_band"].values())
+    assert abs(banded - s["road_km_total"]) < 0.05
 
 
 def test_bands_are_ordered_and_cover_the_range():

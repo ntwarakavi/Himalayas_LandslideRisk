@@ -304,6 +304,56 @@ def test_spatial_blocks_separate_train_and_test():
     assert mixed > 0.9 * len(np.unique(block))
 
 
+def test_hydrology_matches_analytic_plane():
+    """Flow routing must be exact on a plane and conserve mass."""
+    from giri_landslide.model import hydrology as H
+
+    n, d, grad = 30, 10.0, 0.5
+    dem = np.tile(np.arange(n, dtype=float)[:, None] * grad * d, (1, n))
+
+    filled = H.fill_depressions(dem)
+    _, slope = H.dinf_flow_direction(filled, d, d)
+    assert abs(np.nanmean(slope[3:-3, 3:-3]) - grad) < 1e-9
+
+    # A pit must be raised to the level of its outlet.
+    pit = np.full((15, 15), 10.0)
+    pit[7, 7] = 1.0
+    assert abs(H.fill_depressions(pit)[7, 7] - 10.0) < 1e-3
+
+    # Everything routed off the plane must equal the area put in.
+    ang, _ = H.dinf_flow_direction(filled, d, d)
+    total = H.dinf_accumulation(filled, ang, d * d)
+    assert abs(np.nansum(total[0]) - n * n * d * d) < 1.0
+
+
+def test_infinite_slope_physics():
+    """Factor of safety must reproduce the classical limiting cases."""
+    from giri_landslide.model import physical as P
+
+    # Dry and cohesionless: FS = 1 exactly when slope angle equals friction.
+    for phi in (30.0, 35.0, 40.0):
+        s = np.array([np.tan(np.radians(phi))])
+        fs = P.factor_of_safety(s, np.array([0.0]), 0.0, phi, 0.0)
+        assert abs(fs[0] - 1.0) < 1e-9, (phi, fs[0])
+
+    # Saturated and cohesionless: critical angle drops to atan((1-r)tan phi).
+    phi, r = 35.0, P.DENSITY_RATIO
+    crit = np.arctan((1 - r) * np.tan(np.radians(phi)))
+    s = np.array([np.tan(crit)])
+    fs = P.factor_of_safety(s, np.array([1e7]), 0.0, phi, 0.01)
+    assert abs(fs[0] - 1.0) < 1e-6, fs[0]
+
+    # Wetness is bounded and rises with contributing area.
+    w = P.wetness(np.array([10.0, 1e3, 1e6]), np.full(3, 0.5), 1e-3)
+    assert w[0] < w[1] and w[2] == 1.0
+
+    # Failure probability increases monotonically with slope.
+    sl = np.tan(np.radians(np.array([10.0, 25.0, 40.0, 55.0])))
+    p = P.failure_probability(sl, np.full(4, 200.0), P.SoilParameters(),
+                              n_samples=100)
+    assert np.all(np.diff(p) >= 0) and p[0] == 0.0 and p[-1] > 0.9
+
+
 def test_validate_handles_continuous_index():
     """Validation must score the continuous index, not only the class map."""
     import rasterio

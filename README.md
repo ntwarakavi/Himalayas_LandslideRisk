@@ -6,6 +6,11 @@ Storrøsten, 2023, NGI / CDRI —
 scoped to the Hindu Kush Himalaya: Afghanistan, Pakistan, India, Nepal, Bhutan,
 Bangladesh, China and Myanmar.
 
+Two susceptibility models are provided: the manuscript's heuristic index, and a
+physically based slope-stability model (SINMAP) driven by D-infinity flow
+routing. On the Gorkha test area the physical model is the stronger of the two
+(see [Model comparison](#model-comparison)).
+
 The current scope is **susceptibility**. Hazard is implemented but depends on an
 uncalibrated parameter (see [Status](#status)); risk is not implemented.
 
@@ -86,6 +91,69 @@ fitted from the same data:
   a poor fit in the Himalaya: four of the seven classes present in the Gorkha
   area disagree with it, two of them inverted.
 
+### Physically based formulation
+
+The heuristic index scores terrain by correlation. The alternative is to state
+the mechanics directly. `model/physical.py` implements SINMAP (Pack, Tarboton &
+Goodwin 1998): an infinite-slope factor of safety closed by a TOPMODEL
+steady-state wetness term.
+
+```
+FS = [ C + cosθ · (1 − w·r) · tanφ ] / sinθ        w = min( R·a / (T·sinθ), 1 )
+```
+
+`C` is dimensionless cohesion (root plus soil, normalised by the weight of the
+soil column), `φ` the friction angle, `r ≈ 0.5` the water/soil density ratio,
+`a` the specific catchment area and `R/T` the recharge-to-transmissivity ratio.
+Only the ratio `R/T` is identifiable from a static map, and `C` only jointly
+with soil depth.
+
+The wetness term needs upslope drainage, which `model/hydrology.py` supplies
+following TauDEM, in pure NumPy:
+
+| Stage | Method | Reference |
+|---|---|---|
+| Depression filling | Priority flood | Barnes, Lehman & Mulla 2014 |
+| Flow direction | D-infinity, eight triangular facets | Tarboton 1997 |
+| Contributing area | D-infinity accumulation, elevation-ordered | Tarboton 1997 |
+| Specific catchment area | Area ÷ contour width | — |
+
+D-infinity rather than D8 because the 45° quantisation of D8 produces
+artificial parallel flow lines on exactly the planar hillslopes that shallow
+failure occupies.
+
+The three parameters are not known per pixel, so SINMAP treats them as uniform
+over plausible ranges and reports the probability that `FS < 1` — a continuous
+field directly comparable with the heuristic index. Ranges are fitted by grid
+search (48 combinations of cohesion, friction and `R/T`), scored by how well the
+resulting failure probability ranks mapped landslides above background. On
+Gorkha the fit selects `C ∈ [0, 0.4]`, `φ ∈ [25°, 35°]`, `R/T ∈ [1e-5, 5e-4]`.
+
+Two regions appear as constants on the map and are worth naming: terrain stable
+even when fully saturated at the worst parameters (probability 0), and terrain
+unstable even when dry at the best parameters (probability 1) — the latter
+stands only through cohesion the model does not represent, or is actively
+eroding.
+
+Flow accumulation is global to the drainage network, so this stage runs over the
+whole area of interest at once rather than in tiles.
+
+### Model comparison
+
+Both models run on the same area (84.5–85.3° E, 27.6–28.2° N at 0.0025°), scored
+against the same 5,193 Roback Gorkha landslides and the same background sample.
+Capture is the share of landslides falling in the worst-ranked fraction of map
+area:
+
+| Model | AUC | Worst 5 % | Worst 10 % | Worst 20 % |
+|---|---|---|---|---|
+| Heuristic, logistic on log factors | 0.663 | 18.9 % | 30.0 % | 44.3 % |
+| Physical, SINMAP | **0.748** | **32.2 %** | **45.1 %** | **60.0 %** |
+
+The physical model separates better at every threshold. The heuristic index sees
+slope but not convergence; SINMAP's wetness term distinguishes a planar hillside
+from a hollow of the same gradient, and mapped landslides sit in the hollows.
+
 ## Installation
 
 ```bash
@@ -117,7 +185,8 @@ Each step writes its outputs to disk and can be run independently.
 | 1 | `step1-check` | Dataset availability report |
 | 2 | `step2-download` | Cached source data |
 | 3 | `step3-calibrate` | Fitted weights, slope and lithology tables |
-| 4 | `step4-susceptibility` | Susceptibility index |
+| 4 | `step4-susceptibility` | Susceptibility index (heuristic) |
+| 4b | `step4b-physical` | Failure probability and stability classes (SINMAP) |
 | 5 | `step5-hazard` | Scenario hazard probability |
 | 6 | `step6-validate` | Validation against a held-out inventory |
 | 7 | `step7-compare` | Difference between two runs |
@@ -176,6 +245,29 @@ python -m giri_landslide.cli step4-susceptibility \
 Writes `outputs/<name>_susceptibility_prob.tif`, and the four factor rasters to
 `data/work/` for inspection.
 
+### 4b. Physically based stability
+
+```bash
+python -m giri_landslide.cli step4b-physical \
+    --name gorkha --bbox 84.5 27.6 85.3 28.2 --res 0.0025 \
+    --inventory "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp"
+```
+
+Writes `outputs/<name>_failure_probability.tif`, `outputs/<name>_stability_class.tif`
+and a report holding the fitted soil parameters and their AUC. Specific
+catchment area and slope go to `data/work/` for inspection. `--no-fit` uses
+SINMAP's generic parameter ranges instead of fitting.
+
+The output is validated by the same command as the heuristic map:
+
+```bash
+python -m giri_landslide.cli step6-validate \
+    --susceptibility outputs/gorkha_failure_probability.tif --inventory <path>
+```
+
+Cost is dominated by flow routing, which is not tiled. The example above
+(320 × 240 px) takes about 30 seconds; cost scales with cell count.
+
 ### 5. Hazard
 
 ```bash
@@ -220,6 +312,8 @@ giri_landslide/
 │   ├── factors.py         Inputs to ordinal factor scores
 │   ├── susceptibility.py  Factor combination, continuous index, classes
 │   ├── calibrate.py       Weight, slope-table and lithology fitting
+│   ├── hydrology.py       Depression filling, D-inf flow, catchment area
+│   ├── physical.py        SINMAP infinite-slope stability
 │   ├── validate.py        Held-out validation
 │   ├── triggers.py        Rainfall and earthquake severity classes
 │   ├── hazard.py          Susceptibility × trigger → probability
@@ -274,6 +368,8 @@ at 30 m, refit the slope table first with `step3-calibrate --fit-slope-breaks`.
 Implemented and tested:
 
 - Susceptibility index, continuous and classified
+- Physically based stability: D-infinity hydrology, SINMAP failure probability,
+  soil parameters fitted to an inventory
 - Weight, slope-table and lithology calibration from inventories
 - Held-out validation
 - Present and CMIP6 future-climate scenarios
@@ -291,6 +387,12 @@ Outstanding:
    Uttarakhand, Himachal, Bhutan and Myanmar have no usable inventory.
 5. **Region-wide execution.** The HKH at 90 m is approximately 1.5 gigapixels
    and must be run as manual tiles; no tiling driver exists.
+6. **Flow routing is not tiled.** Contributing area is a property of the whole
+   drainage network, so the physical model holds the area of interest in memory.
+   Basin-wise decomposition is the standard remedy and is not implemented.
+7. **Soil depth is not mapped.** Cohesion is fitted as the combination
+   `C = (Cr + Cs) / (h·ρs·g)`, so soil depth cannot be separated from cohesion.
+   A soil-depth model would let both be constrained independently.
 
 ## Testing
 

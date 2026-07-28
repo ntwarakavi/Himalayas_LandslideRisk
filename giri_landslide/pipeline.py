@@ -752,3 +752,99 @@ def quicklook(susc_path: str, hazard_path: str, out_png: str) -> str:
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
     return out_png
+
+
+# ---------------------------------------------------------------------------
+# physically based model (SINMAP)
+# ---------------------------------------------------------------------------
+
+def run_physical(cfg: C.Config, mode: str = "download",
+                 fit: bool = True) -> Dict[str, str]:
+    """Physically based stability: hydrology, then infinite-slope failure.
+
+    Computes specific catchment area by D-infinity routing over the filled DEM,
+    then the probability that the infinite-slope factor of safety falls below
+    one. Soil parameters are fitted to an inventory when one is supplied.
+
+    Flow accumulation is global to the drainage network, so unlike the factor
+    stages this one is computed over the whole AOI at once rather than in
+    tiles. Keep the area modest, or accept the memory cost.
+    """
+    from .input import inventory
+    from .model import hydrology, physical
+
+    _ensure_dirs(cfg)
+    bbox = cfg.clipped_bbox()
+    grid = Grid.from_bbox(bbox, cfg.resolution_deg)
+    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg")
+
+    inputs = resolve_inputs(cfg, mode)
+    dem_grid = _work(cfg, "dem.tif")
+    if "dem" in inputs:
+        warp_to_grid(inputs["dem"], grid, dem_grid, Resampling.bilinear,
+                     dtype="float32", nodata=-9999.0, block=cfg.block_size)
+    else:
+        mosaic_and_warp(inputs["dem_tiles"], grid, dem_grid,
+                        Resampling.bilinear, dtype="float32", nodata=-9999.0,
+                        block=cfg.block_size)
+
+    with rasterio.open(dem_grid) as src:
+        dem = src.read(1).astype("float64")
+        dem[dem == src.nodata] = np.nan
+    lat = 0.5 * (bbox[1] + bbox[3])
+    dx = cfg.resolution_deg * 111320.0 * max(np.cos(np.radians(lat)), 1e-6)
+    dy = cfg.resolution_deg * 110540.0
+
+    _log("hydrology", f"filling depressions, D-inf routing ({dem.size:,} cells)")
+    sca, slope = hydrology.specific_catchment_area(dem, dx, dy)
+    _log("hydrology", f"specific catchment area "
+                      f"{np.nanpercentile(sca, 50):.0f} m median, "
+                      f"{np.nanmax(sca):.0f} m max")
+
+    prof = grid.profile("float32", -9999.0)
+    for name, arr in (("sca", sca), ("slope_tan", slope)):
+        with rasterio.open(_work(cfg, f"{name}.tif"), "w", **prof) as dst:
+            dst.write(np.where(np.isfinite(arr), arr, -9999.0).astype("float32"), 1)
+
+    params = physical.SoilParameters()
+    fit_report = None
+    if fit and cfg.inventory_path:
+        pres = inventory.load_inventory(cfg.inventory_path, bbox=bbox)
+        bg = inventory.background_points(bbox, max(2 * len(pres), 2000),
+                                         _work(cfg, "slope_tan.tif"))
+        sp = inventory.sample_factors_at_points(pres, [_work(cfg, "slope_tan.tif"),
+                                                       _work(cfg, "sca.tif")])
+        sb = inventory.sample_factors_at_points(bg, [_work(cfg, "slope_tan.tif"),
+                                                     _work(cfg, "sca.tif")])
+        sp[sp == -9999.0] = np.nan
+        sb[sb == -9999.0] = np.nan
+        _log("fit", f"searching soil parameters against {len(pres)} landslides")
+        fit_report = physical.fit_parameters(sp[:, 0], sp[:, 1],
+                                             sb[:, 0], sb[:, 1])
+        params = fit_report["parameters"]
+        _log("fit", f"AUC {fit_report['auc']:.3f}  {params.as_dict()}")
+
+    _log("stability", "failure probability over parameter ranges")
+    pfail = physical.failure_probability(slope, sca, params, n_samples=200)
+    out_p = os.path.join(cfg.out_dir, f"{cfg.name}_failure_probability.tif")
+    with rasterio.open(out_p, "w", **prof) as dst:
+        dst.write(np.where(np.isfinite(pfail), pfail, -9999.0).astype("float32"), 1)
+
+    cls = physical.stability_classes(slope, sca, params)
+    out_c = os.path.join(cfg.out_dir, f"{cfg.name}_stability_class.tif")
+    with rasterio.open(out_c, "w", **grid.profile("uint8", 255)) as dst:
+        dst.write(np.where(np.isfinite(cls), cls, 255).astype("uint8"), 1)
+
+    report = {"parameters": params.as_dict(),
+              "median_sca_m": float(np.nanpercentile(sca, 50))}
+    if fit_report:
+        report["fit"] = {k: v for k, v in fit_report.items()
+                         if k != "parameters"}
+    rp = os.path.join(cfg.out_dir, f"{cfg.name}_physical.json")
+    with open(rp, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+
+    _log("done", f"failure probability -> {out_p}")
+    return {"failure_probability": out_p, "stability_class": out_c,
+            "sca": _work(cfg, "sca.tif"), "slope": _work(cfg, "slope_tan.tif"),
+            "report": rp}

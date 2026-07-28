@@ -3,7 +3,8 @@
     step1  check          which datasets do I have, and can I get the rest?
     step2  download       fetch everything (skips anything already cached)
     step3  calibrate      fit the factor weights to real landslides
-    step4  susceptibility WHERE is the ground fragile?
+    step4  susceptibility WHERE is the ground fragile? (heuristic index)
+    step4b physical       the same question, from slope stability physics
     step5  hazard         IF a storm/quake hits, how likely is a landslide?
     step6  validate       does the map hold up on landslides it never saw?
     step7  compare        how does that change between two scenarios?
@@ -251,6 +252,20 @@ def _step_hazard(args) -> int:
     return 0
 
 
+def _step_physical(args) -> int:
+    cfg = _build_config(args)
+    print("STEP 4b  Physically based stability (SINMAP)\n")
+    out = pipeline.run_physical(cfg, mode=args.mode,
+                                fit=not args.no_fit)
+    print("\n  Outputs:")
+    for k, v in out.items():
+        print(f"    {k:22s} {v}")
+    print("\n  Validate it the same way as the heuristic map:")
+    print(f"    python -m giri_landslide.cli step6-validate "
+          f"--susceptibility {out['failure_probability']} --inventory <path>")
+    return 0
+
+
 def _step_validate(args) -> int:
     import json
 
@@ -376,6 +391,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="susceptibility GeoTIFF (default: from --name)")
     _mode(p); _add_common(p)
 
+    p = sub.add_parser("step4b-physical", aliases=["physical"],
+                       help="physically based stability (SINMAP infinite "
+                            "slope + D-infinity hydrology)")
+    p.add_argument("--no-fit", action="store_true",
+                   help="use default soil parameters instead of fitting them")
+    _mode(p); _add_common(p)
+
     p = sub.add_parser("step6-validate", aliases=["validate"],
                        help="test a susceptibility map against a held-out "
                             "inventory (ideally another region)")
@@ -421,6 +443,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "step4-susceptibility": _step_susceptibility,
         "susceptibility": _step_susceptibility,
         "step5-hazard": _step_hazard, "hazard": _step_hazard,
+        "step4b-physical": _step_physical, "physical": _step_physical,
         "step6-validate": _step_validate, "validate": _step_validate,
         "step7-compare": _step_compare, "compare": _step_compare,
         "run-all": _run_all, "run": _run_all,

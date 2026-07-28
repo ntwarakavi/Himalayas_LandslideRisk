@@ -605,6 +605,43 @@ def test_terrain_cache_is_invalidated_by_a_different_grid():
             assert (src.width, src.height) == (fine.width, fine.height)
 
 
+def test_recharge_stage_is_cached_and_grid_checked():
+    """Twelve monthly warps should happen once, and never for the wrong grid."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="rech")
+        grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
+        inputs = pipeline.resolve_inputs(cfg, "demo")
+
+        path, ref = pipeline.stage_recharge(cfg, grid, inputs)
+        precip = os.path.join(cfg.work_dir, "rech_precip_max_month.tif")
+        stamp = os.path.getmtime(precip)
+        assert ref > 0
+
+        # Same grid: reuse, and honour the reference passed in.
+        again, ref2 = pipeline.stage_recharge(cfg, grid, inputs,
+                                              reference_mm=ref)
+        assert again == path and ref2 == ref
+        assert os.path.getmtime(precip) == stamp, "recomputed unnecessarily"
+
+        # Different grid: the cached raster must not be reused.
+        cfg.resolution_deg = 0.002
+        fine = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
+        pipeline.stage_recharge(cfg, fine, inputs)
+        import rasterio
+        with rasterio.open(precip) as src:
+            assert (src.width, src.height) == (fine.width, fine.height)
+
+
+def test_no_temporary_rasters_survive_a_run():
+    """Atomic writes must not leave .tmp files behind."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="atomic")
+        pipeline.run_susceptibility(cfg, mode="demo")
+        for d in (cfg.work_dir, cfg.out_dir):
+            leftovers = [f for f in os.listdir(d) if ".tmp" in f]
+            assert not leftovers, leftovers
+
+
 def test_fit_writes_parameters_that_later_steps_read():
     """The fit -> map handoff must go through the JSON, not through memory."""
     import rasterio

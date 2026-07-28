@@ -270,6 +270,7 @@ def stage_recharge(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
     its own median, so that a scenario in which the whole area gets wetter
     shows up as a scale above 1 instead of cancelling out.
     """
+    _ensure_dirs(cfg)
     path = _work(cfg, "recharge_scale.tif")
     if not cfg.spatial_recharge or "precip_monthly" not in inputs:
         if cfg.spatial_recharge:
@@ -305,6 +306,7 @@ def stage_regions(cfg: C.Config, grid: Grid,
     """Calibration-region raster, or None if the area is fitted as one piece."""
     if not cfg.calibration_regions:
         return None
+    _ensure_dirs(cfg)
     path = _work(cfg, "regions.tif")
 
     if cfg.calibration_regions == "landcover":

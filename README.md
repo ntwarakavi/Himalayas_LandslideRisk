@@ -287,7 +287,11 @@ The spatial figure is the one to quote. That it sits so close to the random one
 is the substantive result: the relationship holds on ground the fit never saw,
 so the skill is mechanical rather than spatial interpolation.
 
-**Concentration.** Binning the continuous field into map-area quintiles:
+**Concentration.** Binning the continuous field into map-area quintiles. These
+are **in-sample**: they score the map against the same Roback inventory the
+parameters were fitted to, so they describe how well the fitted map concentrates
+the landslides it was built from, not how it would behave on new ground. The
+held-out figure is the spatial-block AUC above.
 
 | Quintile | Map area | Landslides | Frequency ratio |
 |---|---|---|---|
@@ -332,7 +336,8 @@ The continuous field is monotonic; the six-class SINMAP map is not.
 | 5 upper threshold | 12.5 % | 41.5 % | 3.33 |
 | 6 unconditionally unstable | 0.75 % | 8.8 % | **11.73** |
 
-Classes 4–6 are ordered correctly and class 6 is the strongest single signal in
+Also in-sample, and on the same caveat as the table above. Classes 4–6 are
+ordered correctly and class 6 is the strongest single signal in
 the map: three quarters of a percent of the area holds nearly nine percent of
 the landslides. Classes 1–3 are not ordered, and cannot be: all three have
 failure probability zero by definition and are separated only by how far above 1

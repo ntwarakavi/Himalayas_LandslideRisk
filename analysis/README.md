@@ -10,6 +10,9 @@ python analysis/02_transfer.py       # does a fit made in one place work elsewhe
 python analysis/03_benchmark.py      # does the physics beat a statistical model?
 python analysis/04_monsoon.py        # does the trigger mechanism cap the score?
 python analysis/05_sensitivity.py    # what rests on the two unfitted conventions?
+python analysis/06_inventory_geometry.py   # where should a polygon inventory be sampled?
+python analysis/07_calibration_regions.py  # do per-lithology parameters ever help?
+python analysis/08_transfer_benchmark.py   # which model survives being moved?
 ```
 
 Run them from the repository root. Each prints its tables and writes a JSON to

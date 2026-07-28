@@ -21,11 +21,13 @@ the most informative quantity in this document.
 | Is that the trigger mechanism? | No — that hypothesis is refuted |
 | Do calibration regions help? | No, in either area: −0.0004 AUC |
 | What rests on the unfitted conventions? | Rainfall, almost nothing. Seismic, a great deal |
+| So which model should I use? | The mechanical one — it degrades least when moved (§8) |
 
 Then what *does* the physics buy? Not discrimination. It buys three interpretable
 parameters instead of a fitted surface, near-total insensitivity to spatial
-leakage, portability between catchments, and the ability to state a scenario the
-data never contained. Section 8 sets that out.
+leakage, the smallest loss of any model tested when carried to new ground, and
+the ability to state a scenario the data never contained. Sections 8 and 9 set
+that out.
 
 ## 1. Resolution
 
@@ -322,7 +324,42 @@ is not much use.
 | Crown rather than centroid sampling | +0.017 Far-West, −0.006 Gorkha | Not wired into the pipeline; documented |
 | Refitting on the monsoon inventory to escape the earthquake trigger | Hypothesis refuted — scores 0.16 *lower* | Reported as a domain-of-validity limit |
 
-## 8. What the physics actually buys
+## 8. Which model to use
+
+`analysis/08_transfer_benchmark.py` — every model fitted on Gorkha at 30 m and
+applied **unchanged** to two other catchments, scored against their own
+inventories. The Gorkha column is in-sample for every model alike, so it is a
+fair "apparent performance" comparison; the away columns are what a user
+actually gets on ground with no inventory, which is most of the region.
+
+| Model | Gorkha (in-sample) | Far-West | Sikkim | **Mean away** | Drop |
+|---|---|---|---|---|---|
+| **SINMAP (physics)** | 0.8221 | 0.6557 | **0.7801** | **0.7179** | **0.104** |
+| logistic [terrain] | 0.8274 | 0.6547 | 0.7679 | 0.7113 | 0.116 |
+| random forest [terrain] | 0.9422 | 0.6318 | 0.7403 | 0.6860 | 0.256 |
+| logistic [context] | 0.8763 | 0.6017 | 0.5917 | 0.5967 | 0.280 |
+| random forest [context] | **0.9742** | 0.5916 | 0.6702 | 0.6309 | 0.343 |
+
+**The ranking at home is very nearly the reverse of the ranking away.** The
+random forest with the full predictor set is the best model on the data it was
+fitted to (0.974) and the worst or near-worst everywhere else. The mechanical
+model is mid-table at home and first away, with the smallest drop of any model
+tested.
+
+That is the whole argument for using it. It does not out-discriminate a logistic
+regression — 0.822 against 0.827 at home, 0.718 against 0.711 away, differences
+well inside the noise. What it does is degrade least when moved, while also
+being the only one of the five that can state a scenario the training data never
+contained.
+
+**Recommendation.** Use the mechanical model, at 30 m where compute allows and
+90 m otherwise, with the continuous failure-probability output, spatial recharge
+on and calibration regions off. Fit it to a source-area inventory in terrain
+resembling the target, and validate locally before relying on it. Do not choose
+a model on its home-ground score — on this evidence that selects almost exactly
+the wrong one.
+
+## 9. What the physics actually buys
 
 The benchmark says plainly that the mechanical model does not out-discriminate a
 logistic regression on the same two variables. Four things it does do, none of

@@ -1,0 +1,46 @@
+{
+  "rows": [
+    {
+      "model": "SINMAP (physics)",
+      "home": 0.8221,
+      "farwest": 0.6557,
+      "sikkim": 0.7801,
+      "mean_away": 0.7179,
+      "drop": 0.1042
+    },
+    {
+      "model": "logistic [terrain]",
+      "home": 0.8274,
+      "farwest": 0.6547,
+      "sikkim": 0.7679,
+      "mean_away": 0.7113,
+      "drop": 0.1161
+    },
+    {
+      "model": "random forest [terrain]",
+      "home": 0.9422,
+      "farwest": 0.6318,
+      "sikkim": 0.7403,
+      "mean_away": 0.686,
+      "drop": 0.2562
+    },
+    {
+      "model": "logistic [context]",
+      "home": 0.8763,
+      "farwest": 0.6017,
+      "sikkim": 0.5917,
+      "mean_away": 0.5967,
+      "drop": 0.2796
+    },
+    {
+      "model": "random forest [context]",
+      "home": 0.9742,
+      "farwest": 0.5916,
+      "sikkim": 0.6702,
+      "mean_away": 0.6309,
+      "drop": 0.3432
+    }
+  ],
+  "source": "gorkha",
+  "resolution_deg": 0.00027778
+}

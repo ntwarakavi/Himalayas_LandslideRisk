@@ -352,6 +352,33 @@ needs no such hedge.**
   whole-landslide polygons, −0.006 where polygons are already source areas.
   Real, correctly signed, second-order.
 
+### Which model to use
+
+Every model fitted on Gorkha at 30 m and applied **unchanged** elsewhere. The
+Gorkha column is in-sample for all of them alike; the away columns are what you
+get on ground with no inventory, which is most of the region.
+
+| Model | Gorkha (in-sample) | Far-West | Sikkim | **Mean away** | Drop |
+|---|---|---|---|---|---|
+| **SINMAP (physics)** | 0.8221 | 0.6557 | **0.7801** | **0.7179** | **0.104** |
+| logistic — slope + log SCA | 0.8274 | 0.6547 | 0.7679 | 0.7113 | 0.116 |
+| random forest — slope + log SCA | 0.9422 | 0.6318 | 0.7403 | 0.6860 | 0.256 |
+| logistic — + context | 0.8763 | 0.6017 | 0.5917 | 0.5967 | 0.280 |
+| random forest — + context | **0.9742** | 0.5916 | 0.6702 | 0.6309 | 0.343 |
+
+**The ranking at home is nearly the reverse of the ranking away.** The random
+forest with the full predictor set is the best model on the data it was fitted
+to and the worst or near-worst everywhere else. The mechanical model is
+mid-table at home and first away, with the smallest drop of any model tested.
+
+That is the case for using it. It does not out-discriminate a logistic
+regression — 0.822 against 0.827 at home, 0.718 against 0.711 away, both inside
+the noise — but it degrades least when moved, and it is the only one of the five
+that can state a scenario the training data never contained.
+
+**Do not choose a model on its home-ground score.** On this evidence that picks
+almost exactly the wrong one.
+
 ### The class map is not fully ordered
 
 The continuous field is monotonic; the six-class SINMAP map is not, and cannot
@@ -392,6 +419,7 @@ analysis/                  Experiments behind docs/RESULTS.md
 ├── 05_sensitivity.py      The two unfitted conventions
 ├── 06_inventory_geometry.py  Where a polygon inventory should be sampled
 ├── 07_calibration_regions.py Whether per-lithology parameters help
+├── 08_transfer_benchmark.py  Which model survives being moved
 └── results/               JSON output, version-controlled
 
 configs/                   Run configurations

@@ -53,7 +53,7 @@ def main() -> None:
 
     layers = K.terrain_layers(cfg, want_precip=True)
     paths = [layers["slope"], layers["sca"], layers["recharge"]]
-    pres, vp, bg, vb = K.sample(cfg, paths)
+    pres, vp, bg, vb = K.sample(cfg, paths, area="gorkha")
     ok_p, ok_b = K.clean(vp), K.clean(vb)
     vp, vb = vp[ok_p], vb[ok_b]
 

@@ -41,7 +41,7 @@ def build_features(cfg, layers, region_paths):
     """Sample every predictor at presence and background points."""
     paths = [layers["slope"], layers["sca"], layers["dem"], layers["recharge"],
              region_paths["lithology"], region_paths["landcover"]]
-    pres, vp, bg, vb = K.sample(cfg, paths)
+    pres, vp, bg, vb = K.sample(cfg, paths, area="gorkha")
     ok_p, ok_b = K.clean(vp[:, :4]), K.clean(vb[:, :4])
     return pres[ok_p], vp[ok_p], bg[ok_b], vb[ok_b]
 

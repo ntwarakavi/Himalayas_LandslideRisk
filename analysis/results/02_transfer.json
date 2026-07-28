@@ -1,0 +1,126 @@
+{
+  "rows": [
+    {
+      "area": "gorkha",
+      "mode": "fitted here",
+      "parameters": {
+        "cohesion": [
+          0.0,
+          0.25
+        ],
+        "friction_deg": [
+          25.0,
+          35.0
+        ],
+        "rt": [
+          1e-05,
+          0.0005
+        ]
+      },
+      "auc": 0.8221,
+      "n_presence": 5193,
+      "n_background": 10386,
+      "capture_top5pct": 36.65,
+      "capture_top10pct": 53.07,
+      "capture_top20pct": 70.96
+    },
+    {
+      "auc": 0.655,
+      "n_presence": 23320,
+      "n_background": 46640,
+      "capture_top5pct": 12.98,
+      "capture_top10pct": 18.91,
+      "capture_top20pct": 35.26,
+      "area": "farwest",
+      "mode": "transferred from gorkha",
+      "parameters": {
+        "cohesion": [
+          0.0,
+          0.25
+        ],
+        "friction_deg": [
+          25.0,
+          35.0
+        ],
+        "rt": [
+          1e-05,
+          0.0005
+        ]
+      }
+    },
+    {
+      "auc": 0.66,
+      "n_presence": 23320,
+      "n_background": 46640,
+      "capture_top5pct": 9.0,
+      "capture_top10pct": 19.7,
+      "capture_top20pct": 36.68,
+      "area": "farwest",
+      "mode": "fitted here",
+      "parameters": {
+        "cohesion": [
+          0.0,
+          0.4
+        ],
+        "friction_deg": [
+          25.0,
+          35.0
+        ],
+        "rt": [
+          0.0002,
+          0.01
+        ]
+      }
+    },
+    {
+      "auc": 0.7599,
+      "n_presence": 226,
+      "n_background": 2000,
+      "capture_top5pct": 26.11,
+      "capture_top10pct": 34.96,
+      "capture_top20pct": 56.64,
+      "area": "sikkim",
+      "mode": "transferred from gorkha",
+      "parameters": {
+        "cohesion": [
+          0.0,
+          0.25
+        ],
+        "friction_deg": [
+          25.0,
+          35.0
+        ],
+        "rt": [
+          1e-05,
+          0.0005
+        ]
+      }
+    },
+    {
+      "auc": 0.806,
+      "n_presence": 226,
+      "n_background": 2000,
+      "capture_top5pct": 28.76,
+      "capture_top10pct": 42.92,
+      "capture_top20pct": 64.16,
+      "area": "sikkim",
+      "mode": "fitted here",
+      "parameters": {
+        "cohesion": [
+          0.0,
+          0.25
+        ],
+        "friction_deg": [
+          35.0,
+          45.0
+        ],
+        "rt": [
+          0.0002,
+          0.01
+        ]
+      }
+    }
+  ],
+  "source": "gorkha",
+  "resolution_deg": 0.00027778
+}

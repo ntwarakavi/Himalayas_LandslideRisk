@@ -33,7 +33,7 @@ def sample_area(area: str, res: float):
     cfg = K.make_config(area, res)
     layers = K.terrain_layers(cfg, want_precip=True)
     paths = [layers["slope"], layers["sca"], layers["recharge"]]
-    pres, vp, bg, vb = K.sample(cfg, paths)
+    pres, vp, bg, vb = K.sample(cfg, paths, area=area)
     ok_p, ok_b = K.clean(vp), K.clean(vb)
     return cfg, pres[ok_p], vp[ok_p], bg[ok_b], vb[ok_b], layers
 

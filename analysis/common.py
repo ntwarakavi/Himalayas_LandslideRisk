@@ -33,14 +33,75 @@ FARWEST = ("data/raw/inventory/farwest/LandslideInventory_FarWesternNepal/"
 SIKKIM = ("data/raw/inventory/sikkim/"
           "Google_Earth_landslides_polygon_21Dec2021.shp")
 
+#: Polygons delimiting the ground each inventory actually surveyed. All three
+#: inventories publish one, and using them is not optional: background points
+#: stand in for "terrain that did not fail", so drawing them outside the
+#: surveyed area silently labels unmapped ground as landslide-free. Far-West
+#: and Sikkim survey only about 60 per cent of their own bounding boxes, so
+#: unmasked background would be roughly 40 per cent false negatives.
+EXTENTS = {
+    "gorkha": ("data/raw/inventory/roback/Roback_Nepal_final_files/"
+               "MappingExtent20170209.shp"),
+    "farwest": ("data/raw/inventory/farwest/LandslideInventory_FarWesternNepal/"
+                "LandslideInventory_FarWesternNepal_AOI.shp"),
+    "sikkim": ("data/raw/inventory/sikkim/"
+               "Google_Earth_mapped_extent_21Dec2021.shp"),
+}
+
 #: Study areas. Gorkha is the 2015 earthquake footprint; Far-West Nepal is a
 #: monsoon-driven multi-temporal inventory; Sikkim is small and used only to
-#: test transfer.
+#: test transfer. Each bounding box is the surveyed extent's own bounds, so no
+#: part of a run falls outside ground somebody looked at.
 AREAS = {
     "gorkha":  dict(bbox=(84.5, 27.6, 85.3, 28.2), inventory=ROBACK),
-    "farwest": dict(bbox=(80.3, 28.8, 81.4, 30.0), inventory=FARWEST),
-    "sikkim":  dict(bbox=(88.2, 27.1, 88.8, 27.6), inventory=SIKKIM),
+    "farwest": dict(bbox=(80.558, 28.913, 81.592, 29.856), inventory=FARWEST),
+    "sikkim":  dict(bbox=(88.048, 27.067, 88.917, 27.554), inventory=SIKKIM),
 }
+
+
+def survey_mask(area: str, grid: Grid, out_path: str) -> Optional[str]:
+    """Rasterise the surveyed-extent polygon onto ``grid``.
+
+    Returns the path to a 0/1 mask, or None if the area has no extent polygon.
+    """
+    import fiona
+    from rasterio.features import rasterize
+    from rasterio.warp import transform_geom
+
+    shp = EXTENTS.get(area)
+    if not shp or not os.path.exists(shp):
+        return None
+    with fiona.open(shp) as src:
+        crs = src.crs or "EPSG:4326"
+        shapes = [(transform_geom(crs, "EPSG:4326", f["geometry"]), 1)
+                  for f in src]
+    arr = rasterize(shapes, out_shape=grid.shape, transform=grid.transform,
+                    fill=0, dtype="uint8")
+    with rasterio.open(out_path, "w", **grid.profile("uint8", 0)) as dst:
+        dst.write(arr, 1)
+    return out_path
+
+
+def masked_reference(area: str, cfg: C.Config, slope_path: str) -> str:
+    """A copy of the slope raster blanked outside the surveyed extent.
+
+    Passed to :func:`background_points` as the reference, so background falls
+    only on ground the inventory's authors actually examined.
+    """
+    grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
+    mask_path = os.path.join(cfg.work_dir, f"{cfg.name}_surveyed.tif")
+    if survey_mask(area, grid, mask_path) is None:
+        return slope_path
+
+    out = os.path.join(cfg.work_dir, f"{cfg.name}_slope_surveyed.tif")
+    with rasterio.open(slope_path) as s, rasterio.open(mask_path) as m:
+        a = s.read(1).astype("float32")
+        a[m.read(1) == 0] = -9999.0
+    with rasterio.open(out, "w", **grid.profile("float32", -9999.0)) as dst:
+        dst.write(a, 1)
+    frac = float((a != -9999.0).mean())
+    print(f"  surveyed extent covers {frac * 100:.1f}% of the AOI")
+    return out
 
 
 def save(name: str, payload: dict) -> str:
@@ -98,18 +159,22 @@ def region_layer(area: str, res: float, kind: str) -> Optional[str]:
 
 
 def sample(cfg: C.Config, layers: Sequence[str],
-           n_background: Optional[int] = None, seed: int = 0
+           n_background: Optional[int] = None, seed: int = 0,
+           area: Optional[str] = None
            ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Presence and background points with their sampled layer values.
 
     Returns ``(points_pres, values_pres, points_bg, values_bg)``. Background is
-    drawn over the same extent and screened by the slope raster, so it stands
-    in for "terrain that did not fail" rather than for "anywhere on Earth".
+    drawn over the surveyed extent and screened by the slope raster, so it
+    stands in for "terrain that was looked at and did not fail" rather than for
+    "anywhere on Earth" - or, worse, "anywhere nobody checked".
     """
     bbox = cfg.clipped_bbox()
     pres = inventory.load_inventory(cfg.inventory_path, bbox=bbox)
     n_bg = n_background or max(2 * len(pres), 2000)
-    bg = inventory.background_points(bbox, n_bg, layers[0], seed=seed)
+    reference = (masked_reference(area, cfg, layers[0]) if area
+                 else layers[0])
+    bg = inventory.background_points(bbox, n_bg, reference, seed=seed)
     vp = inventory.sample_factors_at_points(pres, list(layers))
     vb = inventory.sample_factors_at_points(bg, list(layers))
     vp[vp == -9999.0] = np.nan

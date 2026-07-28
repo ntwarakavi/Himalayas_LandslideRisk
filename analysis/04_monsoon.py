@@ -40,7 +40,7 @@ def main() -> None:
 
         layers = K.terrain_layers(cfg, want_precip=True)
         paths = [layers["slope"], layers["sca"], layers["recharge"]]
-        pres, vp, bg, vb = K.sample(cfg, paths)
+        pres, vp, bg, vb = K.sample(cfg, paths, area=area)
         ok_p, ok_b = K.clean(vp), K.clean(vb)
         pres, vp, bg, vb = pres[ok_p], vp[ok_p], bg[ok_b], vb[ok_b]
         print(f"    {len(pres)} landslides, {len(bg)} background")

@@ -375,6 +375,65 @@ Oversize units are listed and skipped rather than attempted:
 Lower `--res` for those, or leave them for a basin-level split that is not
 implemented yet.
 
+## 8c. Settlements, roads and the web map
+
+Steps 10 and 11 turn a susceptibility raster into something a planner can act
+on, then into something they can open.
+
+```bash
+python -m h_sim.cli step10-risk --name gorkha30 \
+    --bbox 84.5 27.6 85.3 28.2 --res 0.00027778
+python -m h_sim.cli step11-map  --name gorkha30
+```
+
+Step 10 fetches settlements and roads for the area, then scores each one against
+every climate scenario in `risk_climate` — by default the present day plus
+`ssp245` and `ssp585` over 2021-2040 and 2041-2060, the windows that fall inside
+a 20 to 30 year planning horizon. Any future susceptibility map it needs and
+cannot find is computed on the spot, normalised by the present-day recharge
+reference. Override the list:
+
+```bash
+python -m h_sim.cli step10-risk --name gorkha30 \
+    --risk-climate current ssp585:2041-2060
+```
+
+What comes back:
+
+```
+  scenario            exposed    people   road km   road %    mean
+  ----------------------------------------------------------------
+  current *              1,204    82,510       412     31.7   0.121
+  ssp245_2021-2040       1,211    82,910       414     31.9   0.123
+  ssp585_2041-2060       1,248    85,120       427     32.9   0.129
+```
+
+`exposed` counts assets at or above a score of 0.08. The score is **not** the
+susceptibility under the asset — towns sit on flat ground, and sampling there
+answers "safe" for exactly the settlements a slope above is about to bury. It is
+the proximity-weighted fraction of upslope ground that could reach the asset
+under an 18 degree angle of reach and that the model calls unstable. Tune with
+`travel_angle_deg` and `reach_radius_m`; a smaller angle means a longer reach
+and a more conservative screen.
+
+Do not read the maximum instead. `reaching_max` is recorded per asset because
+"the worst single cell above this town" is a useful diagnostic, but a maximum
+over a few thousand cells saturates: on Gorkha at 30 m it put over half the
+settlements in the top band and stopped discriminating.
+
+Step 11 writes `outputs/<name>_webmap/index.html`. Open it directly — Leaflet is
+vendored beside it and the layers ship as scripts rather than fetches, so no web
+server is needed and nothing but the basemap tiles wants a network. The climate
+selector switches the raster, the settlement colours, the road colours and every
+table at once; each popup carries the asset's whole set of scenario scores and
+the change from today.
+
+If Overpass is unreachable, settlements fall back to GeoNames and roads to
+Natural Earth — trunk routes only, generalised to about 1:10 M. That fallback is
+recorded in each feature's `source` field, and a road layer of a few dozen
+segments over a whole district is the signature of it having happened. Rerun
+after deleting `data/raw/exposure/roads_<name>.json` to try Overpass again.
+
 ## 9. Packaging the deliverables
 
 ```bash
@@ -417,6 +476,7 @@ data/raw/         downloaded sources, never re-fetched
   worldclim/      monthly precipitation
   glim/           lithology (only if you asked for regions)
   inventory/      landslide inventories
+  exposure/       settlements and roads, cached per run name
 data/work/        per-run intermediates, safe to delete
   <name>_dem.tif             DEM on the run grid
   <name>_slope_tan.tif       slope as a gradient
@@ -430,6 +490,11 @@ outputs/          the products
   <name>_susceptibility_class.tif
   <name>_critical_acceleration.tif
   <name>_hazard_*_prob.tif
+  <name>_susceptibility_<scenario>_prob.tif   one per future climate
+  <name>_risk_settlements.json     every settlement, every scenario
+  <name>_risk_roads.json           every 500 m segment, every scenario
+  <name>_risk_summary.json
+  <name>_webmap/index.html         the browsable page and its assets
   <name>_validation.json
 ```
 
@@ -485,3 +550,16 @@ only by margin of stability. Validate the continuous field instead.
 
 **Downloads fail behind a proxy** — every source is a plain HTTPS GET, so
 `HTTPS_PROXY` is respected. `step1-check` reports which hosts are reachable.
+
+**Overpass returns 406, or a 429 saying you are rate limited** — both mean the
+request carried no User-Agent, not that the service is busy. The model sends
+one; if you are calling `input/exposure.py` yourself, send one too.
+
+**Only a handful of road segments over a whole district** — the Overpass fetch
+failed and the run fell back to Natural Earth, which carries trunk routes only.
+Delete `data/raw/exposure/roads_<name>.json` and rerun step 10.
+
+**The web map opens but nothing is on it** — check that `settlements.js` and
+`roads.js` sit beside `index.html`. If the panel says the map could not be
+drawn, Leaflet is missing from `<name>_webmap/leaflet/`, which happens when the
+page was built with no network and no cached copy; rebuild once online.

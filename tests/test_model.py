@@ -1011,6 +1011,211 @@ def test_dataset_cache_detection():
         assert "CACHED" in datasets.format_report(rows)
 
 
+# ---------------------------------------------------------------------------
+# reach, exposure and the web map
+# ---------------------------------------------------------------------------
+
+def _cone(n=61, height=600.0):
+    """A cone: one peak, elevation falling linearly to the edge."""
+    y, x = np.mgrid[0:n, 0:n]
+    c = (n - 1) / 2.0
+    r = np.hypot(y - c, x - c)
+    return np.clip(height * (1.0 - r / c), 0.0, None)
+
+
+def _reach_index(dem, cell_m=30.0, **kw):
+    from rasterio.transform import from_origin
+    from h_sim.model import risk as R
+
+    deg = cell_m / 111320.0
+    tr = from_origin(80.0, 30.0, deg, deg)
+    return R.ReachIndex(dem, tr, cell_m, cell_m, **kw), tr
+
+
+def test_reach_geometry_respects_the_travel_angle():
+    """Nothing reaches the peak; the foot of a steep cone is reached."""
+    from h_sim.model import risk as R
+
+    dem = _cone()
+    idx, tr = _reach_index(dem, search_radius_m=2000.0)
+    n = dem.shape[0]
+    peak = idx.reach(*(tr * (n // 2 + 0.5, n // 2 + 0.5)))
+    assert peak.rows.size == 0, "nothing is above the summit"
+
+    foot = idx.reach(*(tr * (1.5, n // 2 + 0.5)))
+    assert foot.rows.size > 0
+    # every accepted source clears the angle criterion
+    assert np.all(foot.relief / foot.dist > idx.tan_alpha)
+
+    # A shallower cone puts nothing above the limiting angle at all.
+    flat, trf = _reach_index(_cone(height=60.0), search_radius_m=2000.0)
+    assert flat.reach(*(trf * (1.5, n // 2 + 0.5))).rows.size == 0
+
+
+def test_reach_weights_favour_close_sources():
+    """A source twice as far counts half as much: paths widen with distance."""
+    dem = _cone()
+    idx, tr = _reach_index(dem)
+    rch = idx.reach(*(tr * (1.5, dem.shape[0] // 2 + 0.5)))
+    order = np.argsort(rch.dist)
+    d, w = rch.dist[order], rch.weight[order]
+    assert np.all(np.diff(w) <= 1e-12), "weight must fall with distance"
+    assert np.allclose(w * d, w[0] * d[0])
+
+
+def test_score_is_a_weighted_mean_not_a_maximum():
+    """The headline score must not saturate as the window grows.
+
+    This is the defect the first version had: taking the maximum over a few
+    thousand upslope cells finds a high value almost surely, so nearly every
+    settlement landed in the top band. A weighted mean cannot do that.
+    """
+    from h_sim.model import risk as R
+
+    dem = _cone()
+    idx, tr = _reach_index(dem)
+    rch = idx.reach(*(tr * (1.5, dem.shape[0] // 2 + 0.5)))
+    assert rch.rows.size > 50
+
+    prob = np.zeros_like(dem)
+    prob[rch.rows[0], rch.cols[0]] = 1.0        # exactly one unstable cell
+    sc = rch.score(prob)
+    assert sc.reaching_max == 1.0
+    assert sc.reaching < 0.2, "one hot cell must not set the headline"
+    assert sc.score == max(sc.on_site, sc.reaching)
+
+    prob[rch.rows, rch.cols] = 1.0              # all of them unstable
+    assert rch.score(prob).reaching == 1.0
+
+
+def test_score_is_monotone_in_probability():
+    from h_sim.model import risk as R
+
+    dem = _cone()
+    idx, tr = _reach_index(dem)
+    rch = idx.reach(*(tr * (1.5, dem.shape[0] // 2 + 0.5)))
+    lo = rch.score(np.full_like(dem, 0.2)).reaching
+    hi = rch.score(np.full_like(dem, 0.6)).reaching
+    assert lo < hi
+    assert abs(lo - 0.2) < 1e-9 and abs(hi - 0.6) < 1e-9
+
+
+def test_reach_geometry_is_reused_across_scenarios():
+    """Scoring N climates costs one window search, not N."""
+    from h_sim.model import risk as R
+
+    dem = _cone()
+    idx, tr = _reach_index(dem)
+    lon, lat = tr * (1.5, dem.shape[0] // 2 + 0.5)
+    rch = idx.reach(lon, lat)
+    a = rch.score(np.full_like(dem, 0.2))
+    b = rch.score(np.full_like(dem, 0.5))
+    assert a.n_sources == b.n_sources and a.reaching < b.reaching
+
+
+def test_segment_line_keeps_length_and_splits():
+    from h_sim.model import risk as R
+
+    coords = [(84.0 + 0.001 * i, 28.0) for i in range(60)]
+    total = R.line_length_m(coords)
+    segs = R.segment_line(coords, 500.0)
+    assert len(segs) > 1
+    assert abs(sum(R.line_length_m(s) for s in segs) - total) < 1.0
+    assert all(len(s) >= 2 for s in segs)
+    # a two-point way shorter than the target is still one segment
+    assert len(R.segment_line(coords[:2], 500.0)) == 1
+
+
+def test_batch_scoring_carries_every_scenario():
+    from h_sim.input.exposure import Road, Settlement
+    from h_sim.model import risk as R
+
+    dem = _cone()
+    idx, tr = _reach_index(dem)
+    n = dem.shape[0]
+    lon, lat = tr * (1.5, n // 2 + 0.5)
+    towns = [Settlement("Foot", float(lon), float(lat), "village", 500)]
+    lon2, lat2 = tr * (3.5, n // 2 + 0.5)
+    roads = [Road("Valley road", "primary",
+                  [(float(lon), float(lat)), (float(lon2), float(lat2))])]
+    probs = {"current": np.full_like(dem, 0.2),
+             "ssp585_2041-2060": np.full_like(dem, 0.5)}
+
+    st = R.score_settlements(idx, towns, probs)
+    assert len(st) == 1
+    assert set(st[0]["scenarios"]) == set(probs)
+    assert st[0]["score"] == st[0]["scenarios"]["current"]["score"]
+    assert st[0]["delta_max"] > 0
+
+    rd = R.score_roads(idx, roads, probs, segment_m=500.0)
+    assert rd and set(rd[0]["scenarios"]) == set(probs)
+
+    s = R.summarise(st, rd, list(probs))
+    assert set(s["scenarios"]) == set(probs)
+    assert s["change"]["ssp585_2041-2060"]["mean_settlement_score"] > 0
+    assert s["n_settlements"] == 1
+
+
+def test_bands_are_ordered_and_cover_the_range():
+    from h_sim.model import risk as R
+
+    assert R.band(0.0) == "very low" and R.band(1.0) == "very high"
+    edges = [e for e, _ in R.RISK_BANDS]
+    assert edges == sorted(edges)
+    seen = [R.band(v) for v in np.linspace(0, 1, 200)]
+    assert set(seen) == set(R.BAND_ORDER)
+
+
+def test_demo_exposure_sits_on_low_ground():
+    """Settlements must go in the valleys, which is the case the model is for."""
+    grid = Grid.from_bbox((83.0, 27.5, 83.2, 27.7), 0.002)
+    dem = _cone(n=grid.shape[0], height=3000.0)
+    towns, roads = demo.make_demo_exposure(grid, dem)
+    assert towns and roads
+
+    inv = ~grid.transform
+    zs = []
+    for t in towns:
+        col, row = inv * (t.lon, t.lat)
+        zs.append(dem[int(row), int(col)])
+    assert np.median(zs) < np.median(dem)
+
+
+def test_webmap_data_is_script_loadable():
+    """Layers ship as <script src>, because fetch() is blocked on file://."""
+    from h_sim import webmap
+
+    with tempfile.TemporaryDirectory() as tmp:
+        name = webmap.write_data(tmp, "settlements",
+                                 {"type": "FeatureCollection", "features": []})
+        assert name == "settlements.js"
+        text = open(os.path.join(tmp, name), encoding="utf-8").read()
+        assert text.startswith("window.HSIM_DATA")
+        assert '"settlements"' in text
+
+
+def test_webmap_page_survives_a_missing_leaflet():
+    """The tables come from the run; a blocked CDN must not blank the page."""
+    from h_sim import webmap
+
+    assert "typeof L !== 'undefined'" in webmap._PAGE
+    assert "__DATA__" in webmap._PAGE and "__LEAFLET__" in webmap._PAGE
+
+
+def test_short_scenario_labels():
+    assert pipeline._short_scenario(CL.BASELINE) == "present day"
+    assert (pipeline._short_scenario(CL.scenario("ssp245:2041-2060"))
+            == "SSP2-4.5 2041-60")
+
+
+def test_climate_scenario_round_trips_through_a_dict():
+    """The web map rebuilds scenarios from what step10 wrote, not from specs."""
+    s = CL.scenario("ssp585:2021-2040")
+    back = CL.from_dict(s.as_dict())
+    assert back == s
+    assert CL.from_dict(CL.BASELINE.as_dict()).is_baseline
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

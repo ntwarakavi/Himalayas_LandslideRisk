@@ -23,6 +23,15 @@ python -m h_sim.cli step7-climate $COMMON \
     --scenarios current ssp245:2061-2080 ssp585:2081-2100 | tail -10
 
 echo
+echo ">> step10 risk: what the map means for towns and roads, now and later"
+python -m h_sim.cli step10-risk $COMMON \
+    --risk-climate current ssp245:2021-2040 ssp585:2041-2060 | tail -24
+
+echo
+echo ">> step11 map: one HTML page of the lot"
+python -m h_sim.cli step11-map $COMMON | tail -6
+
+echo
 echo "=============== PHASE 4  PACKAGE =============="
 python -m h_sim.cli step8-package --name demo | tail -12
 

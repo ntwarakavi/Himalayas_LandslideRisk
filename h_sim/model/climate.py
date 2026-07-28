@@ -115,6 +115,22 @@ def scenario(spec: str, gcm: str = DEFAULT_GCM,
                            gcm=gcm, resolution=resolution)
 
 
+def from_dict(d: dict) -> ClimateScenario:
+    """Rebuild a scenario from :meth:`ClimateScenario.as_dict`.
+
+    Round-tripping through :func:`scenario` would not work: ``key`` joins the
+    pathway and period with an underscore because it names files, while the
+    specification syntax uses a colon.
+    """
+    if not d.get("ssp"):
+        return BASELINE
+    return ClimateScenario(key=d.get("key") or f"{d['ssp']}_{d['period']}",
+                           ssp=d["ssp"], period=d.get("period"),
+                           gcm=d.get("gcm") or DEFAULT_GCM,
+                           resolution=d.get("resolution")
+                           or DEFAULT_GCM_RESOLUTION)
+
+
 def parse_all(specs: Sequence[str], gcm: str = DEFAULT_GCM,
               resolution: str = DEFAULT_GCM_RESOLUTION
               ) -> List[ClimateScenario]:

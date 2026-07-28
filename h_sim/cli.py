@@ -21,6 +21,8 @@ Nothing is ever re-downloaded and the expensive stage is cached.
       step7-climate        CMIP6 futures, and the change from today
 
       step9-region         sweep the region, one state or province at a time
+      step10-risk          what it means for settlements and roads
+      step11-map           a browsable Leaflet page of the whole run
 
     PACKAGE
       step8-package        manifest: what was produced and what it means
@@ -487,6 +489,73 @@ def _step_region(args) -> int:
     return 0
 
 
+def _step_risk(args) -> int:
+    cfg = _build_config(args)
+    print("STEP 10  Exposure of settlements and roads\n")
+    out = pipeline.run_risk(cfg, mode=args.mode,
+                            susceptibility=args.susceptibility,
+                            climate=args.risk_climate)
+    s = out["stats"]
+    scen = s.get("scenarios") or {}
+    base = s.get("baseline", "current")
+
+    print(f"\n  Settlements assessed   {s['n_settlements']:,}")
+    print(f"  Road segments          {s['n_road_segments']:,}"
+          f"   ({s['road_km_total']:,.0f} km)")
+
+    hdr = f"\n  {'scenario':<18}{'exposed':>9}{'people':>10}" \
+          f"{'road km':>10}{'road %':>9}{'mean':>8}"
+    print(hdr)
+    print("  " + "-" * (len(hdr) - 3))
+    for key, st in scen.items():
+        tag = f"{key} *" if key == base else key
+        print(f"  {tag:<18}{st['n_settlements_exposed']:>9,}"
+              f"{st['population_exposed']:>10,}"
+              f"{st['road_km_exposed']:>10,.0f}"
+              f"{st['road_pct_exposed']:>9.1f}"
+              f"{st['mean_settlement_score']:>8.3f}")
+    print("  * present day. 'exposed' means a score at or above "
+          f"{s.get('exposed_threshold', 0.08)}.")
+
+    if s.get("change"):
+        print("\n  Change from the present day")
+        for key, ch in s["change"].items():
+            print(f"    {key:<18}{ch['settlements_exposed']:>+7,} settlements"
+                  f"{ch['road_km_exposed']:>+9,.1f} km"
+                  f"{ch['mean_settlement_score']:>+9.4f} mean score")
+
+    base_bands = (scen.get(base) or s).get("settlements_by_band", {})
+    print("\n  Present-day settlement bands")
+    for b in ("very high", "high", "moderate", "low", "very low"):
+        n = base_bands.get(b)
+        if n:
+            print(f"    {b:<12} {int(n):>6,}")
+
+    print(f"\n  Angle of reach {s['travel_angle_deg']} deg, "
+          f"search radius {s['reach_radius_m']:.0f} m")
+    print("\n  This is screening, not risk: assets are scored by the "
+          "proximity-weighted\n  fraction of upslope ground that could reach "
+          "them and that the model calls\n  unstable. There is no runout "
+          "model and no vulnerability or damage function.")
+    print(f"\n  Settlements -> {out['settlements']}")
+    print(f"  Roads       -> {out['roads']}")
+    print("\nNext:  python -m h_sim.cli step11-map "
+          f"--name {cfg.name}")
+    return 0
+
+
+def _step_map(args) -> int:
+    cfg = _build_config(args)
+    print("STEP 11  Build the web map\n")
+    out = pipeline.run_webmap(cfg, susceptibility=args.susceptibility,
+                              open_after=args.open)
+    print(f"\n  Open it:  file://{os.path.abspath(out['webmap'])}")
+    print("\n  Leaflet and the basemap tiles load from the network; the "
+          "model outputs\n  themselves sit next to the page and load from "
+          "disk.")
+    return 0
+
+
 def _run_all(args) -> int:
     rc = _step_download(args)
     if rc:
@@ -580,6 +649,26 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="redo units that already have outputs")
     _mode(p); _add_common(p)
 
+    p = sub.add_parser("step10-risk", aliases=["risk"],
+                       help="score settlements and roads by the "
+                            "susceptibility that can reach them")
+    p.add_argument("--susceptibility",
+                   help="present-day susceptibility GeoTIFF "
+                        "(default: from --name)")
+    p.add_argument("--risk-climate", nargs="+", metavar="SPEC",
+                   help="climates to score assets under, e.g. current "
+                        "ssp245:2021-2040 ssp585:2041-2060. The present day "
+                        "is always included. Default: config.risk_climate")
+    _mode(p); _add_common(p)
+
+    p = sub.add_parser("step11-map", aliases=["map", "webmap"],
+                       help="build a browsable Leaflet page for a run")
+    p.add_argument("--susceptibility",
+                   help="susceptibility GeoTIFF (default: from --name)")
+    p.add_argument("--open", action="store_true",
+                   help="open the page in a browser when it is written")
+    _add_common(p)
+
     p = sub.add_parser("step8-package", aliases=["package"],
                        help="write the manifest of products and provenance")
     _add_common(p)
@@ -616,6 +705,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         "step7-climate": _step_climate, "climate": _step_climate,
         "step8-package": _step_package, "package": _step_package,
         "step9-region": _step_region, "region": _step_region,
+        "step10-risk": _step_risk, "risk": _step_risk,
+        "step11-map": _step_map, "map": _step_map, "webmap": _step_map,
         "run-all": _run_all, "run": _run_all,
     }
     return handlers[cmd](args)

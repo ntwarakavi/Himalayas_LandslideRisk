@@ -245,6 +245,8 @@ looks good on the landslides it was fitted to.
 | | 6 | `step6-hazard` | Rainfall and earthquake scenarios |
 | | 7 | `step7-climate` | CMIP6 futures and the change from today |
 | | 9 | `step9-region` | The above, one state or province at a time |
+| | 10 | `step10-risk` | Settlements and road segments, scored per climate |
+| | 11 | `step11-map` | A browsable Leaflet page of the whole run |
 | **4 Package** | 8 | `step8-package` | Manifest: products and provenance |
 
 `run-all` executes every phase in sequence.
@@ -380,6 +382,90 @@ Two practical points:
   Bhojpur, only 51 % and 54 % of the box fell inside the province. That is the
   price of rectangular tiling, and it is not currently optimised away.
 
+### Phase 3 — what it means for towns and roads
+
+A susceptibility map says which ground is unstable. It does not say who is under
+it. Steps 10 and 11 close that gap.
+
+```bash
+python -m h_sim.cli step10-risk --config configs/03_production_gorkha.json
+python -m h_sim.cli step11-map  --name gorkha30
+```
+
+**Do not sample the map at a town's coordinates.** Towns sit on flat ground —
+valley floors, terraces, the insides of meanders — where the factor of safety is
+high and failure probability is near zero. The model is right about that: the
+ground under the town is not going to slide. What destroys mountain towns is
+material arriving *from above*. Sampling at the point answers "safe" for exactly
+the settlements most at risk.
+
+**Angle of reach.** Debris from a source can reach a target if the line between
+them is steeper than a limiting travel angle α — the Fahrböschung, or Heim
+ratio:
+
+```
+(z_source − z_target) / horizontal_distance  >  tan α
+```
+
+Reported values cluster at 11–25° for channelised debris flows and shallow
+slides in mountain terrain, falling with volume (Corominas 1996; Rickenmann
+1999; Hunter & Fell 2003). The default is **18°** with a 2 km search radius,
+towards the conservative end because this is a screening product.
+
+**The score is a weighted mean, not a maximum.** An earlier version scored an
+asset by the highest failure probability among the cells that could reach it.
+That number saturates. In Himalayan relief a 2 km radius puts a few thousand
+cells above a valley settlement, and if 7 % of the landscape exceeds P = 0.6 —
+which is what the Gorkha 30 m fit gives — then the chance that *none* of several
+thousand upslope cells does is negligible. Scored that way, **56 % of
+settlements in the Gorkha box landed in the top band**, which is not a finding
+about the Himalaya, it is an artefact of taking a maximum over a large sample.
+
+The score is instead the **proximity-weighted mean failure probability over the
+ground positioned to reach the asset**: of the terrain that could deliver
+material here, what fraction does the model call unstable. Weights come from one
+geometric argument — a debris path widens roughly in proportion to how far it
+has travelled, so a fixed-width target occupies a share of the possible fan that
+falls about as 1/d. Nothing else is tuned. `reaching_max` is still reported as a
+diagnostic, and is deliberately not banded.
+
+Roads are cut into 500 m segments before scoring, because a way can be fifty
+kilometres long and one number for all of it tells a maintainer nothing about
+where to go.
+
+**Every asset is scored under several climates.** The default is the present day
+plus the two CMIP6 windows inside a 20–30 year planning horizon, under an
+intermediate and a very high pathway:
+
+```
+current   ssp245:2021-2040   ssp585:2021-2040   ssp245:2041-2060   ssp585:2041-2060
+```
+
+Change against the present day is the only comparison that means anything: a
+future recharge field is normalised by the present-day reference, so its
+absolute value is interpretable only relative to today. Override with
+`--risk-climate`; the present day is always included.
+
+**Exposure data.** Settlements are OpenStreetMap `place=city|town|village|hamlet`
+nodes via Overpass, with GeoNames as a fallback; roads are OSM `highway=*` ways
+with geometry, falling back to Natural Earth (trunk routes only, ~1:10 M, and
+labelled as such). Both are cached after the first fetch. Overpass rejects
+anonymous clients — a missing User-Agent returns 406 from one mirror and a
+misleading 429 from another — so the model sends one.
+
+**This is screening, not risk.** Risk is `hazard × exposure × vulnerability` and
+only the first two are here. There is no runout model, no damage function, and
+nothing converts to expected loss or casualties. Population is carried for
+ranking and never multiplied into anything.
+
+`step11-map` assembles a single HTML page: the susceptibility raster per
+scenario, the scored settlements and road segments, the training inventory and
+its background points, a climate selector that switches every model-dependent
+layer, and the summary tables. Leaflet is vendored next to the page and the
+vector layers ship as `<script src>` rather than `fetch`, so the page works when
+opened straight from disk and without a network — only the basemap tiles need
+one.
+
 ### Phase 4 — package
 
 ```bash
@@ -505,7 +591,9 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
 
 1. **Shallow translational failure only.** No deep-seated slides, rock falls,
    or debris runout. The model says where material detaches, not where it
-   arrives; a runout stage is scoped in `model/risk.py`.
+   arrives. Step 10 screens what could arrive at a town or a road with an
+   angle-of-reach criterion, which is a geometric bound, not a runout model:
+   no volume, no channel geometry, no entrainment, no rheology.
 2. **Domain of validity.** Skill is 0.816 on soil-mantled crystalline terrain
    and 0.656 in the weak sedimentary hill country of Far-Western Nepal, and
    refitting locally does not recover the difference — the limit is the
@@ -524,8 +612,13 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
    still need a coarser grid or a basin-level split that is not implemented.
 7. **Calibration regions do not work as implemented** (−0.0004 AUC held out,
    including where geology is varied). Off by default.
-8. **Risk is not implemented.** No exposure, vulnerability or runout model.
-   Scope documented in `model/risk.py`.
+8. **Exposure is screened; risk is not computed.** Risk is
+   `hazard × exposure × vulnerability` and step 10 supplies the first two.
+   There is no damage function, so nothing converts to expected loss or
+   casualties, and population is carried for ranking only. Settlement and road
+   coverage is whatever OpenStreetMap has, which is uneven across the region;
+   where Overpass is unreachable the road layer falls back to Natural Earth
+   trunk routes and is labelled as such.
 9. **Inventory coverage** is Nepal and Sikkim. Pakistan, Afghanistan,
    Uttarakhand, Himachal, Bhutan and Myanmar have none, so parameters there are
    extrapolated.
@@ -543,6 +636,7 @@ h_sim/
 │   ├── datasets.py        Dataset registry, cache and availability checks
 │   ├── sources.py         Terrain and climate downloaders
 │   ├── admin.py           States and provinces: the regional sweep's tiles
+│   ├── exposure.py        Settlements and roads: what is there to be harmed
 │   └── inventory.py       Landslide inventories: fetch, load, sample
 ├── model/
 │   ├── hydrology.py       Priority flood, D-infinity flow, catchment area
@@ -551,16 +645,17 @@ h_sim/
 │   ├── hazard.py          Trigger scenarios: recharge and seismic coefficient
 │   ├── crossval.py        Random and spatial-block fold assignment
 │   ├── validate.py        Held-out validation
-│   └── risk.py            Not implemented; scope documented
+│   └── risk.py            Angle of reach: what can arrive at a town or road
+├── webmap.py              Standalone Leaflet page from a finished run
 └── utility/
     ├── grid.py            Reference grid, warping, tiled processing
     └── demo.py            Synthetic inputs for offline testing
 
-analysis/                  Six experiments behind docs/RESULTS.md
+analysis/                  Seven experiments behind docs/RESULTS.md
 configs/                   Seven run configurations, one per workflow shape
 docs/                      Operating guide and measured results
 scripts/run_demo.sh        Offline walk through all four phases
-tests/                     48 tests, no network required
+tests/                     66 tests, no network required
 ```
 
 ## Data

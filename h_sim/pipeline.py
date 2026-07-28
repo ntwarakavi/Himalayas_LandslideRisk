@@ -892,6 +892,271 @@ def quicklook(prob_path: str, out_png: str) -> str:
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
+# step 10: what the susceptibility means for towns and roads
+# ---------------------------------------------------------------------------
+
+def scenario_susceptibility(cfg: C.Config, mode: str,
+                            scenarios: Sequence[CL.ClimateScenario],
+                            override: Optional[str] = None
+                            ) -> "Dict[str, str]":
+    """Susceptibility rasters for a list of climates, computing what is missing.
+
+    The baseline map is the one step5 already wrote. Future maps are the same
+    calculation with the recharge field switched, so rather than demand the
+    user run step5 once per scenario by hand, any that are absent are produced
+    here.
+
+    The baseline is always resolved first, because it fixes the recharge
+    reference every future is divided by. Taking that number from the fit is
+    preferable - it is the recharge the soil parameters describe - but the
+    present-day summary records it either way, and normalising a future field
+    by anything other than a fixed present day would divide out the signal.
+    """
+    paths: Dict[str, str] = {}
+    reference_mm: Optional[float] = None
+
+    base_path = _out(cfg, "susceptibility_prob.tif")
+    base_summary = _out(cfg, "susceptibility_summary.json")
+    if not os.path.exists(base_path) and not override:
+        raise FileNotFoundError(
+            f"no susceptibility map at {base_path}. Run step5-susceptibility "
+            "first, or pass --susceptibility.")
+    paths[CL.BASELINE.key] = override or base_path
+
+    futures = [s for s in scenarios if not s.is_baseline]
+    if futures:
+        if not os.path.exists(base_summary):
+            _log("scenario", "measuring the present-day recharge reference")
+            run_susceptibility(cfg, mode, climate=CL.BASELINE)
+        with open(base_summary, encoding="utf-8") as fh:
+            reference_mm = json.load(fh).get("recharge_reference_mm")
+
+    for scen in futures:
+        path = _out(cfg, f"susceptibility_{scen.key}_prob.tif")
+        if not os.path.exists(path):
+            _log("scenario", f"{scen.label} - computing")
+            run_susceptibility(cfg, mode, climate=scen,
+                               reference_mm=reference_mm)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"expected {path} after computing "
+                                    f"{scen.key}")
+        paths[scen.key] = path
+    return paths
+
+
+def run_risk(cfg: C.Config, mode: str = "download",
+             susceptibility: Optional[str] = None,
+             climate: Optional[Sequence[str]] = None) -> Dict[str, object]:
+    """STEP 10 - score settlements and road segments by reaching susceptibility.
+
+    Not by the susceptibility under them. Towns sit on flat ground, so sampling
+    the map at a town's coordinates reports "safe" for precisely the
+    settlements a slope above is about to bury. See ``model/risk.py``.
+
+    Every asset is scored under each climate in ``climate`` (default
+    ``cfg.risk_climate``: the present day plus near-term CMIP6 windows), so the
+    output carries today's exposure and how it moves, per settlement and per
+    road segment, rather than one undated number.
+    """
+    from .input import exposure
+    from .model import risk as R
+
+    _ensure_dirs(cfg)
+    bbox = cfg.clipped_bbox()
+    scens = CL.parse_all(list(climate) if climate else cfg.risk_climate,
+                         cfg.climate_model, cfg.climate_res)
+    if not any(s.is_baseline for s in scens):
+        scens = [CL.BASELINE] + scens
+    prob_paths = scenario_susceptibility(cfg, mode, scens, susceptibility)
+
+    grid = Grid.from_bbox(bbox, cfg.resolution_deg)
+    inputs = resolve_inputs(cfg, mode)
+    terrain = stage_terrain(cfg, grid, inputs)
+    dem = _read(terrain["dem"])
+
+    probs: Dict[str, np.ndarray] = {}
+    for key, path in prob_paths.items():
+        arr = _read(path)
+        if arr.shape != dem.shape:
+            raise ValueError(
+                f"susceptibility {arr.shape} for {key} and DEM {dem.shape} are "
+                "on different grids; re-run both at the same --bbox and --res.")
+        probs[key] = arr
+    dx, dy = metres_per_cell(bbox, cfg.resolution_deg)
+
+    index = R.ReachIndex(dem, grid.transform, dx, dy,
+                         travel_angle_deg=cfg.travel_angle_deg,
+                         search_radius_m=cfg.reach_radius_m)
+    _log("risk", f"angle of reach {cfg.travel_angle_deg} deg, "
+                 f"search radius {cfg.reach_radius_m:.0f} m")
+    _log("risk", f"{len(scens)} climate scenarios: "
+                 + ", ".join(s.key for s in scens))
+
+    if mode == "demo":
+        towns, roads = demo.make_demo_exposure(grid, dem)
+        _log("exposure", f"synthetic: {len(towns)} settlements, "
+                         f"{len(roads)} ways")
+    else:
+        key = f"{cfg.name}"
+        _log("exposure", "settlements")
+        towns = exposure.load_settlements(bbox, cfg.data_dir, cache_key=key)
+        _log("exposure", "roads")
+        roads = exposure.load_roads(bbox, cfg.data_dir, cache_key=key,
+                                    classes=cfg.road_classes)
+        _log("exposure", f"{len(towns)} settlements, {len(roads)} ways")
+
+    base = CL.BASELINE.key
+    scored_towns = R.score_settlements(index, towns, probs, baseline=base)
+    scored_roads = R.score_roads(index, roads, probs,
+                                 segment_m=cfg.road_segment_m, baseline=base)
+    _log("risk", f"{len(scored_towns)} settlements and "
+                 f"{len(scored_roads)} road segments scored")
+
+    summary = R.summarise(scored_towns, scored_roads,
+                          [s.key for s in scens], baseline=base)
+    summary["travel_angle_deg"] = cfg.travel_angle_deg
+    summary["reach_radius_m"] = cfg.reach_radius_m
+    summary["climate"] = [s.as_dict() for s in scens]
+    summary["susceptibility"] = prob_paths
+
+    out = {}
+    for name, rows in (("settlements", scored_towns), ("roads", scored_roads)):
+        path = _out(cfg, f"risk_{name}.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(rows, fh)
+        out[name] = path
+    path = _out(cfg, "risk_summary.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, indent=2)
+    out["summary"] = path
+    out["stats"] = summary
+    _log("done", f"{summary['n_settlements_exposed']} settlements and "
+                 f"{summary['road_km_exposed']:.0f} km of road exposed today")
+    for k, ch in (summary.get("change") or {}).items():
+        _log("change", f"{k}: {ch['settlements_exposed']:+d} settlements, "
+                       f"{ch['road_km_exposed']:+.1f} km road")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# step 11: the web map
+# ---------------------------------------------------------------------------
+
+def _short_scenario(scen: CL.ClimateScenario) -> str:
+    """A label that fits in a table column: 'SSP2-4.5 2041-60'."""
+    if scen.is_baseline:
+        return "present day"
+    ssp = scen.ssp.replace("ssp", "")
+    lo, _, hi = (scen.period or "").partition("-")
+    return f"SSP{ssp[0]}-{ssp[1]}.{ssp[2]} {lo}-{hi[-2:]}"
+
+
+def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
+               open_after: bool = False) -> Dict[str, str]:
+    """STEP 11 - assemble a browsable Leaflet page from a finished run.
+
+    Reads what step10 wrote rather than recomputing it, including the climate
+    scenarios step10 scored under: the page's selector offers exactly those,
+    because a scenario with no scores behind it would be a blank layer.
+    """
+    from . import webmap
+    from .input import inventory as INV
+
+    _ensure_dirs(cfg)
+    out_dir = os.path.join(cfg.out_dir, f"{cfg.name}_webmap")
+    os.makedirs(out_dir, exist_ok=True)
+    layers: Dict[str, object] = {}
+
+    summary = {}
+    sp = _out(cfg, "risk_summary.json")
+    if os.path.exists(sp):
+        with open(sp, encoding="utf-8") as fh:
+            summary = json.load(fh)
+
+    scens = ([CL.from_dict(d) for d in summary.get("climate", [])]
+             or CL.parse_all([cfg.climate], cfg.climate_model,
+                             cfg.climate_res))
+    prob_paths = summary.get("susceptibility")
+    if not isinstance(prob_paths, dict):
+        prob_paths = {scens[0].key: (susceptibility
+                                     or _out(cfg, "susceptibility_prob.tif"))}
+    if susceptibility:
+        prob_paths = dict(prob_paths, **{CL.BASELINE.key: susceptibility})
+
+    bounds = None
+    scen_layers = []
+    for scen in scens:
+        path = prob_paths.get(scen.key)
+        if not path or not os.path.exists(path):
+            _log("webmap", f"{scen.key}: no raster, skipped")
+            continue
+        png = f"susceptibility_{scen.key}.png"
+        _log("webmap", f"rendering {scen.key}")
+        b = webmap.raster_to_png(path, os.path.join(out_dir, png))
+        bounds = bounds or b
+        scen_layers.append({"key": scen.key, "label": scen.label,
+                            "short": _short_scenario(scen),
+                            "detail": scen.label, "raster": png})
+    if bounds is None:
+        raise FileNotFoundError(
+            "no susceptibility raster to render; run step5 (and step10 for "
+            "the future scenarios) first.")
+    layers["scenarios"] = scen_layers
+    layers["raster"] = scen_layers[0]["raster"]
+
+    data_files: List[str] = []
+
+    def dump(name: str, obj) -> None:
+        data_files.append(webmap.write_data(out_dir, name, obj))
+
+    for kind in ("settlements", "roads"):
+        src = _out(cfg, f"risk_{kind}.json")
+        if not os.path.exists(src):
+            continue
+        with open(src, encoding="utf-8") as fh:
+            rows = json.load(fh)
+        gj = (webmap.points_geojson(rows) if kind == "settlements"
+              else webmap.lines_geojson(rows))
+        dump(kind, gj)
+        if kind == "settlements":
+            # The sidebar list re-ranks itself when the scenario changes, so it
+            # needs each place's whole set of scores, not just today's.
+            layers["worst"] = [
+                {"name": r["name"], "score": r["score"], "band": r["band"],
+                 "scenarios": {k: {"score": v["score"], "band": v["band"]}
+                               for k, v in (r.get("scenarios") or {}).items()}}
+                for r in rows[:40]]
+
+    # The training data, so the fit is visible next to what it produced.
+    if cfg.inventory_path and os.path.exists(cfg.inventory_path):
+        try:
+            pts = INV.load_inventory(cfg.inventory_path,
+                                     bbox=cfg.clipped_bbox())
+            if len(pts):
+                dump("inventory", webmap.inventory_geojson(pts, "landslide"))
+                bg = INV.background_points(
+                    cfg.clipped_bbox(), min(len(pts), 3000),
+                    prob_paths[CL.BASELINE.key])
+                dump("background", webmap.inventory_geojson(bg, "background"))
+                _log("webmap", f"{len(pts)} training landslides, "
+                               f"{len(bg)} background points")
+        except Exception as exc:                          # noqa: BLE001
+            _log("webmap", f"inventory skipped ({exc})")
+
+    w, s, e, n = cfg.clipped_bbox()
+    meta = {"area": f"{w:.2f}, {s:.2f} to {e:.2f}, {n:.2f}",
+            "resolution": f"{cfg.resolution_deg} deg"}
+    path = webmap.build(out_dir, f"H-SIM \u2014 {cfg.name}", bounds,
+                        layers, summary, meta, cache_dir=cfg.data_dir,
+                        data_files=data_files)
+    _log("done", f"web map -> {path} ({len(scen_layers)} climate scenarios)")
+    if open_after:
+        import webbrowser
+        webbrowser.open(f"file://{os.path.abspath(path)}")
+    return {"webmap": path, "dir": out_dir}
+
+
+# ---------------------------------------------------------------------------
 # step 9: regional sweep, one state or province at a time
 # ---------------------------------------------------------------------------
 
@@ -1079,6 +1344,21 @@ def run_region(cfg: C.Config, mode: str = "download",
 # step 8: package the deliverables
 # ---------------------------------------------------------------------------
 
+def _sources_in(path: str) -> List[dict]:
+    """Rows of a scored-asset file, or nothing if it was never written.
+
+    Only the ``source`` field is wanted, but the files are a few megabytes and
+    reading them whole is still cheaper than a second format to maintain.
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:                                    # noqa: BLE001
+        return []
+
+
 def run_package(cfg: C.Config) -> Dict[str, str]:
     """STEP 8 - collect what was produced, with the provenance to defend it.
 
@@ -1125,6 +1405,31 @@ def run_package(cfg: C.Config) -> Dict[str, str]:
                     "dem_source": cfg.dem_source,
                     "read_from": rasters[0]}
 
+    # If step10 ran, carry forward what it was scored under. A reader of the
+    # manifest needs to know which climates a settlement table covers, and
+    # which of them is the reference the change columns are against.
+    exposure_meta = {}
+    risk_summary = _out(cfg, "risk_summary.json")
+    if os.path.exists(risk_summary):
+        with open(risk_summary, encoding="utf-8") as fh:
+            rs = json.load(fh)
+        exposure_meta = {
+            "baseline": rs.get("baseline"),
+            "climate": rs.get("climate"),
+            "travel_angle_deg": rs.get("travel_angle_deg"),
+            "reach_radius_m": rs.get("reach_radius_m"),
+            "exposed_threshold": rs.get("exposed_threshold"),
+            "n_settlements": rs.get("n_settlements"),
+            "n_road_segments": rs.get("n_road_segments"),
+            "settlement_sources": sorted({
+                s.get("source") for s in _sources_in(
+                    _out(cfg, "risk_settlements.json"))}),
+            "road_sources": sorted({
+                s.get("source") for s in _sources_in(
+                    _out(cfg, "risk_roads.json"))}),
+            "note": rs.get("note"),
+        }
+
     manifest = {
         "name": cfg.name,
         "model": "SINMAP infinite-slope stability over D-infinity flow routing",
@@ -1153,9 +1458,11 @@ def run_package(cfg: C.Config) -> Dict[str, str]:
             "hazard": group("hazard"),
             "climate_change": group("climate"),
             "critical_acceleration": group("critical_acceleration"),
+            "exposure": [f for f in products if f.startswith(prefix + "risk_")],
             "reports": [f for f in products if f.endswith(".json")],
             "quicklooks": [f for f in products if f.endswith(".png")],
         },
+        "exposure": exposure_meta,
         "interpretation": [
             "The continuous failure probability is the product; the six-class "
             "map is a legend whose lower three bands are not ordered.",
@@ -1164,6 +1471,9 @@ def run_package(cfg: C.Config) -> Dict[str, str]:
             "Skill was measured on soil-mantled crystalline terrain. It is "
             "markedly lower in weak sedimentary hill country, and nothing in "
             "the parameters warns which case an area is.",
+            "Where settlements and roads were scored, the number is exposure "
+            "screening by angle of reach, not risk: no runout model, no "
+            "vulnerability, no damage function.",
         ],
     }
     path = _out(cfg, "manifest.json")

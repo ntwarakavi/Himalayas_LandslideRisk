@@ -140,3 +140,68 @@ def make_demo_inputs(grid: Grid, data_dir: str,
         "precip_monthly": monthly_paths,
         "pga": pga_path,
     }
+
+
+# ---------------------------------------------------------------------------
+# synthetic exposure, so step10 and step11 run offline too
+# ---------------------------------------------------------------------------
+
+def make_demo_exposure(grid: Grid, dem: np.ndarray, seed: int = 11):
+    """Fabricate settlements and roads over synthetic terrain.
+
+    Placement is not decorative. Real towns sit on valley floors, which is the
+    whole reason the reach model exists, so demo settlements are drawn from the
+    low ground and demo roads are traced down it. Scattering them uniformly
+    would put most of them on ridges and make the demo answer a question nobody
+    asks.
+    """
+    from ..input.exposure import Road, Settlement
+
+    rng = np.random.default_rng(seed)
+    h, w = dem.shape
+    cutoff = float(np.nanpercentile(dem, 25))
+    rows, cols = np.nonzero(dem <= cutoff)
+    if rows.size == 0:
+        return [], []
+
+    n = min(60, rows.size)
+    pick = rng.choice(rows.size, size=n, replace=False)
+    kinds = ["hamlet"] * 40 + ["village"] * 14 + ["town"] * 5 + ["city"]
+    settlements = []
+    for i, k in enumerate(pick):
+        r, c = int(rows[k]), int(cols[k])
+        lon, lat = grid.transform * (c + 0.5, r + 0.5)
+        place = kinds[i % len(kinds)]
+        settlements.append(Settlement(
+            name=f"Demo {place} {i + 1:02d}", lon=float(lon), lat=float(lat),
+            place=place,
+            population=int({"city": 60000, "town": 8000, "village": 1200,
+                            "hamlet": 150}[place] * (0.5 + rng.random())),
+            source="demo"))
+
+    # Roads: start on the low ground and follow the locally lowest neighbour,
+    # which on this terrain traces the valleys the way a real road does.
+    roads = []
+    starts = rng.choice(rows.size, size=min(4, rows.size), replace=False)
+    for i, k in enumerate(starts):
+        r, c = int(rows[k]), int(cols[k])
+        coords = []
+        for _ in range(max(h, w)):
+            lon, lat = grid.transform * (c + 0.5, r + 0.5)
+            coords.append((float(lon), float(lat)))
+            nxt, best = None, np.inf
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    rr, cc = r + dr, c + dc
+                    if (dr == 0 and dc == 0) or not (0 <= rr < h and 0 <= cc < w):
+                        continue
+                    if dem[rr, cc] < best:
+                        best, nxt = dem[rr, cc], (rr, cc)
+            if nxt is None or best >= dem[r, c]:
+                break
+            r, c = nxt
+        if len(coords) > 1:
+            roads.append(Road(name=f"Demo highway {i + 1}",
+                              highway=("primary" if i == 0 else "secondary"),
+                              coords=coords, source="demo"))
+    return settlements, roads

@@ -212,6 +212,32 @@ class Config:
     #: Extra outputs that cost almost nothing once the fit exists.
     write_critical_acceleration: bool = True
 
+    # Exposure and reach (step10) -------------------------------------------
+    #: Angle of reach in degrees. Debris from a source can reach a target if
+    #: the line between them is steeper than this. Reported values cluster at
+    #: 11-25 deg for channelised debris flows; 18 is towards the conservative
+    #: (longer reach) end, which suits a screening product.
+    travel_angle_deg: float = 18.0
+    #: How far upslope to search for sources, in metres.
+    reach_radius_m: float = 2000.0
+    #: Length of the pieces roads are cut into before scoring.
+    road_segment_m: float = 500.0
+    #: OSM highway classes to fetch. Adding residential and track multiplies
+    #: the segment count by an order of magnitude.
+    road_classes: List[str] = field(
+        default_factory=lambda: ["motorway", "trunk", "primary", "secondary",
+                                 "tertiary", "unclassified"])
+    #: Climate scenarios each settlement and road segment is scored under.
+    #: The default is the present day plus the two CMIP6 windows that fall
+    #: inside a twenty to thirty year planning horizon, under an intermediate
+    #: and a very high forcing pathway. That is four futures rather than one
+    #: because the spread between pathways at a fixed date is the honest
+    #: measure of how much of the change is a modelling choice.
+    risk_climate: List[str] = field(
+        default_factory=lambda: ["current",
+                                 "ssp245:2021-2040", "ssp585:2021-2040",
+                                 "ssp245:2041-2060", "ssp585:2041-2060"])
+
     # Regional sweep (step9) -------------------------------------------------
     #: Polygon layer of states and provinces. None downloads Natural Earth
     #: admin-1; supply a national dataset instead if you have one.

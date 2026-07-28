@@ -18,11 +18,11 @@ import rasterio
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from giri_landslide import config as C          # noqa: E402
-from giri_landslide import pipeline             # noqa: E402
-from giri_landslide.input import inventory, sources  # noqa: E402
-from giri_landslide.model import crossval, physical as P  # noqa: E402
-from giri_landslide.utility.grid import Grid    # noqa: E402
+from hima_slide import config as C                    # noqa: E402
+from hima_slide import pipeline                       # noqa: E402
+from hima_slide.input import inventory, sources       # noqa: E402
+from hima_slide.model import crossval, physical as P  # noqa: E402
+from hima_slide.utility.grid import Grid              # noqa: E402
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 

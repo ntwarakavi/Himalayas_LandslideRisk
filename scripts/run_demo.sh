@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# Offline smoke test - synthetic data, no downloads, about a minute.
+# HIMA-SLIDE offline smoke test - synthetic data, no downloads, ~1 minute.
 # Walks all four phases so you can see the sequence before spending bandwidth.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 COMMON="--mode demo --name demo --bbox 83.0 27.5 83.2 27.7 --res 0.002"
 
 echo "=============== PHASE 1  SET UP ==============="
-python -m giri_landslide.cli step1-check --offline | tail -5
+python -m hima_slide.cli step1-check --offline | tail -5
 
 echo
 echo "=============== PHASE 3  PRODUCE =============="
 echo ">> step5  susceptibility: flow routing, then failure probability"
-python -m giri_landslide.cli step5-susceptibility $COMMON | tail -10
+python -m hima_slide.cli step5-susceptibility $COMMON | tail -10
 
 echo
 echo ">> step6  hazard: every rainfall and earthquake scenario"
-python -m giri_landslide.cli step6-hazard $COMMON --all | tail -10
+python -m hima_slide.cli step6-hazard $COMMON --all | tail -10
 
 echo
 echo ">> step7  climate: present day against two futures"
-python -m giri_landslide.cli step7-climate $COMMON \
+python -m hima_slide.cli step7-climate $COMMON \
     --scenarios current ssp245:2061-2080 ssp585:2081-2100 | tail -10
 
 echo
 echo "=============== PHASE 4  PACKAGE =============="
-python -m giri_landslide.cli step8-package --name demo | tail -12
+python -m hima_slide.cli step8-package --name demo | tail -12
 
 cat <<'EOF'
 
@@ -50,7 +50,7 @@ Products:
 Phase 2 (calibration and validation) is skipped here because it needs a real
 landslide inventory. On real data it is not optional:
 
-    python -m giri_landslide.cli step2-download --config configs/02_calibrate_gorkha.json
-    python -m giri_landslide.cli step3-fit      --config configs/02_calibrate_gorkha.json
-    python -m giri_landslide.cli step4-validate --name gorkha --inventory <another inventory>
+    python -m hima_slide.cli step2-download --config configs/02_calibrate_gorkha.json
+    python -m hima_slide.cli step3-fit      --config configs/02_calibrate_gorkha.json
+    python -m hima_slide.cli step4-validate --name gorkha --inventory <another inventory>
 EOF

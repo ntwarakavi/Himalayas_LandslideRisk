@@ -1,4 +1,7 @@
-"""Command-line interface for the SINMAP landslide model.
+"""HIMA-SLIDE command-line interface.
+
+Himalayan Integrated Model for Assessment of Slope Instability and Debris
+Erosion - a SINMAP infinite-slope stability model over D-infinity flow routing.
 
 The workflow runs in four phases. Each step writes files and prints what it
 produced, so you can stop after any step, inspect the output, and carry on.
@@ -164,7 +167,7 @@ def _step_check(args) -> int:
     need = [r for r in rows if not r["cached"] and r["reachable"] is not False]
     mb = sum(r["approx_mb"] for r in need)
     print(f"\n{len(need)} dataset(s) still to fetch, roughly {mb:.0f} MB.")
-    print("Next:  python -m giri_landslide.cli step2-download")
+    print("Next:  python -m hima_slide.cli step2-download")
     return 0
 
 
@@ -213,7 +216,7 @@ def _step_download(args) -> int:
         inv = inventory.download_nasa_glc(cfg.data_dir, bbox=cfg.region_bbox)
         print(f"    {'OK   ' if inv else 'FAIL '} coolr          NASA GLC/COOLR")
 
-    print("\nNext:  python -m giri_landslide.cli step3-fit --inventory <path>")
+    print("\nNext:  python -m hima_slide.cli step3-fit --inventory <path>")
     return 0
 
 
@@ -450,9 +453,10 @@ def _run_all(args) -> int:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="giri_landslide",
+        prog="hima-slide",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Hindu Kush Himalaya landslide model: SINMAP "
+        description="HIMA-SLIDE - Himalayan Integrated Model for Assessment "
+                    "of Slope Instability and Debris Erosion. SINMAP "
                     "infinite-slope stability over D-infinity flow routing.",
         epilog=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)

@@ -1,4 +1,4 @@
-# Experiments
+# HIMA-SLIDE experiments
 
 Six scripts, each answering one question about the model. They share sampling
 and fold logic through `common.py`, so every comparison holds the presence

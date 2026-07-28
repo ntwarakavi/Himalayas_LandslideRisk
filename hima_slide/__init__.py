@@ -1,7 +1,16 @@
-"""Physically based landslide hazard model for the Hindu Kush Himalaya.
+"""HIMA-SLIDE - Himalayan Integrated Model for Assessment of Slope
+Instability and Debris Erosion.
 
-An open-source, end-to-end implementation of infinite-slope stability under
-steady-state wetness, fitted to mapped landslide inventories:
+A physically based landslide model for the Hindu Kush Himalaya: an open-source,
+end-to-end implementation of infinite-slope stability under steady-state
+wetness, fitted to mapped landslide inventories.
+
+The model covers the *slope instability* half of its name - where a soil column
+stops holding. Debris transport after failure is not implemented: HIMA-SLIDE
+says where material detaches, not where it travels or comes to rest. See
+``model/risk.py`` for what a runout stage would need.
+
+Methods:
 
     Pack, R. T., Tarboton, D. G., Goodwin, C. N. (1998).
     "The SINMAP approach to terrain stability mapping."

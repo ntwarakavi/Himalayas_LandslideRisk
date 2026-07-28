@@ -17,13 +17,13 @@ import tempfile
 
 import numpy as np
 
-from giri_landslide import config as C
-from giri_landslide import pipeline
-from giri_landslide.input import inventory
-from giri_landslide.model import (climate as CL, crossval, hazard,
-                                  hydrology as H, physical as P)
-from giri_landslide.utility import demo
-from giri_landslide.utility.grid import Grid
+from hima_slide import config as C
+from hima_slide import pipeline
+from hima_slide.input import inventory
+from hima_slide.model import (climate as CL, crossval, hazard,
+                              hydrology as H, physical as P)
+from hima_slide.utility import demo
+from hima_slide.utility.grid import Grid
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +451,7 @@ def test_validate_handles_continuous_index():
     """Validation must score the continuous field, not only a class map."""
     import rasterio
 
-    from giri_landslide.model import validate
+    from hima_slide.model import validate
 
     with tempfile.TemporaryDirectory() as tmp:
         grid = Grid.from_bbox((84.0, 28.0, 84.5, 28.5), 0.01)   # 50x50
@@ -478,7 +478,7 @@ def test_validate_handles_six_stability_classes():
     """SINMAP's class raster runs to 6, and the report must not truncate it."""
     import rasterio
 
-    from giri_landslide.model import validate
+    from hima_slide.model import validate
 
     with tempfile.TemporaryDirectory() as tmp:
         grid = Grid.from_bbox((84.0, 28.0, 84.6, 28.6), 0.01)   # 60x60
@@ -863,7 +863,7 @@ def test_compare_probability():
 
 def test_dataset_registry_is_wellformed():
     """Every registered dataset must be fetchable or explicitly manual."""
-    from giri_landslide.input import datasets
+    from hima_slide.input import datasets
 
     keys = [d.key for d in datasets.REGISTRY]
     assert len(keys) == len(set(keys)), "duplicate dataset keys"
@@ -876,7 +876,7 @@ def test_dataset_registry_is_wellformed():
 
 def test_dataset_cache_detection():
     """A dataset counts as cached only when its file/dir actually has content."""
-    from giri_landslide.input import datasets
+    from hima_slide.input import datasets
 
     ds = datasets.BY_KEY["coolr"]
     with tempfile.TemporaryDirectory() as tmp:

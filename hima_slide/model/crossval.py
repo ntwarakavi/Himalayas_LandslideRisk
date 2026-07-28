@@ -22,7 +22,7 @@ the apparent skill is largely spatial interpolation rather than a transferable
 relationship between terrain and failure.
 
 These functions only assign folds. The fitting and scoring loop lives with the
-model being assessed, in :func:`giri_landslide.model.physical.cross_validate`.
+model being assessed, in :func:`hima_slide.model.physical.cross_validate`.
 """
 
 from __future__ import annotations

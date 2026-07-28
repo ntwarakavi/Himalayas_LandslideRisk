@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "giri-landslide"
+name = "hima-slide"
 version = "0.2.0"
-description = "Physically based landslide hazard model for the Hindu Kush Himalaya (SINMAP over D-infinity flow routing)"
+description = "HIMA-SLIDE: Himalayan Integrated Model for Assessment of Slope Instability and Debris Erosion"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
@@ -20,10 +20,10 @@ viz = ["matplotlib>=3.6"]
 vector = ["fiona>=1.9", "geopandas>=0.13"]
 
 [project.scripts]
-giri-landslide = "giri_landslide.cli:main"
+hima-slide = "hima_slide.cli:main"
 
 [tool.setuptools]
-packages = ["giri_landslide", "giri_landslide.input", "giri_landslide.model", "giri_landslide.utility"]
+packages = ["hima_slide", "hima_slide.input", "hima_slide.model", "hima_slide.utility"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

@@ -29,7 +29,7 @@ from __future__ import annotations
 import numpy as np
 
 import common as K
-from giri_landslide.model import hazard as HZ
+from hima_slide.model import hazard as HZ
 
 RES = 0.00027778          # 30 m
 RAINFALL_CV = [0.20, 0.25, 0.30, 0.35, 0.40]

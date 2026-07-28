@@ -1,0 +1,28 @@
+{
+  "_comment": "STEP 3 with per-lithology soil parameters. SINMAP's calibration regions: each rock type gets its own C, phi and R/T where enough landslides fall in it, the rest fall back to the whole-area fit. Needs the 1.1 GB GLiM geodatabase. Worth it only where the area spans several rock types - on the small Gorkha AOI, which is 97 percent metamorphics, it finds nothing, so this config widens the extent. Use landcover instead to zone by root cohesion.",
+  "name": "gorkha_litho",
+  "bbox": [
+    84.1,
+    27.1,
+    86.95,
+    28.75
+  ],
+  "region_bbox": [
+    60.0,
+    16.0,
+    105.0,
+    39.0
+  ],
+  "resolution_deg": 0.0025,
+  "trigger": "rainfall",
+  "calibration_regions": "lithology",
+  "min_region_presence": 100,
+  "glim_full": true,
+  "inventory_path": "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp",
+  "dem_source": "copernicus30",
+  "output": "both",
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs"
+}

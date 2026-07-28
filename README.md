@@ -1,21 +1,15 @@
-# Hindu Kush Himalaya Landslide Susceptibility Model
+# Hindu Kush Himalaya Landslide Hazard Model
 
-An implementation of the GIRI landslide model (Palau, Nadim, Paulsen &
-Storrøsten, 2023, NGI / CDRI —
-[manuscript](https://giri.unepgrid.ch/sites/default/files/2023-06/20230615-NGI_manuscript_GIRI_landlside_hazard_model.pdf)),
-scoped to the Hindu Kush Himalaya: Afghanistan, Pakistan, India, Nepal, Bhutan,
-Bangladesh, China and Myanmar.
+A physically based slope-stability model for the Hindu Kush Himalaya:
+Afghanistan, Pakistan, India, Nepal, Bhutan, Bangladesh, China and Myanmar.
 
-Two susceptibility models are provided: the manuscript's heuristic index, and a
-physically based slope-stability model (SINMAP) driven by D-infinity flow
-routing. On the Gorkha test area the physical model is the stronger of the two
-(see [Model comparison](#model-comparison)).
+Terrain is routed for flow with D-infinity methods after TauDEM, and stability
+is evaluated with the SINMAP infinite-slope formulation extended with a
+pseudo-static term for seismic loading. Soil parameters are fitted to mapped
+landslide inventories and reported with spatial-block cross-validation.
 
-The current scope is **susceptibility**. Hazard is implemented but depends on an
-uncalibrated parameter (see [Status](#status)); risk is not implemented.
-
-Data is fetched only for the area of interest, processed in tiles, and cached —
-nothing is downloaded twice.
+Data is fetched only for the area of interest, processed in tiles where it can
+be, and cached — nothing is downloaded twice.
 
 ## Model
 
@@ -23,136 +17,129 @@ nothing is downloaded twice.
 
 | Term | Question answered | Status |
 |---|---|---|
-| Susceptibility | Where is the terrain predisposed to fail? | Implemented |
-| Hazard | Given a trigger of stated severity, how likely is failure? | Implemented; rainfall matrix uncalibrated |
+| Stability / susceptibility | Where is the ground close to failing? | Implemented |
+| Hazard | Given a trigger of stated severity, how likely is failure? | Implemented |
 | Risk | What are the expected consequences? | Not implemented |
 
-Susceptibility is a property of the terrain, independent of any triggering
-event. Hazard is conditional on a trigger the user specifies; the model does not
-forecast triggers. Risk additionally requires exposure and vulnerability data,
-which this package does not hold.
+Stability is a property of the terrain under the conditions the parameters were
+fitted at. Hazard is conditional on a trigger the user specifies; the model does
+not forecast triggers. Risk additionally requires exposure and vulnerability
+data, which this package does not hold.
 
-### Susceptibility formulation
+### Factor of safety
 
-Four conditioning factors are derived from open data and reclassified to ordinal
-scores:
-
-| Factor | Source | Score |
-|---|---|---|
-| Slope | Copernicus GLO-90 DEM, Horn method | 0–5 |
-| Lithology | GLiM level-1 classes | 0–3 |
-| Land cover | ESA WorldCover 2021 | 0–5 |
-| Soil moisture | WorldClim wettest-month precipitation | 1–5 |
-
-The slope score is non-monotonic: it rises to a maximum near 30–36° and falls
-above it, since slopes steeper than the internal friction angle of most soils
-have already shed their regolith.
-
-Factors are combined by the logistic model the calibration fits:
+For a planar failure surface parallel to the ground, with the slide much wider
+and longer than it is deep, the balance of driving and resisting forces on a
+column of unit plan area is
 
 ```
-P = 1 / (1 + exp(-(b + Σ wᵢ · log(fᵢ + 1))))
+FS = [ C + (cosθ − k·sinθ − w·r·cosθ) · tanφ ] / ( sinθ + k·cosθ )
 ```
 
-Two predictor sets are available, selected by `feature_mode`:
+| Symbol | Meaning |
+|---|---|
+| `C` | dimensionless cohesion, `(Cr + Cs) / (h·ρs·g)` — root plus soil, normalised by the weight of the soil column |
+| `θ` | slope angle |
+| `φ` | angle of internal friction |
+| `r` | density ratio `ρw/ρs`, about 0.5 |
+| `w` | relative wetness, the saturated fraction of the soil column |
+| `k` | horizontal seismic coefficient; zero for rainfall triggering |
 
-- `continuous` (default) — slope and precipitation enter at full precision.
-  Slope is represented by a quadratic, so the data may place a peak rather than
-  having one imposed. Lithology and land cover stay categorical, because they
-  are.
-- `ordinal` — the manuscript's formulation, fitted on `log(score + 1)` of the
-  four integer factor scores.
+With `k = 0` this is SINMAP's published form. The seismic terms enter as an
+extra driving force `k·W` along the slope and a matching reduction `k·W·sinθ` in
+the normal force. Pore pressure is unaffected by inertia, which is why the `w`
+term keeps its static form.
 
-The ordinal set makes the index inherit the coarseness of its inputs: four
-integer scores admit few distinct products, so large groups of pixels tie and
-equal-area bins cannot be formed. Measured over Sikkim, ordinal features put
-51 % of the map in a single bin; continuous features give bins of 20.1, 20.1,
-19.5, 20.1 and 20.2 %.
-
-The output is a continuous index in [0, 1]. Flat terrain and open water are
-constrained to zero. A five-class map can also be produced (`--output classes`)
-for compatibility with the manuscript's hazard matrix, which is indexed by
-class.
-
-The index is **relative**. It is fitted against background points standing in
-for absences, so its level reflects the background sampling rather than observed
-landslide frequency. Differences between pixels are meaningful; absolute values
-are not failure probabilities.
-
-### Calibration
-
-The manuscript does not publish its factor weights. They are estimated here from
-mapped landslide inventories by logistic regression on `log(f + 1)`, which makes
-the fitted coefficients the factor weights directly. Two further tables can be
-fitted from the same data:
-
-- **Slope classes**, by frequency ratio per slope bin.
-- **Lithology scores**, by frequency ratio per rock type. The expert default is
-  a poor fit in the Himalaya: four of the seven classes present in the Gorkha
-  area disagree with it, two of them inverted.
-
-### Physically based formulation
-
-The heuristic index scores terrain by correlation. The alternative is to state
-the mechanics directly. `model/physical.py` implements SINMAP (Pack, Tarboton &
-Goodwin 1998): an infinite-slope factor of safety closed by a TOPMODEL
-steady-state wetness term.
+Wetness closes the system through a steady-state balance — recharge `R` falling
+on the upslope contributing area `a` must pass through a soil column of
+transmissivity `T`:
 
 ```
-FS = [ C + cosθ · (1 − w·r) · tanφ ] / sinθ        w = min( R·a / (T·sinθ), 1 )
+w = min( R·a / (T·sinθ), 1 )
 ```
 
-`C` is dimensionless cohesion (root plus soil, normalised by the weight of the
-soil column), `φ` the friction angle, `r ≈ 0.5` the water/soil density ratio,
-`a` the specific catchment area and `R/T` the recharge-to-transmissivity ratio.
-Only the ratio `R/T` is identifiable from a static map, and `C` only jointly
-with soil depth.
+Only the ratio `R/T` matters, which is convenient because it is far better
+constrained than either term alone. Wetness is capped at 1: any excess becomes
+overland flow rather than deeper saturation.
 
-The wetness term needs upslope drainage, which `model/hydrology.py` supplies
-following TauDEM, in pure NumPy:
+### Terrain hydrology
+
+The wetness term needs upslope drainage, which `model/hydrology.py` supplies in
+pure NumPy, following TauDEM:
 
 | Stage | Method | Reference |
 |---|---|---|
 | Depression filling | Priority flood | Barnes, Lehman & Mulla 2014 |
 | Flow direction | D-infinity, eight triangular facets | Tarboton 1997 |
 | Contributing area | D-infinity accumulation, elevation-ordered | Tarboton 1997 |
-| Specific catchment area | Area ÷ contour width | — |
+| Specific catchment area | Contributing area ÷ contour width | — |
 
-D-infinity rather than D8 because the 45° quantisation of D8 produces
-artificial parallel flow lines on exactly the planar hillslopes that shallow
-failure occupies.
+D-infinity rather than D8: the 45° quantisation of D8 produces artificial
+parallel flow lines on exactly the planar hillslopes that shallow failure
+occupies. Specific catchment area rather than total contributing area, so the
+result does not scale with cell size.
 
-The three parameters are not known per pixel, so SINMAP treats them as uniform
-over plausible ranges and reports the probability that `FS < 1` — a continuous
-field directly comparable with the heuristic index. Ranges are fitted by grid
-search (48 combinations of cohesion, friction and `R/T`), scored by how well the
-resulting failure probability ranks mapped landslides above background. On
-Gorkha the fit selects `C ∈ [0, 0.4]`, `φ ∈ [25°, 35°]`, `R/T ∈ [1e-5, 5e-4]`.
+### From factor of safety to a map
 
-Two regions appear as constants on the map and are worth naming: terrain stable
-even when fully saturated at the worst parameters (probability 0), and terrain
-unstable even when dry at the best parameters (probability 1) — the latter
-stands only through cohesion the model does not represent, or is actively
-eroding.
+The three parameters are not known per pixel. SINMAP treats them as uniform over
+plausible ranges and reports the probability that `FS < 1` — a continuous field
+in [0, 1] that can be validated against an inventory like any other map. Two
+regions appear as constants and are worth naming:
 
-Flow accumulation is global to the drainage network, so this stage runs over the
-whole area of interest at once rather than in tiles.
+- **Unconditionally stable** — stable even fully saturated at the most
+  pessimistic parameters. Probability 0.
+- **Unconditionally unstable** — unstable even dry at the most optimistic
+  parameters. Probability 1. Such terrain stands only through cohesion the model
+  does not represent, or is actively eroding.
 
-### Model comparison
+A six-class SINMAP stability map is also written. **Use the continuous field.**
+The classes are a legend, and their lower three bands are not ordered by failure
+probability — see [Validation](#validation).
 
-Both models run on the same area (84.5–85.3° E, 27.6–28.2° N at 0.0025°), scored
-against the same 5,193 Roback Gorkha landslides and the same background sample.
-Capture is the share of landslides falling in the worst-ranked fraction of map
-area:
+### Triggering
 
-| Model | AUC | Worst 5 % | Worst 10 % | Worst 20 % |
-|---|---|---|---|---|
-| Heuristic, logistic on log factors | 0.663 | 18.9 % | 30.0 % | 44.3 % |
-| Physical, SINMAP | **0.748** | **32.2 %** | **45.1 %** | **60.0 %** |
+In a physical model hazard is not a separate calculation. Each trigger reduces
+to one scalar that the factor of safety already accepts:
 
-The physical model separates better at every threshold. The heuristic index sees
-slope but not convergence; SINMAP's wetness term distinguishes a planar hillside
-from a hollow of the same gradient, and mapped landslides sit in the hollows.
+- **Rainfall** raises recharge, so it enters as a multiplier on `R/T`. Under a
+  Gumbel distribution of annual maximum daily rainfall, the ratio of a scenario
+  depth to the reference depth cancels the location parameter and leaves a
+  dependence on the coefficient of variation alone:
+  `m(T) = [1 + cv·k(T)] / [1 + cv·k(T_ref)]`, with `k(T) = (√6/π)(y_T − γ)`.
+- **Earthquakes** add an inertial force, entering as `k_h`. The pseudo-static
+  coefficient is taken as half of PGA, the long-standing convention
+  (Hynes-Griffin & Franklin 1984), since a sustained force stands in for a brief
+  oscillation.
+
+Two numbers in the model are not derived from the data here: the rainfall
+coefficient of variation (default 0.30; station analyses put monsoon Asia at
+0.25–0.35) and that PGA fraction. Both are single interpretable parameters whose
+influence can be checked by rerunning at the ends of their range.
+
+### Fitting
+
+The physics fixes the *form* of the response; the inventory supplies the
+parameter values. Ranges are searched over a 48-point grid spanning what is
+reported for soil-mantled mountain hillslopes — cohesion from bare to
+well-rooted, friction across 25–45°, `R/T` over four orders of magnitude — and
+scored by how well the resulting failure probability ranks mapped landslides
+above background.
+
+What that constrains is less than the parameter list suggests, and the limits
+matter:
+
+- `R` and `T` are identifiable only as their ratio.
+- Cohesion is identifiable only jointly with soil depth, since the model sees
+  `C = (Cr + Cs)/(h·ρs·g)`. No soil-depth map is used.
+- The absolute level of the probability depends on how background points were
+  drawn. Differences between pixels are meaningful; the value at a pixel is not
+  a frequency of failure.
+
+**Calibration regions** (optional) are SINMAP's own answer to spatially varying
+soils: a zoning within which the parameters are taken as uniform. Lithology
+(GLiM) controls friction and soil cohesion; land cover (WorldCover) controls
+root cohesion. A region is fitted separately only if it holds enough landslides
+to constrain three parameters; the rest fall back to the whole-area fit.
 
 ## Installation
 
@@ -184,10 +171,9 @@ Each step writes its outputs to disk and can be run independently.
 |---|---|---|
 | 1 | `step1-check` | Dataset availability report |
 | 2 | `step2-download` | Cached source data |
-| 3 | `step3-calibrate` | Fitted weights, slope and lithology tables |
-| 4 | `step4-susceptibility` | Susceptibility index (heuristic) |
-| 4b | `step4b-physical` | Failure probability and stability classes (SINMAP) |
-| 5 | `step5-hazard` | Scenario hazard probability |
+| 3 | `step3-fit` | Soil parameters, cross-validated |
+| 4 | `step4-stability` | Failure probability, stability classes, critical acceleration |
+| 5 | `step5-hazard` | Failure probability under a trigger scenario |
 | 6 | `step6-validate` | Validation against a held-out inventory |
 | 7 | `step7-compare` | Difference between two runs |
 
@@ -203,105 +189,163 @@ the outstanding download. `--offline` restricts the check to the local cache.
 ### 2. Download
 
 ```bash
-python -m giri_landslide.cli step2-download --bbox 84.0 28.0 84.6 28.5
+python -m giri_landslide.cli step2-download --bbox 84.5 27.6 85.3 28.2
 ```
 
-Cached files are skipped. The first run fetches approximately 2.2 GB, most of it
-the global GLiM and WorldClim files; subsequent areas require only their own DEM
-and land-cover tiles.
+Cached files are skipped. Only the DEM and the precipitation climatology are
+fetched by default; land cover and the 1.1 GB GLiM geodatabase are downloaded
+only when `--calibration-regions` asks for them.
 
-### 3. Calibrate
+### 3. Fit
 
 ```bash
-python -m giri_landslide.cli step3-calibrate \
-    --bbox 84.1 27.1 86.95 28.75 --res 0.0025 --fit-lithology \
+python -m giri_landslide.cli step3-fit \
+    --name gorkha --bbox 84.5 27.6 85.3 28.2 --res 0.0025 \
     --inventory "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp"
 ```
 
-Writes `outputs/<name>_calibrated_config.json` for use in step 4, and a report
-containing the weights, cross-validated AUC and any data-quality warnings.
+Writes `outputs/<name>_fitted_params.json`, which steps 4 and 5 read. The report
+holds the parameter ranges, the recharge reference, both cross-validation
+schemes and any data-quality warnings.
 
 Two cross-validation schemes are reported. A **random** split assigns points to
 folds independently; because landslides cluster and terrain is autocorrelated,
 test points usually have training points on the same hillside, so the score
 flatters the model. A **spatial-block** split (`cv_block_deg`, 0.25° by default)
-assigns whole blocks to folds, so no test point has training data nearby.
+assigns whole blocks to folds, so no test point has training data nearby. The
+parameter search is rerun inside every fold, so neither figure is contaminated
+by having chosen the parameters on the test points.
 
-Measured on Gorkha, the two give almost the same mean — 0.726 random against
-0.724 spatial — so the relationship does hold on ground the fit has not seen.
-The difference is in the spread: fold-to-fold standard deviation is 0.004 under
-the random split and **0.055** under the spatial one, with block AUC ranging
-from 0.635 to 0.802. The mean therefore describes no particular place, and the
-spatial spread is the range to expect when applying the map somewhere new.
-
-### 4. Susceptibility
+### 4. Stability
 
 ```bash
-python -m giri_landslide.cli step4-susceptibility \
-    --name nepal --bbox 84.0 28.0 84.6 28.5 --res 0.0008333 \
-    --config outputs/nepal_calibrated_config.json
+python -m giri_landslide.cli step4-stability \
+    --name gorkha --bbox 84.5 27.6 85.3 28.2 --res 0.0025
 ```
 
-Writes `outputs/<name>_susceptibility_prob.tif`, and the four factor rasters to
-`data/work/` for inspection.
-
-### 4b. Physically based stability
-
-```bash
-python -m giri_landslide.cli step4b-physical \
-    --name gorkha --bbox 84.5 27.6 85.3 28.2 --res 0.0025 \
-    --inventory "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp"
-```
-
-Writes `outputs/<name>_failure_probability.tif`, `outputs/<name>_stability_class.tif`
-and a report holding the fitted soil parameters and their AUC. Specific
-catchment area and slope go to `data/work/` for inspection. `--no-fit` uses
-SINMAP's generic parameter ranges instead of fitting.
-
-The output is validated by the same command as the heuristic map:
-
-```bash
-python -m giri_landslide.cli step6-validate \
-    --susceptibility outputs/gorkha_failure_probability.tif --inventory <path>
-```
-
-Cost is dominated by flow routing, which is not tiled. The example above
-(320 × 240 px) takes about 30 seconds; cost scales with cell count.
+Writes `outputs/<name>_susceptibility_prob.tif` (the field to use),
+`<name>_susceptibility_class.tif` (SINMAP classes 1–6) and
+`<name>_critical_acceleration.tif` (the Newmark yield coefficient in g, the
+shaking needed to bring the slope to `FS = 1`). Slope and specific catchment
+area go to `data/work/` for inspection.
 
 ### 5. Hazard
 
 ```bash
-python -m giri_landslide.cli step5-hazard --name nepal --return-period 100
-python -m giri_landslide.cli step5-hazard --name nepal --trigger earthquake --pga 0.35
+python -m giri_landslide.cli step5-hazard --name gorkha --return-period 100
+python -m giri_landslide.cli step5-hazard --name gorkha --trigger earthquake --pga 0.35
 ```
 
 ### 6. Validate
 
 ```bash
-python -m giri_landslide.cli step6-validate --name nepal \
+python -m giri_landslide.cli step6-validate --name gorkha \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
 ```
 
 Reports the frequency ratio per class — the share of landslides in a class
 divided by the share of map area it occupies — which must increase with class
-for the ordering to be meaningful. Multiple `--inventory` paths are pooled.
+for the ordering to be meaningful. The continuous field is binned into map-area
+quintiles for the table; AUC is computed on the raw values. Multiple
+`--inventory` paths are pooled.
 
-### Climate scenarios
+### 7. Climate scenarios
 
 ```bash
-python -m giri_landslide.cli step4-susceptibility --name ssp585 \
+python -m giri_landslide.cli step4-stability --name ssp585 \
     --climate ssp585 --climate-period 2061-2080
+python -m giri_landslide.cli step7-compare \
+    --baseline outputs/gorkha_susceptibility_prob.tif \
+    --scenario outputs/ssp585_susceptibility_prob.tif --name climate
 ```
 
-Substitutes downscaled CMIP6 projections (default IPSL-CM6A-LR, as in the
-manuscript) for the soil-moisture factor. Only susceptibility responds; the
-triggering return period retains its present-day definition.
+Substitutes downscaled CMIP6 projections for the recharge field: a wetter future
+raises `R`, raises wetness, and lowers the factor of safety. The scenario field
+is normalised by the **present-day** reference held in the fitted-parameters
+file, so a uniform wetting shows up rather than cancelling out. The triggering
+return period retains its present-day definition.
+
+## Results
+
+Measured on the 2015 Gorkha earthquake area (84.5–85.3° E, 27.6–28.2° N) at
+0.0025°, against the 5,193 Roback landslides falling inside it.
+
+**Fitted parameters.** `C ∈ [0, 0.15]`, `φ ∈ [25°, 35°]`, `R/T ∈ [1×10⁻⁵,
+5×10⁻⁴] m⁻¹`, recharge reference 473 mm wettest-month precipitation. The
+friction range is at the low end of the search grid, which is what weathered
+Himalayan metamorphic regolith should give.
+
+**Skill.**
+
+| Measure | AUC |
+|---|---|
+| In-sample | 0.740 |
+| Random 5-fold CV | 0.745 ± 0.012 |
+| Spatial-block 5-fold CV | **0.729 ± 0.024** |
+
+The spatial figure is the one to quote. That it sits so close to the random one
+is the substantive result: the relationship holds on ground the fit never saw,
+so the skill is mechanical rather than spatial interpolation.
+
+**Concentration.** Binning the continuous field into map-area quintiles:
+
+| Quintile | Map area | Landslides | Frequency ratio |
+|---|---|---|---|
+| 1 (lowest) | 57.1 % | 24.4 % | 0.43 |
+| 2 | 11.0 % | 6.5 % | 0.59 |
+| 3 | 10.5 % | 8.9 % | 0.84 |
+| 4 | 10.8 % | 14.6 % | 1.35 |
+| 5 (highest) | 10.7 % | 45.6 % | **4.29** |
+
+The top 21 % of terrain by failure probability holds 60 % of the landslides, a
+concentration of 2.8×. The ordering is monotonic.
+
+### What did not help
+
+Two additions were built, measured, and found not to earn their keep on this
+area. Both are kept as options because the reason they fail here is specific to
+the test area, but neither is on by default without cause.
+
+- **Spatial recharge** (wettest-month precipitation modulating `R/T`) moves
+  held-out AUC from 0.729 to 0.733 — well inside the ±0.024 fold spread. Over
+  0.8° × 0.6° the precipitation gradient spans only 0.16–1.34× the median. It is
+  left on by default because it is the physically correct treatment and because
+  the gradient across the full HKH is far larger. `--uniform-recharge` turns it
+  off.
+- **Lithology calibration regions** find nothing here because the area is 97 %
+  metamorphics: one region holds 5,038 of the 5,193 landslides, and the only
+  other region large enough to fit (mixed sedimentary, n=122) scores worse
+  (0.624) than the whole-area fit. Zoning needs lithological diversity to pay.
+  Note that cross-validation scores the whole-area parameters, not the
+  per-region ones.
+
+### Validation of the class map
+
+The continuous field is monotonic; the six-class SINMAP map is not.
+
+| Class | Map area | Landslides | Frequency ratio |
+|---|---|---|---|
+| 1 unconditionally stable | 17.6 % | 7.0 % | 0.40 |
+| 2 stable | 8.5 % | 4.6 % | 0.54 |
+| 3 quasi-stable | 19.8 % | 7.3 % | 0.37 |
+| 4 lower threshold | 40.9 % | 30.9 % | 0.75 |
+| 5 upper threshold | 12.5 % | 41.5 % | 3.33 |
+| 6 unconditionally unstable | 0.75 % | 8.8 % | **11.73** |
+
+Classes 4–6 are ordered correctly and class 6 is the strongest single signal in
+the map: three quarters of a percent of the area holds nearly nine percent of
+the landslides. Classes 1–3 are not ordered, and cannot be: all three have
+failure probability zero by definition and are separated only by how far above 1
+the worst-case factor of safety sits. Landslides falling in them reflect
+mapping and DEM positional error, and processes the model does not represent.
+This is a property of the SINMAP class definition, not a defect in the fit — and
+it is why the continuous field is the product.
 
 ## Repository layout
 
 ```
 giri_landslide/
-├── config.py              All tables, weights, thresholds and matrices
+├── config.py              Run configuration and region definitions
 ├── pipeline.py            Stage orchestration
 ├── cli.py                 Command-line workflow
 ├── input/
@@ -309,14 +353,11 @@ giri_landslide/
 │   ├── sources.py         Terrain and climate downloaders
 │   └── inventory.py       Landslide inventories: fetch, load, sample
 ├── model/
-│   ├── factors.py         Inputs to ordinal factor scores
-│   ├── susceptibility.py  Factor combination, continuous index, classes
-│   ├── calibrate.py       Weight, slope-table and lithology fitting
 │   ├── hydrology.py       Depression filling, D-inf flow, catchment area
-│   ├── physical.py        SINMAP infinite-slope stability
+│   ├── physical.py        SINMAP stability, parameter fitting, cross-validation
+│   ├── hazard.py          Trigger scenarios: recharge and seismic coefficient
+│   ├── crossval.py        Random and spatial-block fold assignment
 │   ├── validate.py        Held-out validation
-│   ├── triggers.py        Rainfall and earthquake severity classes
-│   ├── hazard.py          Susceptibility × trigger → probability
 │   └── risk.py            Not implemented; scope documented
 └── utility/
     ├── grid.py            Reference grid, warping, tiled processing
@@ -329,17 +370,15 @@ tests/                     Test suite, no network required
 data/, outputs/            Generated, not version-controlled
 ```
 
-Model constants are confined to `config.py`.
-
 ## Data
 
 | Role | Dataset | Resolution | Acquisition |
 |---|---|---|---|
-| Slope | Copernicus GLO-90 DEM | 90 m | Automatic |
-| Land cover | ESA WorldCover 2021 | 10 m | Automatic |
-| Lithology | GLiM, 1.2 M polygons | Vector | Automatic, 1.1 GB once |
-| Soil moisture | WorldClim v2.1 | 1 km | Automatic, 1.0 GB once |
+| Terrain | Copernicus GLO-30 DEM | 30 m | Automatic |
+| Recharge | WorldClim v2.1 monthly precipitation | 1 km | Automatic, 1.0 GB once |
 | Future climate | WorldClim CMIP6 | 4.6 km | Automatic |
+| Calibration regions (optional) | GLiM, 1.2 M polygons | Vector | Automatic, 1.1 GB once |
+| Calibration regions (optional) | ESA WorldCover 2021 | 10 m | Automatic |
 | Inventories | Gorkha, Far-West Nepal, Sikkim, NASA GLC | Points, polygons | Automatic |
 | Earthquake PGA | GEM seismic hazard map | — | Manual, or scenario value |
 
@@ -347,52 +386,61 @@ Model constants are confined to `config.py`.
 
 | Inventory | Records | Mapping | Suitability |
 |---|---|---|---|
-| Roback Gorkha, Nepal | 24,795 | Satellite, earthquake-triggered | Best available; earthquake calibration |
-| Far-Western Nepal | 26,350 | Satellite, multi-temporal | Rainfall calibration |
+| Roback Gorkha, Nepal | 24,795 | Satellite, earthquake-triggered | Best available; the reference fit |
+| Far-Western Nepal | 26,350 | Satellite, multi-temporal | Rainfall-driven fit |
 | Southern Sikkim, India | 255 | Satellite | Validation |
 | NASA GLC | 11,033 global | Media reports | Screen by `location_accuracy`; only 32 % are placed to 1 km or better |
 
-Match the inventory's triggering mechanism to the run. Weights fitted in one
-sub-region do not necessarily transfer to another; validate against a local
-inventory before relying on a map elsewhere.
+The physical model has no trigger-specific parameters, so an inventory from one
+mechanism can fit a model applied to another — but the wetness the parameters
+absorb reflects the conditions during the mapped events, so matching the
+mechanism is still preferable. Validate against a local inventory before relying
+on a map somewhere new.
 
 ### Resolution
 
-The default is 90 m. The slope reclassification table was calibrated on ~90 m
-slope statistics; a 30 m DEM yields systematically steeper slopes and inflates
-the high-susceptibility area by a factor of thirteen over the same area. To run
-at 30 m, refit the slope table first with `step3-calibrate --fit-slope-breaks`.
+The default DEM is Copernicus GLO-30. Unlike a heuristic index with tables
+calibrated at a particular cell size, the physics carries nothing that a finer
+DEM would invalidate — and flow convergence, which the wetness term depends on,
+is exactly what a coarse DEM smooths away.
+
+The grid resolution is set separately by `--res`, and it is the one that
+matters: at `--res 0.0025` (about 250 m) the 30 m DEM is downsampled and the
+source barely matters. Specific catchment area is resolution-sensitive by
+construction, so **refit after changing `--res`**.
 
 ## Status
 
 Implemented and tested:
 
-- Susceptibility index, continuous and classified
-- Physically based stability: D-infinity hydrology, SINMAP failure probability,
-  soil parameters fitted to an inventory
-- Weight, slope-table and lithology calibration from inventories
+- D-infinity flow routing, verified against analytic cases
+- SINMAP failure probability and stability classes
+- Pseudo-static seismic loading and Newmark critical acceleration
+- Soil parameter fitting with random and spatial-block cross-validation
+- Optional calibration regions by lithology or land cover
+- Rainfall and earthquake trigger scenarios
+- Present and CMIP6 future-climate recharge
 - Held-out validation
-- Present and CMIP6 future-climate scenarios
-- Earthquake hazard, using the manuscript's transcribed matrix
 
 Outstanding:
 
-1. **Rainfall hazard matrix.** Published only as a figure; the values in
-   `config.py` are illustrative. Relative patterns are meaningful, absolute
-   rainfall-triggered probabilities are not.
-2. **Risk.** No exposure or vulnerability data. Scope documented in
+1. **Flow routing is not tiled.** Contributing area is a property of the whole
+   drainage network, so the model holds the area of interest in memory.
+   Basin-wise decomposition is the standard remedy and is not implemented; the
+   CLI warns above 40 million cells.
+2. **Soil depth is not mapped.** Cohesion is fitted as `C = (Cr + Cs)/(h·ρs·g)`,
+   so depth cannot be separated from cohesion. A soil-depth model would
+   constrain both independently.
+3. **Two trigger parameters are conventions, not fits** — the rainfall
+   coefficient of variation and the PGA fraction. Relative patterns across a map
+   are unaffected; the absolute level of a scenario probability is not.
+4. **Risk.** No exposure or vulnerability data. Scope documented in
    `model/risk.py`.
-3. **PGA and ERA5 soil moisture** fall back to uniform values unless supplied.
-4. **Inventory coverage.** Nepal and Sikkim only. Pakistan, Afghanistan,
-   Uttarakhand, Himachal, Bhutan and Myanmar have no usable inventory.
-5. **Region-wide execution.** The HKH at 90 m is approximately 1.5 gigapixels
-   and must be run as manual tiles; no tiling driver exists.
-6. **Flow routing is not tiled.** Contributing area is a property of the whole
-   drainage network, so the physical model holds the area of interest in memory.
-   Basin-wise decomposition is the standard remedy and is not implemented.
-7. **Soil depth is not mapped.** Cohesion is fitted as the combination
-   `C = (Cr + Cs) / (h·ρs·g)`, so soil depth cannot be separated from cohesion.
-   A soil-depth model would let both be constrained independently.
+5. **Inventory coverage.** Nepal and Sikkim only. Pakistan, Afghanistan,
+   Uttarakhand, Himachal, Bhutan and Myanmar have no usable inventory, so
+   parameters there are extrapolated.
+6. **Region-wide execution.** The HKH at 30 m is far beyond a single run and
+   must be tiled by basin; no tiling driver exists.
 
 ## Testing
 
@@ -400,7 +448,28 @@ Outstanding:
 python -m pytest tests/ -q
 ```
 
+The mechanics have exact answers in limiting cases, and the tests check against
+those rather than against stored expectations: `FS = 1` when the slope angle
+equals the friction angle, mass conservation in flow routing, the saturated
+critical angle `atan((1−r)tanφ)`, and that applying the critical acceleration
+drives `FS` to exactly 1.
+
 ## Licence
 
 MIT. Source datasets retain their own licences (Copernicus, ESA, WorldClim,
 GLiM, GEM, NASA, Zenodo records); cite them accordingly.
+
+## References
+
+- Pack, R. T., Tarboton, D. G., Goodwin, C. N. (1998). The SINMAP approach to
+  terrain stability mapping. *8th Congress of the IAEG*.
+- Tarboton, D. G. (1997). A new method for the determination of flow directions
+  and upslope areas in grid digital elevation models. *Water Resources Research*
+  33(2), 309–319.
+- Barnes, R., Lehman, C., Mulla, D. (2014). Priority-flood: an optimal
+  depression-filling and watershed-labeling algorithm for digital elevation
+  models. *Computers & Geosciences* 62, 117–127.
+- Hynes-Griffin, M. E., Franklin, A. G. (1984). Rationalizing the seismic
+  coefficient method. *US Army Engineer Waterways Experiment Station*, MP GL-84-13.
+- Roback, K. et al. (2018). The size, distribution, and mobility of landslides
+  caused by the 2015 Mw 7.8 Gorkha earthquake, Nepal. *Geomorphology* 301, 121–138.

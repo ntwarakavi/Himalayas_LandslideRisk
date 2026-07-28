@@ -1,4 +1,4 @@
-"""End-to-end orchestration: data -> factors -> susceptibility -> hazard.
+"""End-to-end orchestration: data -> terrain -> stability -> hazard.
 
 The pipeline runs in discrete, independently inspectable steps and writes every
 intermediate raster to ``work_dir`` so a run can be stopped and resumed, or a
@@ -8,23 +8,27 @@ Three input modes:
   * "demo"     - fabricate synthetic inputs (no network); always works.
   * "download" - fetch open datasets for the AOI (needs network).
   * "local"    - use paths supplied in the Config.
+
+One stage does not tile. Contributing area is a property of the whole drainage
+network, so :func:`stage_terrain` holds the area of interest in memory rather
+than streaming it in blocks. Everything else is windowed.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 
 from . import config as C
-from .model import factors, susceptibility, triggers, hazard
+from .model import hazard, hydrology, physical
 from .input import sources
 from .utility import demo
-from .utility.grid import Grid, warp_to_grid, mosaic_and_warp, raster_stats
+from .utility.grid import Grid, warp_to_grid, mosaic_and_warp
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +44,10 @@ def _work(cfg: C.Config, name: str) -> str:
     return os.path.join(cfg.work_dir, f"{cfg.name}_{name}")
 
 
+def _out(cfg: C.Config, name: str) -> str:
+    return os.path.join(cfg.out_dir, f"{cfg.name}_{name}")
+
+
 def _uniform_raster(grid: Grid, value: float, out_path: str,
                     dtype: str = "float32", nodata=-9999.0) -> str:
     prof = grid.profile(dtype, nodata)
@@ -52,13 +60,62 @@ def _log(step: str, msg: str = "") -> None:
     print(f"[giri] {step:<22} {msg}")
 
 
+def _read(path: str) -> np.ndarray:
+    """Read a single-band raster with nodata as NaN."""
+    with rasterio.open(path) as src:
+        a = src.read(1).astype("float64")
+        if src.nodata is not None:
+            a[a == src.nodata] = np.nan
+    return a
+
+
+def _write(grid: Grid, arr: np.ndarray, path: str, dtype: str = "float32",
+           nodata=-9999.0) -> str:
+    with rasterio.open(path, "w", **grid.profile(dtype, nodata)) as dst:
+        dst.write(np.where(np.isfinite(arr), arr, nodata).astype(dtype), 1)
+    return path
+
+
+def _matches_grid(path: str, grid: Grid) -> bool:
+    """True if a cached raster is on exactly the grid being asked for.
+
+    Work files are named after the run, so re-running the same name at a
+    different resolution or extent would otherwise pick up a stale raster and
+    either crash on a shape mismatch or, worse, quietly mix grids.
+    """
+    if not os.path.exists(path):
+        return False
+    try:
+        with rasterio.open(path) as src:
+            return ((src.width, src.height) == (grid.width, grid.height)
+                    and np.allclose(np.asarray(src.transform)[:6],
+                                    np.asarray(grid.transform)[:6],
+                                    rtol=0, atol=1e-9))
+    except rasterio.errors.RasterioError:
+        return False
+
+
+def metres_per_cell(bbox, resolution_deg: float) -> Tuple[float, float]:
+    """Cell size in metres at the AOI's mid-latitude.
+
+    Flow routing needs a metric grid. Rather than reproject the DEM, the
+    degree spacing is converted at the centre latitude, which is accurate to
+    better than a percent over an area of a degree or two - well inside the
+    uncertainty in the parameters the result feeds.
+    """
+    lat = 0.5 * (bbox[1] + bbox[3])
+    dx = resolution_deg * 111320.0 * max(np.cos(np.radians(lat)), 1e-6)
+    dy = resolution_deg * 110540.0
+    return float(dx), float(dy)
+
+
 # ---------------------------------------------------------------------------
 # input resolution
 # ---------------------------------------------------------------------------
 
 def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
     """Return a dict of raw (ungridded) input source paths for the run."""
-    bbox = cfg.clipped_bbox()  # restrict AOI to the South Asia Himalayan region
+    bbox = cfg.clipped_bbox()
     if mode == "demo":
         grid = Grid.from_bbox(bbox, cfg.resolution_deg)
         _log("demo", "generating synthetic inputs")
@@ -76,47 +133,47 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
     else:
         raise ValueError("local mode requires config.dem_path")
 
-    # Land cover -----------------------------------------------------------
-    inputs["landcover_source"] = cfg.landcover_source
-    if cfg.landcover_path:
-        inputs["landcover_tiles"] = [cfg.landcover_path]
-    elif mode == "download" and cfg.landcover_source == "worldcover":
-        _log("download:landcover", "ESA WorldCover 2021")
-        inputs["landcover_tiles"] = sources.download_worldcover(bbox,
-                                                               cfg.data_dir)
-    else:
-        raise ValueError("local mode requires config.landcover_path")
-
-    # Lithology -------------------------------------------------------------
-    if cfg.glim_path:
-        # A vector database (.shp/.gdb) gives the finest lithological detail;
-        # a raster path is used directly.
-        if os.path.splitext(cfg.glim_path)[1].lower() in (".tif", ".tiff",
-                                                          ".asc"):
-            inputs["glim_raster"] = cfg.glim_path
+    # Land cover - only needed as a calibration-region source ----------------
+    if cfg.calibration_regions == "landcover":
+        inputs["landcover_source"] = cfg.landcover_source
+        if cfg.landcover_path:
+            inputs["landcover_tiles"] = [cfg.landcover_path]
+        elif mode == "download" and cfg.landcover_source == "worldcover":
+            _log("download:landcover", "ESA WorldCover 2021")
+            inputs["landcover_tiles"] = sources.download_worldcover(
+                bbox, cfg.data_dir)
         else:
-            inputs["glim_vector"] = cfg.glim_path
-    elif mode == "download":
-        local_gdb = os.path.join(cfg.data_dir, "glim",
-                                 sources.GLIM_VECTOR_DIRNAME)
-        if cfg.glim_full or os.path.isdir(local_gdb):
-            # Full-resolution lithology (default). Downloaded once, then reused.
-            gdb = local_gdb if os.path.isdir(local_gdb) else \
-                sources.download_glim_vector(cfg.data_dir)
-            if gdb:
-                _log("lithology", "full-resolution GLiM geodatabase")
-                inputs["glim_vector"] = gdb
-        if "glim_vector" not in inputs:
-            _log("download:lithology", "GLiM 0.5-deg grid (coarse fallback)")
-            asc = sources.download_glim_grid(cfg.data_dir)
-            if asc:
-                sl_tif = os.path.join(cfg.data_dir, "glim", "glim_sl.tif")
-                if not os.path.exists(sl_tif):
-                    sources.glim_grid_to_sl(asc, sl_tif)
-                inputs["glim_sl_raster"] = sl_tif
+            raise ValueError("calibration_regions='landcover' needs "
+                             "config.landcover_path in local mode")
 
-    # Soil-moisture proxy --------------------------------------------------
-    if cfg.trigger == "rainfall":
+    # Lithology - likewise ---------------------------------------------------
+    if cfg.calibration_regions == "lithology":
+        if cfg.glim_path:
+            if os.path.splitext(cfg.glim_path)[1].lower() in (".tif", ".tiff",
+                                                              ".asc"):
+                inputs["glim_raster"] = cfg.glim_path
+            else:
+                inputs["glim_vector"] = cfg.glim_path
+        elif mode == "download":
+            local_gdb = os.path.join(cfg.data_dir, "glim",
+                                     sources.GLIM_VECTOR_DIRNAME)
+            if cfg.glim_full or os.path.isdir(local_gdb):
+                gdb = local_gdb if os.path.isdir(local_gdb) else \
+                    sources.download_glim_vector(cfg.data_dir)
+                if gdb:
+                    _log("lithology", "full-resolution GLiM geodatabase")
+                    inputs["glim_vector"] = gdb
+            if "glim_vector" not in inputs:
+                _log("download:lithology", "GLiM 0.5-deg grid (coarse fallback)")
+                asc = sources.download_glim_grid(cfg.data_dir)
+                if asc:
+                    tif = os.path.join(cfg.data_dir, "glim", "glim_codes.tif")
+                    if not os.path.exists(tif):
+                        sources.glim_grid_to_codes(asc, tif)
+                    inputs["glim_codes_raster"] = tif
+
+    # Recharge climatology ---------------------------------------------------
+    if cfg.spatial_recharge:
         if cfg.precip_monthly_dir:
             inputs["precip_monthly"] = sorted(
                 os.path.join(cfg.precip_monthly_dir, f)
@@ -140,352 +197,414 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
                         f"future-climate precipitation unavailable for "
                         f"{cfg.climate_model}/{cfg.climate}/{cfg.climate_period}")
                 inputs["precip_monthly"] = fut
-        # else -> fallback handled in staging
-    else:
-        if cfg.vwc_path:
-            inputs["vwc"] = cfg.vwc_path
 
-    # Trigger --------------------------------------------------------------
-    if cfg.trigger_path:
-        inputs["trigger_raster"] = cfg.trigger_path
+    if cfg.pga_path:
+        inputs["pga"] = cfg.pga_path
     return inputs
 
 
 # ---------------------------------------------------------------------------
-# staging: warp everything onto the reference grid
+# terrain: the DEM, and what flow routing makes of it
 # ---------------------------------------------------------------------------
 
-def stage_factors(cfg: C.Config, grid: Grid, inputs: Dict[str, object]) -> Dict[str, str]:
-    """Produce grid-aligned factor rasters (Sr, Sl, Sv, Sp). Returns paths."""
-    block = cfg.block_size
-    paths: Dict[str, str] = {}
+def stage_terrain(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
+                  force: bool = False) -> Dict[str, str]:
+    """Slope and specific catchment area for the AOI.
 
-    # ---- Slope factor ----------------------------------------------------
+    This is the expensive stage and the one that does not tile: depression
+    filling and D-infinity accumulation both need the whole drainage network at
+    once. Results are cached on disk, so later steps re-read them rather than
+    recomputing.
+    """
+    _ensure_dirs(cfg)
+    slope_path, sca_path = _work(cfg, "slope_tan.tif"), _work(cfg, "sca.tif")
+    if not force and _matches_grid(slope_path, grid) and \
+            _matches_grid(sca_path, grid):
+        _log("terrain", "slope and catchment area already computed, reusing")
+        return {"slope": slope_path, "sca": sca_path,
+                "dem": _work(cfg, "dem.tif")}
+
     dem_grid = _work(cfg, "dem.tif")
     if "dem" in inputs:                       # demo: already on grid
         warp_to_grid(inputs["dem"], grid, dem_grid, Resampling.bilinear,
-                     dtype="float32", nodata=-9999.0, block=block)
+                     dtype="float32", nodata=-9999.0, block=cfg.block_size)
     else:
         mosaic_and_warp(inputs["dem_tiles"], grid, dem_grid,
                         Resampling.bilinear, dtype="float32", nodata=-9999.0,
-                        block=block)
-    _log("slope", "computing slope + factor")
-    slope_deg = _work(cfg, "slope_deg.tif")
-    factors.compute_slope_degrees(dem_grid, slope_deg, block=block)
-    paths["slope"] = factors.slope_factor(slope_deg, _work(cfg, "f_slope.tif"),
-                                          block=block,
-                                          breaks=cfg.slope_breaks)
-    paths["slope_deg"] = slope_deg
+                        block=cfg.block_size)
 
-    # ---- Vegetation factor ----------------------------------------------
-    lc_grid = _work(cfg, "landcover.tif")
-    lc_src = inputs.get("landcover") or inputs.get("landcover_tiles")
-    if isinstance(lc_src, list):
-        mosaic_and_warp(lc_src, grid, lc_grid, Resampling.nearest,
-                        dtype="uint8", nodata=0, block=block)
-    else:
-        warp_to_grid(lc_src, grid, lc_grid, Resampling.nearest,
-                     dtype="uint8", nodata=0, block=block)
-    _log("vegetation", "reclassifying land cover")
-    paths["veg"] = factors.landcover_factor(
-        lc_grid, _work(cfg, "f_veg.tif"), inputs["landcover_source"],
-        block=block)
+    dem = _read(dem_grid)
+    dx, dy = metres_per_cell(cfg.clipped_bbox(), cfg.resolution_deg)
+    _log("hydrology", f"filling depressions, D-inf routing "
+                      f"({dem.size:,} cells at {dx:.0f}x{dy:.0f} m)")
+    sca, slope = hydrology.specific_catchment_area(dem, dx, dy)
+    _log("hydrology", f"specific catchment area "
+                      f"{np.nanpercentile(sca, 50):.0f} m median, "
+                      f"{np.nanmax(sca):.0f} m max")
 
-    # ---- Lithology factor -----------------------------------------------
-    glim_sl_grid = _work(cfg, "glim_sl.tif")
-    if "glim_sl_raster" in inputs:            # demo: Sl already burned
-        warp_to_grid(inputs["glim_sl_raster"], grid, glim_sl_grid,
-                     Resampling.nearest, dtype="uint8", nodata=255, block=block)
-    elif "glim_vector" in inputs:
-        _log("lithology", "rasterising GLiM vector (full resolution)")
-        sources.rasterize_glim(inputs["glim_vector"], grid, glim_sl_grid,
-                               sl_map=cfg.glim_sl)
-    elif "glim_raster" in inputs:
-        _log("lithology", "converting supplied GLiM class raster")
-        sl_tif = _work(cfg, "glim_sl_native.tif")
-        sources.glim_grid_to_sl(inputs["glim_raster"], sl_tif)
-        warp_to_grid(sl_tif, grid, glim_sl_grid, Resampling.nearest,
-                     dtype="uint8", nodata=255, block=block)
-    else:
-        _log("lithology", "GLiM absent -> uniform Sl=2 (see sources.GLIM_SOURCE_INFO)")
-        _uniform_raster(grid, 2, glim_sl_grid, dtype="uint8", nodata=255)
-    paths["litho"] = factors.lithology_factor(
-        glim_sl_grid, _work(cfg, "f_litho.tif"), block=block)
-
-    # ---- Soil-moisture factor -------------------------------------------
-    sm_grid = _work(cfg, "soilmoist.tif")
-    if cfg.trigger == "rainfall":
-        if "precip_monthly" in inputs:
-            _log("soil moisture", "max monthly precip (MYMMR proxy)")
-            sources.max_monthly_precip(inputs["precip_monthly"], grid, sm_grid,
-                                       tmp_prefix=_work(cfg, "tmp"),
-                                       block=block)
-        else:
-            _log("soil moisture", "precip absent -> uniform MYMMR=300 mm")
-            _uniform_raster(grid, 300.0, sm_grid)
-    else:
-        if "vwc" in inputs:
-            warp_to_grid(inputs["vwc"], grid, sm_grid, Resampling.bilinear,
-                         dtype="float32", nodata=-9999.0, block=block)
-        else:
-            _log("soil moisture", "VWC absent -> uniform 0.25 m3/m3")
-            _uniform_raster(grid, 0.25, sm_grid)
-    paths["soil"] = factors.soil_moisture_factor(
-        sm_grid, _work(cfg, "f_soil.tif"), cfg.trigger, block=block)
-    paths["soil_raw"] = sm_grid          # untransformed mm / m3 m-3
-
-    return paths
+    _write(grid, sca, sca_path)
+    _write(grid, slope, slope_path)
+    return {"slope": slope_path, "sca": sca_path, "dem": dem_grid}
 
 
-def _susceptibility_stage(cfg: C.Config,
-                          factor_paths: Dict[str, str]) -> Dict[str, str]:
-    """Build the susceptibility output(s). Returns {kind: path}.
+def stage_recharge(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
+                   reference_mm: Optional[float] = None
+                   ) -> Tuple[str, float]:
+    """Dimensionless recharge scale, and the reference it is measured against.
 
-    The continuous probability index is the default: it comes straight from the
-    fitted logistic model, so it needs no class breaks and every pixel is
-    comparable to every other. The 5-class map is kept for compatibility with
-    the manuscript's hazard matrix, which is indexed by class.
+    Recharge R enters the wetness term only through R/T, so spatial variation
+    in rainfall enters as a multiplier on the fitted ratio. Wettest-month
+    precipitation is the available proxy: it is the season when the soil column
+    is closest to saturation and when the inventories were mostly filled.
+
+    The field is normalised by a fixed reference in millimetres rather than by
+    its own median, so that a scenario in which the whole area gets wetter
+    shows up as a scale above 1 instead of cancelling out.
     """
-    out: Dict[str, str] = {}
-    f = (factor_paths["slope"], factor_paths["litho"],
-         factor_paths["veg"], factor_paths["soil"])
+    path = _work(cfg, "recharge_scale.tif")
+    if not cfg.spatial_recharge or "precip_monthly" not in inputs:
+        if cfg.spatial_recharge:
+            _log("recharge", "precipitation absent -> uniform recharge")
+        _uniform_raster(grid, 1.0, path)
+        return path, float(reference_mm or 0.0)
 
-    if cfg.output in ("probability", "both"):
-        fw = cfg.feature_weights or {
-            "slope": cfg.weights.slope, "lithology": cfg.weights.lithology,
-            "vegetation": cfg.weights.vegetation,
-            "soil_moisture": cfg.weights.soil_moisture}
-        mode = cfg.feature_mode if cfg.feature_weights else "ordinal"
-        _log("susceptibility", f"continuous index ({mode} features)")
-        prob = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility_prob.tif")
-        susceptibility.probability_index_features(
-            factor_paths, prob, mode, fw, intercept=cfg.intercept,
-            block=cfg.block_size)
-        out["probability"] = prob
+    precip = _work(cfg, "precip_max_month.tif")
+    _log("recharge", "wettest-month precipitation")
+    sources.max_monthly_precip(inputs["precip_monthly"], grid, precip,
+                               tmp_prefix=_work(cfg, "tmp"),
+                               block=cfg.block_size)
+    p = _read(precip)
+    ref = reference_mm or float(np.nanmedian(p))
+    if not np.isfinite(ref) or ref <= 0:
+        ref = float(np.nanmean(p)) or 1.0
+    scale = p / ref
+    _log("recharge", f"reference {ref:.0f} mm; scale spans "
+                     f"{np.nanmin(scale):.2f}-{np.nanmax(scale):.2f}")
+    _write(grid, scale, path)
+    return path, float(ref)
 
-    if cfg.output in ("classes", "both") or cfg.trigger:
-        # The hazard matrix is indexed by class, so classes are always built
-        # when a hazard step may follow.
-        _log("susceptibility", f"5-class map ({cfg.weight_mode})")
-        idx = _work(cfg, "susc_index.tif")
-        susceptibility.combine_factors(*f, idx, cfg.weights,
-                                       mode=cfg.weight_mode,
-                                       block=cfg.block_size)
-        breaks = (susceptibility.quantile_breaks(idx, block=cfg.block_size)
-                  if cfg.classification == "quantile"
-                  else cfg.susceptibility_breaks)
-        cls = os.path.join(cfg.out_dir, f"{cfg.name}_susceptibility.tif")
-        susceptibility.classify_susceptibility(idx, cls, breaks,
-                                               block=cfg.block_size)
-        out["classes"] = cls
-    return out
+
+def stage_regions(cfg: C.Config, grid: Grid,
+                  inputs: Dict[str, object]) -> Optional[str]:
+    """Calibration-region raster, or None if the area is fitted as one piece."""
+    if not cfg.calibration_regions:
+        return None
+    path = _work(cfg, "regions.tif")
+
+    if cfg.calibration_regions == "landcover":
+        src = inputs.get("landcover") or inputs.get("landcover_tiles")
+        if src is None:
+            _log("regions", "land cover absent -> single calibration region")
+            return None
+        _log("regions", "ESA WorldCover classes (root cohesion)")
+        if isinstance(src, list):
+            mosaic_and_warp(src, grid, path, Resampling.nearest, dtype="uint8",
+                            nodata=0, block=cfg.block_size)
+        else:
+            warp_to_grid(src, grid, path, Resampling.nearest, dtype="uint8",
+                         nodata=0, block=cfg.block_size)
+        return path
+
+    if cfg.calibration_regions == "lithology":
+        if "glim_vector" in inputs:
+            _log("regions", "rasterising GLiM vector (full resolution)")
+            _, codes = sources.rasterize_glim(inputs["glim_vector"], grid, path)
+            _log("regions", f"lithologies present: {sorted(set(codes.values()))}")
+            return path
+        for key in ("glim_codes_raster", "glim_raster"):
+            if key in inputs:
+                _log("regions", "GLiM lithology codes")
+                warp_to_grid(inputs[key], grid, path, Resampling.nearest,
+                             dtype="uint8", nodata=255, block=cfg.block_size)
+                return path
+        _log("regions", "GLiM absent -> single calibration region")
+        return None
+
+    raise ValueError(f"unknown calibration_regions {cfg.calibration_regions!r}")
 
 
 # ---------------------------------------------------------------------------
-# calibration
+# step 3: fit the soil parameters to an inventory
 # ---------------------------------------------------------------------------
 
-def run_calibration(cfg: C.Config, mode: str = "demo",
-                    n_background: Optional[int] = None,
-                    fit_slope_breaks: bool = False,
-                    fit_lithology: bool = False) -> dict:
-    """Fine-tune factor weights against a historical Himalayan inventory.
+def run_fit(cfg: C.Config, mode: str = "download", cross_validate: bool = True,
+            n_background: Optional[int] = None) -> Dict[str, object]:
+    """Fit soil parameter ranges to mapped landslides.
 
-    Steps: stage the four factor rasters -> obtain presence points (from
-    ``cfg.inventory_path``, a NASA-GLC download, or a synthetic inventory in
-    demo mode) -> sample factors at presence + background points -> fit the
-    logistic model -> write a calibrated config JSON. Returns a report dict.
+    The physics fixes the form of the response; the inventory supplies the
+    parameter values. What comes back is written to a JSON file that the
+    susceptibility and hazard steps read, so a map is always traceable to the
+    landslides that set its parameters.
     """
     from .input import inventory
-    from .model import calibrate
+
+    if not cfg.inventory_path:
+        raise ValueError("fitting needs config.inventory_path (--inventory)")
 
     _ensure_dirs(cfg)
     bbox = cfg.clipped_bbox()
     grid = Grid.from_bbox(bbox, cfg.resolution_deg)
-    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg "
-                 f"(calibration over Himalaya)")
+    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg")
 
     inputs = resolve_inputs(cfg, mode)
-    factor_paths = stage_factors(cfg, grid, inputs)
-    from .model import features as FT
-    fpaths = FT.paths(cfg.feature_mode, factor_paths)
-    _log("features", f"{cfg.feature_mode}: {', '.join(FT.names(cfg.feature_mode))}")
+    terrain = stage_terrain(cfg, grid, inputs)
+    recharge_path, reference_mm = stage_recharge(cfg, grid, inputs,
+                                                 cfg.recharge_reference_mm)
+    region_path = stage_regions(cfg, grid, inputs)
 
-    # ---- presence points -------------------------------------------------
-    if cfg.inventory_path:
-        _log("inventory", f"loading {cfg.inventory_path}")
-        presence = inventory.load_inventory(cfg.inventory_path, bbox=bbox,
-                                            countries=C.HIMALAYA_COUNTRIES)
-    elif mode == "download":
-        _log("inventory", "downloading NASA COOLR landslide catalogue")
-        glc = inventory.download_nasa_glc(cfg.data_dir, bbox=cfg.region_bbox)
-        if not glc:
-            raise RuntimeError("NASA GLC unavailable; supply config.inventory_path")
-        presence = inventory.load_inventory(glc, bbox=bbox,
-                                            countries=C.HIMALAYA_COUNTRIES)
-    else:
-        _log("inventory", "synthetic Himalayan inventory (demo)")
-        presence = inventory.make_synthetic_inventory(
-            fpaths, n=1500, true_weights=[1.6, 0.7, 0.5, 1.1])
-    if len(presence) < 20:
-        raise RuntimeError(f"only {len(presence)} presence points in region; "
-                           "need >= 20 for calibration")
-    _log("inventory", f"{len(presence)} presence points in region")
+    pres = inventory.load_inventory(cfg.inventory_path, bbox=bbox)
+    if len(pres) < 50:
+        raise ValueError(f"only {len(pres)} landslides fall inside the AOI - "
+                         "too few to constrain the parameters")
+    n_bg = n_background or max(2 * len(pres), 2000)
+    bg = inventory.background_points(bbox, n_bg, terrain["slope"])
+    _log("inventory", f"{len(pres)} landslides, {len(bg)} background points")
 
-    # ---- background points (density-matched to control reporting bias) ---
-    n_bg = n_background or max(2 * len(presence), 1500)
-    n_near = int(n_bg * 0.7)
-    bg_near = inventory.background_points(bbox, n_near, fpaths[0],
-                                          near=presence, radius_deg=0.15)
-    bg_wide = inventory.background_points(bbox, n_bg - n_near, fpaths[0],
-                                          seed=11)
-    background = np.vstack([b for b in (bg_near, bg_wide) if len(b)])
-    _log("background", f"{len(background)} background points "
-                       f"({len(bg_near)} density-matched + {len(bg_wide)} AOI-wide)")
+    layers = [terrain["slope"], terrain["sca"], recharge_path]
+    if region_path:
+        layers.append(region_path)
+    sp = inventory.sample_factors_at_points(pres, layers)
+    sb = inventory.sample_factors_at_points(bg, layers)
+    sp[sp == -9999.0] = np.nan
+    sb[sb == -9999.0] = np.nan
 
-    # ---- optional: fit the lithology table (BEFORE the weights) ----------
-    # Order matters: the weights are fitted against the factor rasters, so the
-    # rock-type table has to be corrected first, the lithology factor rebuilt
-    # with it, and only then the weights estimated. Fitting the weights first
-    # would estimate them against a table we are about to replace.
-    glim_sl = None
-    litho_diag = None
-    if fit_lithology and "glim_vector" in inputs:
-        _log("lithology", "fitting Sl per rock type (frequency ratio)")
-        code_ras = _work(cfg, "glim_codes.tif")
-        _, idx_to_code = sources.rasterize_glim(
-            inputs["glim_vector"], grid, code_ras, burn_codes=True)
-        cp = inventory.sample_factors_at_points(presence, [code_ras])[:, 0]
-        cb = inventory.sample_factors_at_points(background, [code_ras])[:, 0]
-        try:
-            glim_sl, litho_diag = calibrate.calibrate_lithology(
-                cp, cb, idx_to_code)
-            changed = [k for k, v in litho_diag["fitted"].items()
-                       if litho_diag["expert"][k] != v]
-            _log("lithology", f"{len(litho_diag['fitted'])} rock types fitted, "
-                              f"{len(changed)} differ from the expert table")
-            _log("lithology", "note: ratios are confounded with topography - "
-                              "flat-lying units score low regardless of strength")
-            # Rebuild the lithology factor with the fitted table so the weight
-            # fit below sees the corrected values.
-            sources.rasterize_glim(inputs["glim_vector"], grid,
-                                   _work(cfg, "glim_sl.tif"), sl_map=glim_sl)
-            factors.lithology_factor(_work(cfg, "glim_sl.tif"),
-                                     factor_paths["litho"],
-                                     block=cfg.block_size)
-        except ValueError as exc:
-            _log("lithology", f"skipped ({exc})")
-    elif fit_lithology:
-        _log("lithology", "skipped (needs the full GLiM geodatabase)")
+    scale_p = sp[:, 2] if cfg.spatial_recharge else None
+    scale_b = sb[:, 2] if cfg.spatial_recharge else None
 
-    pres_feats = inventory.sample_factors_at_points(presence, fpaths)
-    bg_feats = inventory.sample_factors_at_points(background, fpaths)
+    _log("fit", f"searching {len(physical.parameter_grid())} parameter sets")
+    fit = physical.fit_parameters(sp[:, 0], sp[:, 1], sb[:, 0], sb[:, 1],
+                                  n_samples=cfg.n_samples_fit,
+                                  recharge_pres=scale_p, recharge_bg=scale_b)
+    params = fit["parameters"]
+    _log("fit", f"in-sample AUC {fit['auc']:.3f}  {params.as_dict()}")
 
-    _log("calibrate", "fitting logistic model on log-factors")
-    result = calibrate.calibrate(pres_feats, bg_feats,
-                                 feature_mode=cfg.feature_mode)
+    report: Dict[str, object] = {
+        "parameters": params.as_dict(),
+        "in_sample_auc": round(fit["auc"], 4),
+        "n_presence": fit["n_presence"],
+        "n_background": fit["n_background"],
+        "top_trials": fit["top_trials"],
+        "recharge_reference_mm": reference_mm,
+        "spatial_recharge": cfg.spatial_recharge,
+        "resolution_deg": cfg.resolution_deg,
+        "bbox": list(bbox),
+        "inventory": cfg.inventory_path,
+    }
 
-    # The AUC above comes from a random split, which is optimistic when the
-    # data are spatially clustered. Score a spatial-block split alongside it so
-    # the difference is visible rather than implicit.
-    from .model import crossval
-    cv = {}
-    for scheme in ("random", "spatial"):
-        try:
-            cv[scheme] = crossval.cross_validate(
-                presence, background, pres_feats, bg_feats,
-                cfg.feature_mode, bbox, scheme=scheme,
-                block_deg=cfg.cv_block_deg)
-        except Exception as exc:                      # noqa: BLE001
-            _log("crossval", f"{scheme} skipped ({exc})")
-    if cv:
-        for s, r in cv.items():
-            _log("crossval", f"{s:8s} AUC {r['auc_mean']:.3f} "
-                             f"+/- {r['auc_std']:.3f} "
-                             f"({r['n_folds_scored']} folds)")
-    _log("calibrate", f"held-out AUC = {result.auc:.3f}  "
-                      f"weights = {result.weights}")
+    # Per-region fits, if a zoning was supplied ------------------------------
+    if region_path is not None:
+        _log("fit", f"per-region fits ({cfg.calibration_regions})")
+        reg = physical.fit_parameters_regional(
+            sp[:, 0], sp[:, 1], sp[:, 3], sb[:, 0], sb[:, 1], sb[:, 3],
+            n_samples=cfg.n_samples_fit,
+            min_presence=cfg.min_region_presence)
+        report["calibration_regions"] = cfg.calibration_regions
+        report["region_parameters"] = {
+            str(k): v.as_dict() for k, v in reg["by_region"].items()}
+        report["region_detail"] = reg["regions"]
+        # The cross-validation below refits the whole-area parameters inside
+        # each fold; it does not refit per region. Say so, so the CV figure is
+        # not read as evidence for the zoning.
+        report["region_note"] = ("cross-validation scores the whole-area "
+                                 "parameters, not the per-region ones")
+        _log("fit", f"{reg['n_regions_fitted']} regions fitted, the rest fall "
+                    "back to the whole-area parameters")
 
-    # ---- optional: fit the slope reclassification table ------------------
-    slope_breaks = None
-    slope_diag = None
-    if fit_slope_breaks:
-        _log("slope breaks", "fitting from inventory (frequency ratio)")
-        sp = inventory.sample_factors_at_points(presence,
-                                                [factor_paths["slope_deg"]])[:, 0]
-        sb = inventory.sample_factors_at_points(background,
-                                                [factor_paths["slope_deg"]])[:, 0]
-        try:
-            slope_breaks, slope_diag = calibrate.calibrate_slope_breaks(sp, sb)
-            peak = slope_diag.get("peak_fr_slope_deg")
-            _log("slope breaks", f"{len(slope_breaks)} classes, landslides "
-                                 f"most over-represented near {peak}deg")
-        except ValueError as exc:
-            _log("slope breaks", f"skipped ({exc})")
+    # Cross-validation ------------------------------------------------------
+    if cross_validate:
+        for scheme in ("random", "spatial"):
+            _log("cross-validate", f"{scheme} split, {cfg.cv_folds} folds")
+            cv = physical.cross_validate(
+                pres, sp[:, 0], sp[:, 1], bg, sb[:, 0], sb[:, 1], bbox,
+                scheme=scheme, n_folds=cfg.cv_folds,
+                block_deg=cfg.cv_block_deg, n_samples=cfg.n_samples_fit,
+                recharge_pres=scale_p, recharge_bg=scale_b)
+            report[f"cv_{scheme}"] = cv
+            _log("cross-validate", f"AUC {cv['auc_mean']:.3f} "
+                                   f"+/- {cv['auc_std']:.3f} "
+                                   f"over {cv['n_folds_scored']} folds")
+        report["warnings"] = _fit_warnings(report)
 
-    # ---- write calibrated config + report -------------------------------
-    cal_cfg = calibrate.apply_to_config(cfg, result)
-    if glim_sl:
-        cal_cfg.glim_sl = glim_sl
-    if slope_breaks:
-        cal_cfg.slope_breaks = slope_breaks
-    cal_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibrated_config.json")
-    cal_cfg.to_json(cal_path)
-    report_path = os.path.join(cfg.out_dir, f"{cfg.name}_calibration.json")
-    report = result.to_dict()
-    if cv:
-        report["cross_validation"] = cv
-        rnd, spa = cv.get("random"), cv.get("spatial")
-        if rnd and spa and np.isfinite(spa["auc_mean"]):
-            gap = rnd["auc_mean"] - spa["auc_mean"]
-            # Only a substantial gap indicates the random split is coasting on
-            # spatial autocorrelation; a small one means the relationship holds
-            # on ground the fit has not seen.
-            if gap > 0.03:
-                report.setdefault("warnings", []).append(
-                    f"random-split AUC exceeds spatial-block AUC by {gap:.3f}: "
-                    "the random figure is inflated by spatial autocorrelation, "
-                    f"so treat {spa['auc_mean']:.3f} as the within-region score")
-            # Spread across blocks matters independently of the mean. A model
-            # that averages well but swings widely is unreliable in any one
-            # place, which a random split cannot reveal.
-            if spa["auc_std"] > 0.04:
-                lo, hi = min(spa["auc_folds"]), max(spa["auc_folds"])
-                report.setdefault("warnings", []).append(
-                    f"performance varies markedly by area (block AUC {lo:.2f} "
-                    f"to {hi:.2f}, sd {spa['auc_std']:.3f}): the mean describes "
-                    "no particular location, so expect this spread when "
-                    "applying the map somewhere new")
-    if slope_diag:
-        report["slope_breaks"] = slope_breaks
-        report["slope_diagnostics"] = slope_diag
-    if litho_diag:
-        report["glim_sl"] = glim_sl
-        report["lithology_diagnostics"] = litho_diag
-    with open(report_path, "w", encoding="utf-8") as fh:
+    path = _out(cfg, "fitted_params.json")
+    with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
+    _log("done", f"fitted parameters -> {path}")
+    report["path"] = path
+    return report
 
-    _log("done", f"calibrated config -> {cal_path}")
-    return {"result": report, "calibrated_config": cal_path,
-            "report": report_path}
+
+def _fit_warnings(report: dict) -> list:
+    """Flag the ways a fit can look better than it is."""
+    out = []
+    rnd = report.get("cv_random", {}).get("auc_mean", float("nan"))
+    spa = report.get("cv_spatial", {}).get("auc_mean", float("nan"))
+    sd = report.get("cv_spatial", {}).get("auc_std", float("nan"))
+    ins = report.get("in_sample_auc", float("nan"))
+
+    if np.isfinite(rnd) and np.isfinite(spa) and rnd - spa > 0.03:
+        out.append(f"random-split AUC ({rnd:.3f}) exceeds spatial-block AUC "
+                   f"({spa:.3f}) by {rnd - spa:.3f}: part of the apparent skill "
+                   "is interpolation between nearby landslides, not a "
+                   "transferable relationship")
+    if np.isfinite(sd) and sd > 0.04:
+        out.append(f"spatial-block AUC varies by {sd:.3f} between folds: the "
+                   "mean describes no particular place, and this spread is the "
+                   "range to expect when applying the map somewhere new")
+    if np.isfinite(ins) and np.isfinite(spa) and ins - spa > 0.05:
+        out.append(f"in-sample AUC ({ins:.3f}) is well above the held-out "
+                   f"figure ({spa:.3f}); quote the held-out one")
+    if np.isfinite(spa) and spa < 0.65:
+        out.append(f"held-out AUC {spa:.3f} is weak; the map orders terrain "
+                   "only slightly better than chance")
+    return out
+
+
+def load_fitted(cfg: C.Config) -> Tuple[physical.SoilParameters,
+                                        Dict[int, physical.SoilParameters],
+                                        Optional[float]]:
+    """Read the fitted parameters, falling back to SINMAP's generic ranges."""
+    path = cfg.fitted_params or _out(cfg, "fitted_params.json")
+    if not os.path.exists(path):
+        _log("parameters", "no fit found -> SINMAP generic ranges "
+                           "(run step3-fit for local parameters)")
+        return physical.SoilParameters(), {}, cfg.recharge_reference_mm
+
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = json.load(fh)
+    params = physical.SoilParameters.from_dict(raw["parameters"])
+    by_region = {int(k): physical.SoilParameters.from_dict(v)
+                 for k, v in raw.get("region_parameters", {}).items()}
+    ref = raw.get("recharge_reference_mm") or cfg.recharge_reference_mm
+    _log("parameters", f"{path} ({len(by_region)} regional overrides)")
+    return params, by_region, ref
 
 
 # ---------------------------------------------------------------------------
-# scenario comparison (present vs future climate)
+# steps 4 and 5: stability under reference conditions, and under a scenario
 # ---------------------------------------------------------------------------
 
-def compare_susceptibility(baseline_path: str, scenario_path: str,
-                           out_prefix: str, block: int = 1024) -> Dict[str, str]:
-    """Difference map: scenario susceptibility class minus baseline class.
+def run_stability(cfg: C.Config, mode: str = "download",
+                  scenario: Optional[dict] = None,
+                  label: str = "susceptibility") -> Dict[str, str]:
+    """Failure probability over the AOI.
 
-    This is the figure the manuscript uses to show climate-change impact
-    (its Fig. 8): where does the susceptibility class move up or down between
-    two runs? Positive values mean the scenario is *more* susceptible.
+    With ``scenario`` None this is susceptibility: the probability of failure
+    at the recharge the parameters were fitted at, with no seismic loading.
+    With a scenario it is hazard: the same calculation with recharge scaled or
+    an inertial term added. There is deliberately only one code path, because
+    in a physical model the two differ by the value of two scalars.
+    """
+    _ensure_dirs(cfg)
+    bbox = cfg.clipped_bbox()
+    grid = Grid.from_bbox(bbox, cfg.resolution_deg)
+    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg")
 
-    Both inputs must be on the same grid (same AOI, same resolution).
+    inputs = resolve_inputs(cfg, mode)
+    terrain = stage_terrain(cfg, grid, inputs)
+    params, by_region, reference_mm = load_fitted(cfg)
+    recharge_path, _ = stage_recharge(cfg, grid, inputs, reference_mm)
+    region_path = stage_regions(cfg, grid, inputs) if by_region else None
+
+    slope, sca = _read(terrain["slope"]), _read(terrain["sca"])
+    scale = _read(recharge_path) if cfg.spatial_recharge else None
+
+    k_h = 0.0
+    if scenario:
+        k_h = scenario["k_h"]
+        m = scenario["recharge_multiplier"]
+        scale = (m if scale is None else scale * m)
+        _log("scenario", scenario["description"])
+
+    out: Dict[str, str] = {}
+    if by_region and region_path:
+        _log("stability", f"failure probability, {len(by_region)} calibration "
+                          "regions")
+        region = _read(region_path)
+        pfail = physical.failure_probability_regional(
+            slope, sca, region, by_region, params, n_samples=cfg.n_samples,
+            recharge_scale=scale, k_h=k_h)
+    else:
+        _log("stability", "failure probability over the parameter ranges")
+        pfail = physical.failure_probability(
+            slope, sca, params, n_samples=cfg.n_samples,
+            recharge_scale=scale, k_h=k_h)
+
+    if cfg.output in ("probability", "both"):
+        out["probability"] = _write(grid, pfail, _out(cfg, f"{label}_prob.tif"))
+    if cfg.output in ("classes", "both"):
+        _log("stability", "SINMAP stability classes")
+        cls = physical.stability_classes(slope, sca, params,
+                                         recharge_scale=scale, k_h=k_h)
+        path = _out(cfg, f"{label}_class.tif")
+        with rasterio.open(path, "w", **grid.profile("uint8", 255)) as dst:
+            dst.write(np.where(np.isfinite(cls), cls, 255).astype("uint8"), 1)
+        out["classes"] = path
+
+    if cfg.write_critical_acceleration and not scenario:
+        # The mid-range parameters give the representative critical
+        # acceleration; the full range is already carried by the probability.
+        c = 0.5 * sum(params.cohesion)
+        phi = 0.5 * sum(params.friction_deg)
+        rt = 0.5 * sum(params.rt) * (1.0 if scale is None else scale)
+        kc = physical.critical_acceleration(slope, sca, c, phi, rt)
+        out["critical_acceleration"] = _write(
+            grid, kc, _out(cfg, "critical_acceleration.tif"))
+
+    summary = {
+        "label": label,
+        "parameters": params.as_dict(),
+        "n_calibration_regions": len(by_region),
+        "recharge_reference_mm": reference_mm,
+        "scenario": scenario,
+        "unstable_area_pct": _area_above(pfail, 0.5),
+        "outputs": out,
+    }
+    path = _out(cfg, f"{label}_summary.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(summary, fh, indent=2, default=str)
+    out["summary"] = path
+    _log("done", f"{summary['unstable_area_pct']:.1f}% of the mapped area has "
+                 "failure probability above 0.5")
+    return out
+
+
+def _area_above(arr: np.ndarray, threshold: float) -> float:
+    ok = np.isfinite(arr)
+    return float(100.0 * (arr[ok] > threshold).mean()) if ok.any() else 0.0
+
+
+def run_susceptibility(cfg: C.Config, mode: str = "download") -> Dict[str, str]:
+    """STEP 4 - stability under the conditions the parameters were fitted at."""
+    return run_stability(cfg, mode, scenario=None, label="susceptibility")
+
+
+def run_hazard(cfg: C.Config, mode: str = "download",
+               return_period_yr: Optional[float] = None,
+               pga_g: Optional[float] = None) -> Dict[str, str]:
+    """STEP 5 - stability under a stated triggering scenario."""
+    rp = return_period_yr or cfg.scenario_return_period_yr
+    pga = pga_g if pga_g is not None else cfg.scenario_pga_g
+    terms = hazard.scenario_terms(cfg.trigger, return_period_yr=rp, pga_g=pga,
+                                  cv=cfg.rainfall_cv,
+                                  pga_fraction=cfg.pga_fraction)
+    terms["description"] = hazard.describe_scenario(cfg.trigger, terms, rp, pga)
+    label = (f"hazard_rp{rp:g}" if cfg.trigger == "rainfall"
+             else f"hazard_pga{pga:g}")
+    return run_stability(cfg, mode, scenario=terms, label=label)
+
+
+# ---------------------------------------------------------------------------
+# step 7: comparing two runs
+# ---------------------------------------------------------------------------
+
+def compare_probability(baseline_path: str, scenario_path: str,
+                        out_prefix: str, block: int = 1024) -> Dict[str, str]:
+    """Difference map: scenario failure probability minus baseline.
+
+    Used for climate scenarios (present against SSP) and for trigger scenarios
+    (one return period against another). Both inputs must be on the same grid.
     """
     from .utility.grid import combine_rasters, iter_blocks
-    from .model.susceptibility import SUSC_NODATA
 
     with rasterio.open(baseline_path) as a, rasterio.open(scenario_path) as b:
         if (a.width, a.height) != (b.width, b.height):
@@ -493,38 +612,37 @@ def compare_susceptibility(baseline_path: str, scenario_path: str,
                 f"grids differ: baseline {a.width}x{a.height} vs scenario "
                 f"{b.width}x{b.height}. Re-run both with the same --bbox/--res.")
 
-    change_path = f"{out_prefix}_susceptibility_change.tif"
+    change_path = f"{out_prefix}_change.tif"
 
     def fn(arrs):
         base, scen = arrs
-        bad = (base == SUSC_NODATA) | (scen == SUSC_NODATA) | \
-              np.isnan(base) | np.isnan(scen)
-        return np.where(bad, -128, scen - base)
+        bad = ~np.isfinite(base) | ~np.isfinite(scen) | \
+            (base == -9999.0) | (scen == -9999.0)
+        return np.where(bad, -9999.0, scen - base)
 
     combine_rasters([baseline_path, scenario_path], change_path, fn,
-                    "int16", -128, block=block)
+                    "float32", -9999.0, block=block)
 
-    # ---- area statistics -------------------------------------------------
-    counts: Dict[str, int] = {}
-    total = 0
+    total = inc = dec = 0
+    shifted = 0
+    acc = 0.0
     with rasterio.open(change_path) as src:
         for win in iter_blocks(src.width, src.height, block):
-            d = src.read(1, window=win)
-            d = d[d != -128]
+            d = src.read(1, window=win).astype("float64")
+            d = d[(d != -9999.0) & np.isfinite(d)]
             total += d.size
-            for v in np.unique(d):
-                counts[str(int(v))] = counts.get(str(int(v)), 0) + \
-                    int((d == v).sum())
-    inc = sum(n for k, n in counts.items() if int(k) > 0)
-    dec = sum(n for k, n in counts.items() if int(k) < 0)
+            inc += int((d > 0.01).sum())
+            dec += int((d < -0.01).sum())
+            shifted += int((np.abs(d) > 0.10).sum())
+            acc += float(d.sum())
+
     stats = {
         "pixels_compared": total,
-        "class_change_histogram": dict(sorted(counts.items(),
-                                              key=lambda kv: int(kv[0]))),
-        "pct_increased": round(100.0 * inc / total, 3) if total else 0.0,
-        "pct_decreased": round(100.0 * dec / total, 3) if total else 0.0,
-        "pct_unchanged": round(100.0 * counts.get("0", 0) / total, 3)
+        "pct_more_likely": round(100.0 * inc / total, 3) if total else 0.0,
+        "pct_less_likely": round(100.0 * dec / total, 3) if total else 0.0,
+        "pct_shifted_over_0.10": round(100.0 * shifted / total, 3)
         if total else 0.0,
+        "mean_change": round(acc / total, 5) if total else 0.0,
         "baseline": baseline_path,
         "scenario": scenario_path,
     }
@@ -538,216 +656,50 @@ def compare_susceptibility(baseline_path: str, scenario_path: str,
                                             f"{out_prefix}_change_quicklook.png")
     except Exception as exc:  # matplotlib optional
         _log("quicklook", f"skipped ({exc})")
-    _log("compare", f"{stats['pct_increased']}% of pixels more susceptible, "
-                    f"{stats['pct_decreased']}% less")
+    _log("compare", f"mean change {stats['mean_change']:+.4f}; "
+                    f"{stats['pct_more_likely']}% of pixels more likely to "
+                    f"fail, {stats['pct_less_likely']}% less")
     return out
 
 
 def change_quicklook(change_path: str, out_png: str) -> str:
-    """Diverging-colour render of a susceptibility class-change raster."""
+    """Diverging-colour render of a failure-probability change raster."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.colors import BoundaryNorm, ListedColormap
 
     with rasterio.open(change_path) as src:
         d = src.read(1).astype("float32")
-        d[d == -128] = np.nan
+        d[d == -9999.0] = np.nan
 
-    cmap = ListedColormap(["#2166ac", "#67a9cf", "#d1e5f0", "#f7f7f7",
-                           "#fddbc7", "#ef8a62", "#b2182b"])
-    norm = BoundaryNorm([-3.5, -2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5], cmap.N)
+    lim = float(np.nanpercentile(np.abs(d), 99)) or 0.1
     fig, ax = plt.subplots(figsize=(7, 6))
-    im = ax.imshow(d, cmap=cmap, norm=norm)
-    ax.set_title("Susceptibility class change\n(scenario - baseline)")
+    im = ax.imshow(d, cmap="RdBu_r", vmin=-lim, vmax=lim)
+    ax.set_title("Change in failure probability\n(scenario - baseline)")
     ax.set_xticks([]); ax.set_yticks([])
-    cb = fig.colorbar(im, ax=ax, fraction=0.046, ticks=[-3, -2, -1, 0, 1, 2, 3])
-    cb.set_label("classes gained (+) / lost (-)")
+    cb = fig.colorbar(im, ax=ax, fraction=0.046)
+    cb.set_label("more likely (+) / less likely (-)")
     fig.tight_layout()
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
     return out_png
 
 
-# ---------------------------------------------------------------------------
-# full run
-# ---------------------------------------------------------------------------
-
-def run_susceptibility(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
-    """STEP 4 - build the susceptibility map only.
-
-    Answers "where is the ground fragile?" - a property of the landscape that
-    does not depend on any particular storm or earthquake. Writes the four
-    factor rasters plus the 5-class susceptibility map.
-    """
-    _ensure_dirs(cfg)
-    grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
-    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg "
-                 f"(weights={cfg.weight_mode}, climate={cfg.climate})")
-
-    inputs = resolve_inputs(cfg, mode)
-    factor_paths = stage_factors(cfg, grid, inputs)
-    susc = _susceptibility_stage(cfg, factor_paths)
-    susc_class = susc.get("classes")
-
-    out = {k: v for k, v in
-           (("susceptibility_probability", susc.get("probability")),
-            ("susceptibility_classes", susc_class)) if v}
-    out.update({
-           "factor_slope": factor_paths["slope"],
-           "factor_lithology": factor_paths["litho"],
-           "factor_vegetation": factor_paths["veg"],
-           "factor_soil_moisture": factor_paths["soil"]})
-    if susc.get("probability"):
-        st = raster_stats(susc["probability"])
-        _log("susceptibility", f"index min={st['min']:.3f} "
-                               f"mean={st['mean']:.3f} max={st['max']:.3f}")
-    return out
-
-
-def run_hazard(cfg: C.Config, susc_path: str, mode: str = "demo",
-               inputs: Optional[Dict[str, object]] = None) -> Dict[str, str]:
-    """STEP 5 - turn a susceptibility map into scenario hazard.
-
-    Answers "if a storm/earthquake of THIS severity happens, how likely is a
-    damaging landslide here?" Needs the susceptibility map from step 4 plus a
-    trigger scenario.
-    """
-    _ensure_dirs(cfg)
-    grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
-    if inputs is None:
-        inputs = resolve_inputs(cfg, mode) if cfg.trigger_path else {}
-
-    _log("trigger", f"{cfg.trigger} "
-                    + (f"PGA={cfg.scenario_pga_g}g" if cfg.trigger == "earthquake"
-                       else f"RP={cfg.scenario_return_period_yr}yr"))
-    trig_class = _work(cfg, "trigger_class.tif")
-    if cfg.trigger == "rainfall":
-        if "trigger_raster" in inputs:
-            grid_z = _work(cfg, "rain_z.tif")
-            warp_to_grid(inputs["trigger_raster"], grid, grid_z,
-                         Resampling.bilinear, dtype="float32", nodata=-9999.0,
-                         block=cfg.block_size)
-            triggers.rainfall_class_from_norm(grid_z, trig_class,
-                                              block=cfg.block_size)
-        else:
-            triggers.rainfall_class_from_return_period(
-                susc_path, trig_class, cfg.scenario_return_period_yr,
-                block=cfg.block_size)
-    else:
-        pga_src = inputs.get("pga") or inputs.get("trigger_raster")
-        if pga_src:
-            grid_pga = _work(cfg, "pga.tif")
-            warp_to_grid(pga_src, grid, grid_pga, Resampling.bilinear,
-                         dtype="float32", nodata=-9999.0, block=cfg.block_size)
-            triggers.pga_class(grid_pga, trig_class, block=cfg.block_size)
-        else:
-            triggers.pga_class_uniform(susc_path, trig_class,
-                                       cfg.scenario_pga_g,
-                                       block=cfg.block_size)
-
-    _log("hazard", "applying hazard matrix")
-    hazard_path = os.path.join(cfg.out_dir, f"{cfg.name}_hazard_probability.tif")
-    hazard.apply_hazard_matrix(susc_path, trig_class, hazard_path,
-                               cfg.trigger, block=cfg.block_size)
-    stats = raster_stats(hazard_path)
-    _log("hazard", f"probability max={stats['max']:.4f} "
-                   f"mean={stats['mean']:.6f}")
-    return {"trigger_class": trig_class, "hazard_probability": hazard_path}
-
-
-def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
-    """Steps 4 + 5 together: susceptibility, then scenario hazard.
-
-    A thin composition of :func:`run_susceptibility` and :func:`run_hazard` so
-    the one-shot path and the step-by-step path cannot drift apart.
-    """
-    _ensure_dirs(cfg)
-    grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
-
-    inputs = resolve_inputs(cfg, mode)
-    factor_paths = stage_factors(cfg, grid, inputs)
-    susc = _susceptibility_stage(cfg, factor_paths)
-    susc_class = susc["classes"]
-
-    outputs = {k: v for k, v in
-               (("susceptibility_probability", susc.get("probability")),
-                ("susceptibility_classes", susc_class)) if v}
-    outputs.update(run_hazard(cfg, susc_class, mode=mode, inputs=inputs))
-
-    summary_path = os.path.join(cfg.out_dir, f"{cfg.name}_summary.json")
-    with open(summary_path, "w", encoding="utf-8") as fh:
-        json.dump(_summarise(cfg, mode, grid, factor_paths, outputs), fh,
-                  indent=2)
-    outputs["summary"] = summary_path
-    try:
-        outputs["quicklook"] = quicklook(
-            susc_class, outputs["hazard_probability"],
-            os.path.join(cfg.out_dir, f"{cfg.name}_quicklook.png"))
-    except Exception as exc:                      # matplotlib optional
-        _log("quicklook", f"skipped ({exc})")
-
-    _log("done", f"outputs in {cfg.out_dir}")
-    return outputs
-
-
-def _summarise(cfg, mode, grid, factor_paths, outputs) -> dict:
-    susc_hist = _class_histogram(outputs["susceptibility_classes"], 1, 5)
-    summary = {
-        "name": cfg.name,
-        "mode": mode,
-        "trigger": cfg.trigger,
-        "bbox": list(cfg.bbox),
-        "resolution_deg": cfg.resolution_deg,
-        "grid": {"width": grid.width, "height": grid.height},
-        "weights": vars(cfg.weights),
-        "susceptibility_class_pixels": susc_hist,
-        "hazard_probability_stats": raster_stats(outputs["hazard_probability"]),
-    }
-    if outputs.get("susceptibility_probability"):
-        summary["susceptibility_index_stats"] = raster_stats(
-            outputs["susceptibility_probability"])
-    return summary
-
-
-def _class_histogram(path: str, lo: int, hi: int) -> Dict[str, int]:
-    from .utility.grid import iter_blocks
-    counts = {str(k): 0 for k in range(lo, hi + 1)}
-    with rasterio.open(path) as src:
-        for win in iter_blocks(src.width, src.height, 1024):
-            a = src.read(1, window=win)
-            for k in range(lo, hi + 1):
-                counts[str(k)] += int(np.count_nonzero(a == k))
-    return counts
-
-
-def quicklook(susc_path: str, hazard_path: str, out_png: str) -> str:
-    """Render a two-panel PNG (susceptibility + hazard) for a quick visual check."""
+def quicklook(prob_path: str, out_png: str) -> str:
+    """Render a failure-probability raster."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.colors import ListedColormap, BoundaryNorm
 
-    with rasterio.open(susc_path) as s:
-        susc = s.read(1).astype("float32")
-        susc[susc == s.nodata] = np.nan
-    with rasterio.open(hazard_path) as h:
-        haz = h.read(1).astype("float32")
-        haz[haz == h.nodata] = np.nan
+    with rasterio.open(prob_path) as src:
+        p = src.read(1).astype("float32")
+        p[p == src.nodata] = np.nan
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    cmap = ListedColormap(["#1a9850", "#a6d96a", "#fee08b", "#fc8d59",
-                           "#d73027"])
-    norm = BoundaryNorm([0.5, 1.5, 2.5, 3.5, 4.5, 5.5], cmap.N)
-    im0 = axes[0].imshow(susc, cmap=cmap, norm=norm)
-    axes[0].set_title("Landslide susceptibility (1-5)")
-    fig.colorbar(im0, ax=axes[0], fraction=0.046, ticks=[1, 2, 3, 4, 5])
-
-    im1 = axes[1].imshow(haz, cmap="magma")
-    axes[1].set_title("Landslide probability (per scenario event)")
-    fig.colorbar(im1, ax=axes[1], fraction=0.046)
-    for ax in axes:
-        ax.set_xticks([]); ax.set_yticks([])
+    fig, ax = plt.subplots(figsize=(7, 6))
+    im = ax.imshow(p, cmap="magma_r", vmin=0, vmax=1)
+    ax.set_title("Probability of slope failure")
+    ax.set_xticks([]); ax.set_yticks([])
+    fig.colorbar(im, ax=ax, fraction=0.046, label="P(FS < 1)")
     fig.tight_layout()
     fig.savefig(out_png, dpi=120)
     plt.close(fig)
@@ -755,96 +707,21 @@ def quicklook(susc_path: str, hazard_path: str, out_png: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# physically based model (SINMAP)
+# whole workflow
 # ---------------------------------------------------------------------------
 
-def run_physical(cfg: C.Config, mode: str = "download",
-                 fit: bool = True) -> Dict[str, str]:
-    """Physically based stability: hydrology, then infinite-slope failure.
-
-    Computes specific catchment area by D-infinity routing over the filled DEM,
-    then the probability that the infinite-slope factor of safety falls below
-    one. Soil parameters are fitted to an inventory when one is supplied.
-
-    Flow accumulation is global to the drainage network, so unlike the factor
-    stages this one is computed over the whole AOI at once rather than in
-    tiles. Keep the area modest, or accept the memory cost.
-    """
-    from .input import inventory
-    from .model import hydrology, physical
-
-    _ensure_dirs(cfg)
-    bbox = cfg.clipped_bbox()
-    grid = Grid.from_bbox(bbox, cfg.resolution_deg)
-    _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg")
-
-    inputs = resolve_inputs(cfg, mode)
-    dem_grid = _work(cfg, "dem.tif")
-    if "dem" in inputs:
-        warp_to_grid(inputs["dem"], grid, dem_grid, Resampling.bilinear,
-                     dtype="float32", nodata=-9999.0, block=cfg.block_size)
-    else:
-        mosaic_and_warp(inputs["dem_tiles"], grid, dem_grid,
-                        Resampling.bilinear, dtype="float32", nodata=-9999.0,
-                        block=cfg.block_size)
-
-    with rasterio.open(dem_grid) as src:
-        dem = src.read(1).astype("float64")
-        dem[dem == src.nodata] = np.nan
-    lat = 0.5 * (bbox[1] + bbox[3])
-    dx = cfg.resolution_deg * 111320.0 * max(np.cos(np.radians(lat)), 1e-6)
-    dy = cfg.resolution_deg * 110540.0
-
-    _log("hydrology", f"filling depressions, D-inf routing ({dem.size:,} cells)")
-    sca, slope = hydrology.specific_catchment_area(dem, dx, dy)
-    _log("hydrology", f"specific catchment area "
-                      f"{np.nanpercentile(sca, 50):.0f} m median, "
-                      f"{np.nanmax(sca):.0f} m max")
-
-    prof = grid.profile("float32", -9999.0)
-    for name, arr in (("sca", sca), ("slope_tan", slope)):
-        with rasterio.open(_work(cfg, f"{name}.tif"), "w", **prof) as dst:
-            dst.write(np.where(np.isfinite(arr), arr, -9999.0).astype("float32"), 1)
-
-    params = physical.SoilParameters()
-    fit_report = None
-    if fit and cfg.inventory_path:
-        pres = inventory.load_inventory(cfg.inventory_path, bbox=bbox)
-        bg = inventory.background_points(bbox, max(2 * len(pres), 2000),
-                                         _work(cfg, "slope_tan.tif"))
-        sp = inventory.sample_factors_at_points(pres, [_work(cfg, "slope_tan.tif"),
-                                                       _work(cfg, "sca.tif")])
-        sb = inventory.sample_factors_at_points(bg, [_work(cfg, "slope_tan.tif"),
-                                                     _work(cfg, "sca.tif")])
-        sp[sp == -9999.0] = np.nan
-        sb[sb == -9999.0] = np.nan
-        _log("fit", f"searching soil parameters against {len(pres)} landslides")
-        fit_report = physical.fit_parameters(sp[:, 0], sp[:, 1],
-                                             sb[:, 0], sb[:, 1])
-        params = fit_report["parameters"]
-        _log("fit", f"AUC {fit_report['auc']:.3f}  {params.as_dict()}")
-
-    _log("stability", "failure probability over parameter ranges")
-    pfail = physical.failure_probability(slope, sca, params, n_samples=200)
-    out_p = os.path.join(cfg.out_dir, f"{cfg.name}_failure_probability.tif")
-    with rasterio.open(out_p, "w", **prof) as dst:
-        dst.write(np.where(np.isfinite(pfail), pfail, -9999.0).astype("float32"), 1)
-
-    cls = physical.stability_classes(slope, sca, params)
-    out_c = os.path.join(cfg.out_dir, f"{cfg.name}_stability_class.tif")
-    with rasterio.open(out_c, "w", **grid.profile("uint8", 255)) as dst:
-        dst.write(np.where(np.isfinite(cls), cls, 255).astype("uint8"), 1)
-
-    report = {"parameters": params.as_dict(),
-              "median_sca_m": float(np.nanpercentile(sca, 50))}
-    if fit_report:
-        report["fit"] = {k: v for k, v in fit_report.items()
-                         if k != "parameters"}
-    rp = os.path.join(cfg.out_dir, f"{cfg.name}_physical.json")
-    with open(rp, "w", encoding="utf-8") as fh:
-        json.dump(report, fh, indent=2)
-
-    _log("done", f"failure probability -> {out_p}")
-    return {"failure_probability": out_p, "stability_class": out_c,
-            "sca": _work(cfg, "sca.tif"), "slope": _work(cfg, "slope_tan.tif"),
-            "report": rp}
+def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
+    """Fit (if an inventory is supplied), then susceptibility, then hazard."""
+    out: Dict[str, str] = {}
+    if cfg.inventory_path:
+        fit = run_fit(cfg, mode=mode)
+        cfg.fitted_params = fit["path"]
+        out["fitted_params"] = fit["path"]
+    out.update(run_susceptibility(cfg, mode=mode))
+    out.update({f"hazard_{k}": v for k, v in run_hazard(cfg, mode=mode).items()})
+    try:
+        out["quicklook"] = quicklook(out["probability"],
+                                     _out(cfg, "quicklook.png"))
+    except Exception as exc:  # matplotlib optional
+        _log("quicklook", f"skipped ({exc})")
+    return out

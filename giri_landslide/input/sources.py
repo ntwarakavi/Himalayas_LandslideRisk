@@ -4,16 +4,18 @@ All downloaders fetch only the tiles that intersect the AOI, so a laptop run
 pulls a handful of files rather than a global dataset. Every dataset used here
 is openly accessible without authentication:
 
-  * DEM         - Copernicus GLO-90 / GLO-30 DEM (AWS Open Data, 1-deg COG tiles)
+  * DEM         - Copernicus GLO-30 / GLO-90 DEM (AWS Open Data, 1-deg COG tiles)
+  * Precip.     - WorldClim v2.1 monthly precipitation climatology (mm), and
+                  downscaled CMIP6 projections for future scenarios
   * Land cover  - ESA WorldCover 2021 v200 (AWS Open Data, 3-deg tiles)
-  * Precip.     - WorldClim v2.1 monthly precipitation climatology (mm)
-  * Lithology   - GLiM (Hartmann & Moosdorf 2012) - user-supplied vector/raster
+  * Lithology   - GLiM (Hartmann & Moosdorf 2012)
   * PGA         - GEM/GSHAP seismic hazard - user-supplied raster
 
-GLiM and the global PGA layer are distributed from portals that need a manual
-(one-click) download or a login, so those are staged from a local path with a
-clear pointer to the source; the pipeline degrades gracefully if they are
-absent (see pipeline.py).
+Only the DEM and the precipitation climatology are needed for a plain run. Land
+cover and GLiM are fetched only when a run asks for calibration regions, and the
+global PGA layer comes from a portal that needs a manual download, so it is
+staged from a local path with a clear pointer to the source; the pipeline
+degrades gracefully if any of them are absent (see pipeline.py).
 """
 
 from __future__ import annotations
@@ -65,7 +67,7 @@ GLIM_VALUE_TO_CODE = {
 PGA_SOURCE_INFO = (
     "PGA: download the GEM Global Seismic Hazard Map (PGA, 475-yr return "
     "period) GeoTIFF from https://www.globalquakemodel.org/product/"
-    "global-seismic-hazard-map and pass its path via config.trigger_path."
+    "global-seismic-hazard-map and pass its path via config.pga_path."
 )
 
 
@@ -212,8 +214,8 @@ def download_worldclim_future(data_dir: str, ssp: str,
     interface of :func:`download_worldclim_precip`.
 
     ``ssp`` is e.g. "ssp126"/"ssp585"; ``period`` one of 2021-2040, 2041-2060,
-    2061-2080, 2081-2100. The default model, IPSL-CM6A-LR, is the one used in
-    the GIRI manuscript.
+    2061-2080, 2081-2100. The default model, IPSL-CM6A-LR, sits mid-range for
+    climate sensitivity among the CMIP6 ensemble.
     """
     fn = f"wc2.1_{res}_prec_{model}_{ssp}_{period}.tif"
     url = f"{WORLDCLIM_CMIP6}/{res}/{model}/{ssp}/{fn}"
@@ -326,11 +328,13 @@ def download_glim_vector(data_dir: str) -> Optional[str]:
     return gdb if os.path.isdir(gdb) else None
 
 
-def glim_grid_to_sl(asc_path: str, out_path: str) -> str:
-    """Convert the GLiM class grid into an Sl susceptibility-factor GeoTIFF.
+def glim_grid_to_codes(asc_path: str, out_path: str) -> str:
+    """Convert the GLiM class grid into a lithology-code GeoTIFF.
 
-    Values are mapped GLiM class -> level-1 code -> Sl (0..3) using the tables
-    in :mod:`giri_landslide.config`.
+    Values are mapped GLiM class -> level-1 two-letter code -> the small
+    integer in :data:`config.GLIM_CODES`. That mapping is fixed, so a code
+    means the same rock type in every area of interest and fitted per-region
+    parameters stay comparable between runs.
     """
     import numpy as np
     import rasterio
@@ -345,8 +349,7 @@ def glim_grid_to_sl(asc_path: str, out_path: str) -> str:
 
     out = np.full(arr.shape, 255, dtype="uint8")
     for value, code in GLIM_VALUE_TO_CODE.items():
-        sl = C.GLIM_SL.get(code, C.GLIM_SL_DEFAULT)
-        out[arr == value] = sl
+        out[arr == value] = C.GLIM_CODES.get(code, 0)
     out[arr == nod] = 255
 
     prof.update(driver="GTiff", dtype="uint8", nodata=255, count=1,
@@ -361,18 +364,12 @@ def glim_grid_to_sl(asc_path: str, out_path: str) -> str:
 
 
 def rasterize_glim(glim_path: str, grid, out_path: str,
-                   code_field: Optional[str] = None,
-                   sl_map: Optional[Dict[str, int]] = None,
-                   burn_codes: bool = False):
-    """Rasterise a GLiM vector onto ``grid``.
+                   code_field: Optional[str] = None):
+    """Rasterise a GLiM vector onto ``grid`` as lithology codes.
 
-    By default the burned value is the lithology susceptibility factor Sl
-    (0..3), taken from ``sl_map`` (default :data:`config.GLIM_SL`).
-
-    With ``burn_codes=True`` the burned value is instead a dense class index,
-    and the function returns ``(path, index_to_code)`` so the calibration can
-    learn a factor per lithology class from an inventory rather than relying on
-    the expert mapping.
+    The burned value is the small integer from :data:`config.GLIM_CODES`, which
+    is a fixed mapping, so the raster means the same thing in every area of
+    interest. Returns ``(path, {code_value: two_letter_code})`` for reporting.
     """
     import numpy as np
     import rasterio
@@ -394,10 +391,9 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
         layer = layers[0] if layers else None
 
     from .. import config as C
-    sl_map = sl_map if sl_map is not None else C.GLIM_SL
 
     shapes = []
-    codes_seen: List[str] = []
+    codes_seen: Dict[int, str] = {}
     with fiona.open(glim_path, layer=layer) as src:
         field = code_field or _guess_glim_field(src.schema["properties"])
         src_crs = src.crs
@@ -414,12 +410,8 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
         for feat in src.filter(bbox=bbox):
             code = (feat["properties"].get(field) or "nd")
             code = str(code)[:2].lower()
-            if burn_codes:
-                if code not in codes_seen:
-                    codes_seen.append(code)
-                value = codes_seen.index(code) + 1     # 0 reserved for "none"
-            else:
-                value = sl_map.get(code, C.GLIM_SL_DEFAULT)
+            value = C.GLIM_CODES.get(code, 0)
+            codes_seen[value] = code
             geom = feat["geometry"]
             if not same_crs:
                 geom = transform_geom(src_crs, "EPSG:4326", geom)
@@ -431,9 +423,7 @@ def rasterize_glim(glim_path: str, grid, out_path: str,
         np.full(grid.shape, 255, dtype="uint8")
     with rasterio.open(out_path, "w", **prof) as dst:
         dst.write(arr, 1)
-    if burn_codes:
-        return out_path, {i + 1: c for i, c in enumerate(codes_seen)}
-    return out_path
+    return out_path, codes_seen
 
 
 def _guess_glim_field(props: Dict[str, str]) -> str:

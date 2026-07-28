@@ -11,15 +11,18 @@ per scenario event. ``exposure`` and ``vulnerability`` are absent.
 Scope required to complete this stage
 -------------------------------------
 Exposure
-    Assets and their locations. The manuscript uses road and railway
-    centrelines, segmented into 1 km units with a 300 m buffer each side, and
-    assigns each unit the maximum susceptibility within its buffer. OpenStreetMap
-    supplies road and rail geometry for the region; WorldPop supplies population.
+    Assets and their locations. The usual treatment for linear infrastructure
+    is to segment road and railway centrelines into 1 km units with a buffer of
+    a few hundred metres either side, and assign each unit the maximum failure
+    probability within its buffer. OpenStreetMap supplies road and rail
+    geometry for the region; WorldPop supplies population.
 
 Vulnerability
-    The damage expected to an asset given an impact, by asset class. The
-    manuscript treats a landslide intersecting a 1 km unit as a full impact on
-    that unit, which is a binary simplification rather than a damage function.
+    The damage expected to an asset given an impact, by asset class. Treating a
+    landslide intersecting a unit as a full impact on that unit is the usual
+    first approximation, but it is a binary simplification rather than a damage
+    function, and runout is not modelled here at all: the stability model says
+    where material detaches, not where it arrives.
 
 Annualisation
     Scenario hazard is conditional on a stated trigger. Converting it to an
@@ -28,15 +31,15 @@ Annualisation
 
 Blocking dependency
 -------------------
-The rainfall hazard matrix in :mod:`giri_landslide.config` is a placeholder.
-The manuscript publishes it only as a figure, so the values in
-``RAINFALL_MATRIX`` are illustrative and the absolute rainfall-triggered
-probabilities are not calibrated. Risk figures derived from them would carry
-that error through to monetary or casualty estimates. The earthquake matrix is
-transcribed exactly and does not have this problem.
+The failure probability this model produces is a *relative* field. Its level
+depends on how background points were drawn during fitting, and on two trigger
+conventions that are not fitted here - the rainfall coefficient of variation
+and the pseudo-static fraction of PGA. Differences between pixels are
+meaningful; the value at a pixel is not a frequency of failure per year.
 
-Until the matrix is calibrated against observed landslide frequency, this stage
-should not be used to produce absolute loss estimates.
+Risk figures carry that level straight through to monetary or casualty
+estimates, so absolute losses cannot be computed until the probability is
+anchored against observed landslide frequency over a known period.
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ def compute_risk(*args, **kwargs):
     """Placeholder. See the module docstring for the required inputs."""
     raise NotImplementedError(
         "The risk stage is not implemented: it needs an exposure layer (roads, "
-        "rail, population), a vulnerability model, and a calibrated rainfall "
-        "hazard matrix. See giri_landslide/model/risk.py for the full scope."
+        "rail, population), a vulnerability model, a runout model, and a "
+        "failure probability anchored to observed landslide frequency. See "
+        "giri_landslide/model/risk.py for the full scope."
     )

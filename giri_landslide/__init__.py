@@ -1,20 +1,25 @@
-"""GIRI-style global/regional landslide hazard model (local, modular, tile-based).
+"""Physically based landslide hazard model for the Hindu Kush Himalaya.
 
-An open-source, end-to-end implementation of the landslide susceptibility and
-scenario-based hazard methodology described in:
+An open-source, end-to-end implementation of infinite-slope stability under
+steady-state wetness, fitted to mapped landslide inventories:
 
-    Palau, R. M., Nadim, F., Paulsen, E., Storrosten, E. (2023).
-    "A new model for global landslide susceptibility assessment and
-    scenario-based hazard assessment." Norwegian Geotechnical Institute /
-    Global Infrastructure Resilience Index (GIRI), CDRI.
-    https://giri.unepgrid.ch
+    Pack, R. T., Tarboton, D. G., Goodwin, C. N. (1998).
+    "The SINMAP approach to terrain stability mapping."
+    8th Congress of the International Association of Engineering Geology.
+
+    Tarboton, D. G. (1997). "A new method for the determination of flow
+    directions and upslope areas in grid digital elevation models."
+    Water Resources Research 33(2), 309-319.
+
+    Barnes, R., Lehman, C., Mulla, D. (2014). "Priority-flood: an optimal
+    depression-filling and watershed-labeling algorithm for digital elevation
+    models." Computers & Geosciences 62, 117-127.
 
 The package is organised into small, independently runnable modules so the
-whole pipeline (download -> factors -> susceptibility -> triggers -> hazard)
-can be executed piece by piece on a modest local computer, processing the
-area of interest in memory-bounded tiles/blocks.
+whole workflow (download -> fit -> stability -> hazard) can be executed piece
+by piece on a modest local computer.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .config import Config, DEFAULT_CONFIG  # noqa: F401

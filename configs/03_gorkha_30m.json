@@ -1,0 +1,26 @@
+{
+  "_comment": "STEP 3+4 at full DEM resolution. Same area as 02 but on a 30 m grid, where the 30 m DEM is actually resolved rather than downsampled. Flow routing is not tiled, so this holds about 6 million cells in memory and takes a while; specific catchment area is resolution-sensitive, so the parameters must be refitted at this grid rather than carried over from 02.",
+  "name": "gorkha30",
+  "bbox": [
+    84.5,
+    27.6,
+    85.3,
+    28.2
+  ],
+  "region_bbox": [
+    60.0,
+    16.0,
+    105.0,
+    39.0
+  ],
+  "resolution_deg": 0.00027778,
+  "trigger": "rainfall",
+  "inventory_path": "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp",
+  "dem_source": "copernicus30",
+  "worldclim_res": "30s",
+  "output": "both",
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs"
+}

@@ -1,16 +1,15 @@
 """Command-line interface, organised as a numbered workflow.
 
-    step1  check          which datasets do I have, and can I get the rest?
-    step2  download       fetch everything (skips anything already cached)
-    step3  calibrate      fit the factor weights to real landslides
-    step4  susceptibility WHERE is the ground fragile? (heuristic index)
-    step4b physical       the same question, from slope stability physics
-    step5  hazard         IF a storm/quake hits, how likely is a landslide?
-    step6  validate       does the map hold up on landslides it never saw?
-    step7  compare        how does that change between two scenarios?
+    step1  check      which datasets do I have, and can I get the rest?
+    step2  download   fetch everything (skips anything already cached)
+    step3  fit        fit the soil parameters to real landslides
+    step4  stability  WHERE is the ground unstable?
+    step5  hazard     IF a storm or quake hits, how likely is failure?
+    step6  validate   does the map hold up on landslides it never saw?
+    step7  compare    how does that change between two scenarios?
 
-    run-all               step2 -> step4 -> step5 in one go
-    info                  dataset sources and licences
+    run-all           step2 -> step3 -> step4 -> step5 in one go
+    info              dataset sources and licences
 
 Every step writes files and prints what it produced, so you can stop after any
 step, look at the output, and carry on. Nothing is ever re-downloaded.
@@ -36,8 +35,9 @@ def _build_config(args: argparse.Namespace) -> C.Config:
     cfg = C.Config.from_json(args.config) if getattr(args, "config", None) \
         else C.Config()
     simple = ["name", "trigger", "data_dir", "work_dir", "out_dir",
-              "dem_source", "weight_mode", "classification", "output", "feature_mode", "climate",
-              "climate_period", "climate_model", "worldclim_res"]
+              "dem_source", "output", "climate", "climate_period",
+              "climate_model", "worldclim_res", "calibration_regions",
+              "fitted_params"]
     for attr in simple:
         val = getattr(args, attr, None)
         if val:
@@ -56,19 +56,22 @@ def _build_config(args: argparse.Namespace) -> C.Config:
         cfg.inventory_path = args.inventory
     if getattr(args, "glim_grid", False):
         cfg.glim_full = False
-    if cfg.trigger == "earthquake" and not getattr(args, "no_eq_preset", False):
-        cfg.weights.soil_moisture = min(cfg.weights.soil_moisture, 0.5)
+    if getattr(args, "uniform_recharge", False):
+        cfg.spatial_recharge = False
+    if getattr(args, "samples", None):
+        cfg.n_samples = args.samples
     return cfg
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("area and grid")
-    g.add_argument("--config", help="JSON config file (see examples/)")
+    g.add_argument("--config", help="JSON config file (see configs/)")
     g.add_argument("--name", help="run label; prefixes every output file")
     g.add_argument("--bbox", nargs=4, type=float, metavar=("W", "S", "E", "N"),
                    help="area of interest in degrees")
     g.add_argument("--res", type=float,
-                   help="grid resolution in degrees (0.0008333 = 90 m)")
+                   help="grid resolution in degrees "
+                        "(0.00027778 = 30 m, 0.00083333 = 90 m)")
     g.add_argument("--block", type=int, help="tile size in pixels")
 
     g = p.add_argument_group("model options")
@@ -76,17 +79,21 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     g.add_argument("--pga", type=float, help="earthquake scenario, g")
     g.add_argument("--return-period", dest="return_period", type=float,
                    help="rainfall scenario, years")
-    g.add_argument("--weight-mode", dest="weight_mode",
-                   choices=["multiplicative", "exponent"])
-    g.add_argument("--classification", choices=["fixed", "quantile"])
     g.add_argument("--output", choices=["probability", "classes", "both"],
-                   help="continuous 0-1 index (default), 5 classes, or both")
-    g.add_argument("--feature-mode", dest="feature_mode",
-                   choices=["continuous", "ordinal"],
-                   help="predictors: full-precision slope/precipitation "
-                        "(default) or the manuscript's integer factor scores")
-    g.add_argument("--no-eq-preset", dest="no_eq_preset", action="store_true",
-                   help="keep the full soil-moisture weight for earthquakes")
+                   help="continuous failure probability, SINMAP classes, "
+                        "or both (default)")
+    g.add_argument("--calibration-regions", dest="calibration_regions",
+                   choices=["lithology", "landcover"],
+                   help="fit separate soil parameters per rock type or per "
+                        "land-cover class instead of one set for the area")
+    g.add_argument("--uniform-recharge", dest="uniform_recharge",
+                   action="store_true",
+                   help="hold recharge uniform, isolating the effect of "
+                        "terrain alone")
+    g.add_argument("--samples", type=int,
+                   help="Monte Carlo draws per pixel (default 200)")
+    g.add_argument("--fitted-params", dest="fitted_params",
+                   help="JSON from step3 (default: from --name)")
 
     g = p.add_argument_group("data options")
     g.add_argument("--dem-source", dest="dem_source",
@@ -100,7 +107,8 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     g.add_argument("--climate-period", dest="climate_period",
                    choices=["2021-2040", "2041-2060", "2061-2080", "2081-2100"])
     g.add_argument("--climate-model", dest="climate_model")
-    g.add_argument("--inventory", help="landslide inventory (.shp/.kml/.csv/.geojson)")
+    g.add_argument("--inventory",
+                   help="landslide inventory (.shp/.kml/.csv/.geojson)")
     g.add_argument("--data-dir", dest="data_dir")
     g.add_argument("--work-dir", dest="work_dir")
     g.add_argument("--out-dir", dest="out_dir")
@@ -110,6 +118,16 @@ def _mode(p: argparse.ArgumentParser) -> None:
     p.add_argument("--mode", choices=["demo", "download", "local"],
                    default="download",
                    help="demo = synthetic offline data; download = real data")
+
+
+def _warn_if_large(cfg: C.Config) -> None:
+    """Flow routing is not tiled, so the AOI bounds memory directly."""
+    n = cfg.cell_count()
+    if n > 40_000_000:
+        print(f"  note: {n / 1e6:.0f} million cells. Flow accumulation holds "
+              "the whole area in memory and runs a single pass over it, so "
+              "expect this to be slow and memory-hungry. Consider a smaller "
+              "--bbox or a coarser --res.\n")
 
 
 # ---------------------------------------------------------------------------
@@ -136,26 +154,36 @@ def _step_download(args) -> int:
     from .input import inventory
 
     got = sources.download_dem(bbox, cfg.data_dir, cfg.dem_source)
-    print(f"  DEM tiles            {len(got)}")
-    lc = sources.download_worldcover(bbox, cfg.data_dir)
-    print(f"  Land cover tiles     {len(lc)}")
+    print(f"  DEM tiles            {len(got)} ({cfg.dem_source})")
 
-    if cfg.climate == "current":
-        pr = sources.download_worldclim_precip(cfg.data_dir,
-                                               res=cfg.worldclim_res)
-        print(f"  Precipitation        {len(pr)} months ({cfg.worldclim_res})")
-    else:
-        pr = sources.download_worldclim_future(
-            cfg.data_dir, ssp=cfg.climate, period=cfg.climate_period,
-            model=cfg.climate_model, res=cfg.climate_res)
-        print(f"  CMIP6 precipitation  {len(pr) if pr else 0} months "
-              f"({cfg.climate} {cfg.climate_period})")
+    if cfg.spatial_recharge:
+        if cfg.climate == "current":
+            pr = sources.download_worldclim_precip(cfg.data_dir,
+                                                   res=cfg.worldclim_res)
+            print(f"  Precipitation        {len(pr)} months "
+                  f"({cfg.worldclim_res})")
+        else:
+            pr = sources.download_worldclim_future(
+                cfg.data_dir, ssp=cfg.climate, period=cfg.climate_period,
+                model=cfg.climate_model, res=cfg.climate_res)
+            print(f"  CMIP6 precipitation  {len(pr) if pr else 0} months "
+                  f"({cfg.climate} {cfg.climate_period})")
 
-    if cfg.glim_full:
-        gdb = sources.download_glim_vector(cfg.data_dir)
-        print(f"  GLiM lithology       {'full geodatabase' if gdb else 'FAILED'}")
+    # Calibration-region sources are optional; fetch only what is asked for.
+    if cfg.calibration_regions == "landcover":
+        lc = sources.download_worldcover(bbox, cfg.data_dir)
+        print(f"  Land cover tiles     {len(lc)}")
+    elif cfg.calibration_regions == "lithology":
+        if cfg.glim_full:
+            gdb = sources.download_glim_vector(cfg.data_dir)
+            print(f"  GLiM lithology       "
+                  f"{'full geodatabase' if gdb else 'FAILED'}")
+        else:
+            print(f"  GLiM lithology       "
+                  f"{sources.download_glim_grid(cfg.data_dir)}")
     else:
-        print(f"  GLiM lithology       {sources.download_glim_grid(cfg.data_dir)}")
+        print("  (no calibration regions requested: land cover and GLiM "
+              "skipped)")
 
     if not args.no_inventories:
         print("\n  Landslide inventories (for step 3):")
@@ -168,101 +196,81 @@ def _step_download(args) -> int:
         inv = inventory.download_nasa_glc(cfg.data_dir, bbox=cfg.region_bbox)
         print(f"    {'OK   ' if inv else 'FAIL '} coolr          NASA GLC/COOLR")
 
-    print("\nNext:  python -m giri_landslide.cli step3-calibrate  "
-          "(or step4-susceptibility to use default weights)")
+    print("\nNext:  python -m giri_landslide.cli step3-fit --inventory <path>")
     return 0
 
 
-def _step_calibrate(args) -> int:
+def _step_fit(args) -> int:
     cfg = _build_config(args)
-    print("STEP 3  Calibrate factor weights against real landslides\n")
-    report = pipeline.run_calibration(
-        cfg, mode=args.mode,
-        fit_slope_breaks=not args.no_slope_breaks,
-        fit_lithology=getattr(args, "fit_lithology", False))
-    res = report["result"]
+    print("STEP 3  Fit soil parameters to a landslide inventory\n")
+    _warn_if_large(cfg)
+    report = pipeline.run_fit(cfg, mode=args.mode,
+                              cross_validate=not args.no_cv,
+                              n_background=args.background)
 
-    print("\n  Fitted weights (how much each factor matters):")
-    for k, v in res["weights"].items():
-        bar = "#" * int(round(v * 8))
-        print(f"    {k:14s} {v:6.3f}  {bar}")
-    print(f"\n  Cross-validated AUC : {res['auc']:.3f} +/- {res['auc_std']:.3f}")
-    print("    0.5 = no skill, 0.7 = fair, 0.8 = good, 0.9 = excellent")
-    print(f"  Landslides used     : {res['n_presence']}")
-    for w in res.get("warnings", []):
-        print(f"    ! {w}")
-    if res.get("slope_breaks"):
-        print("\n  Fitted slope classes (degrees -> factor 0-5):")
-        lo = 0.0
-        for hi, sc in res["slope_breaks"]:
-            hs = "inf" if hi == float("inf") else f"{hi:.1f}"
-            print(f"    {lo:5.1f} - {hs:>5s}  {'*' * sc}")
-            lo = hi
-    if res.get("lithology_diagnostics"):
-        ld = res["lithology_diagnostics"]
-        print("\n  Fitted rock-type factors (expert -> fitted, by landslide"
-              " over-representation):")
-        for code, fr in sorted(ld["frequency_ratio"].items(),
-                               key=lambda kv: -kv[1]):
-            exp, fit = ld["expert"][code], ld["fitted"][code]
-            flag = "  <-- changed" if exp != fit else ""
-            print(f"    {code}  ratio={fr:5.2f}   {exp} -> {fit}{flag}")
-    print(f"\n  Calibrated config -> {report['calibrated_config']}")
-    print(f"  Full report       -> {report['report']}")
-    print("\nNext:  python -m giri_landslide.cli step4-susceptibility "
-          f"--config {report['calibrated_config']}")
+    p = report["parameters"]
+    print("\n  Fitted parameter ranges")
+    print(f"    cohesion C        {p['cohesion'][0]:.3f} .. {p['cohesion'][1]:.3f}"
+          "   (dimensionless, root + soil, over depth x unit weight)")
+    print(f"    friction phi      {p['friction_deg'][0]:.1f} .. "
+          f"{p['friction_deg'][1]:.1f} deg")
+    print(f"    R/T               {p['rt'][0]:.2e} .. {p['rt'][1]:.2e} 1/m")
+    if report.get("recharge_reference_mm"):
+        print(f"    recharge ref      "
+              f"{report['recharge_reference_mm']:.0f} mm wettest-month precip")
+
+    print(f"\n  In-sample AUC       {report['in_sample_auc']:.3f}   "
+          f"({report['n_presence']} landslides, "
+          f"{report['n_background']} background)")
+    for scheme in ("random", "spatial"):
+        cv = report.get(f"cv_{scheme}")
+        if cv:
+            print(f"  {scheme:<8} CV AUC     {cv['auc_mean']:.3f} +/- "
+                  f"{cv['auc_std']:.3f}   folds "
+                  f"{[f'{a:.3f}' for a in cv['auc_folds']]}")
+
+    if report.get("region_detail"):
+        print(f"\n  Per-region fits ({report['calibration_regions']})")
+        for code, d in sorted(report["region_detail"].items(),
+                              key=lambda kv: -kv[1]["n_presence"]):
+            rp = d["parameters"]
+            print(f"    region {code:>3}  n={d['n_presence']:>6}  "
+                  f"AUC {d['auc']:.3f}  phi {rp['friction_deg'][0]:.0f}-"
+                  f"{rp['friction_deg'][1]:.0f}  C<={rp['cohesion'][1]:.2f}")
+
+    for w in report.get("warnings", []):
+        print(f"\n  ! {w}")
+
+    print(f"\n  Fitted parameters -> {report['path']}")
+    print("\nNext:  python -m giri_landslide.cli step4-stability "
+          f"--name {cfg.name}")
     return 0
 
 
-def _step_susceptibility(args) -> int:
+def _step_stability(args) -> int:
     cfg = _build_config(args)
-    print("STEP 4  Susceptibility - where is the ground fragile?\n")
+    print("STEP 4  Slope stability (SINMAP infinite slope + D-inf hydrology)\n")
+    _warn_if_large(cfg)
     out = pipeline.run_susceptibility(cfg, mode=args.mode)
     print("\n  Outputs:")
     for k, v in out.items():
         print(f"    {k:22s} {v}")
-    print("\nNext:  python -m giri_landslide.cli step5-hazard"
-          + (f" --config {args.config}" if getattr(args, "config", None) else ""))
+    prob = out.get("probability")
+    if prob:
+        print("\n  Validate it against landslides the fit never saw:")
+        print(f"    python -m giri_landslide.cli step6-validate "
+              f"--susceptibility {prob} --inventory <path>")
     return 0
 
 
 def _step_hazard(args) -> int:
     cfg = _build_config(args)
-    susc = args.susceptibility or os.path.join(
-        cfg.out_dir, f"{cfg.name}_susceptibility.tif")
-    if not os.path.exists(susc):
-        print(f"error: susceptibility class map not found: {susc}\n"
-              "Run step4-susceptibility first, or pass --susceptibility PATH.\n"
-              "(The hazard matrix is indexed by class, so step 5 needs the "
-              "class map rather than the continuous index.)")
-        return 1
-    print("STEP 5  Hazard - how likely is a landslide in this scenario?\n")
-    print(f"  using susceptibility: {susc}")
-    out = pipeline.run_hazard(cfg, susc, mode=args.mode)
+    print("STEP 5  Hazard under a triggering scenario\n")
+    _warn_if_large(cfg)
+    out = pipeline.run_hazard(cfg, mode=args.mode)
     print("\n  Outputs:")
     for k, v in out.items():
         print(f"    {k:22s} {v}")
-    try:
-        png = pipeline.quicklook(susc, out["hazard_probability"],
-                                 os.path.join(cfg.out_dir,
-                                              f"{cfg.name}_quicklook.png"))
-        print(f"    {'quicklook':22s} {png}")
-    except Exception as exc:                              # noqa: BLE001
-        print(f"    quicklook skipped ({exc})")
-    return 0
-
-
-def _step_physical(args) -> int:
-    cfg = _build_config(args)
-    print("STEP 4b  Physically based stability (SINMAP)\n")
-    out = pipeline.run_physical(cfg, mode=args.mode,
-                                fit=not args.no_fit)
-    print("\n  Outputs:")
-    for k, v in out.items():
-        print(f"    {k:22s} {v}")
-    print("\n  Validate it the same way as the heuristic map:")
-    print(f"    python -m giri_landslide.cli step6-validate "
-          f"--susceptibility {out['failure_probability']} --inventory <path>")
     return 0
 
 
@@ -276,18 +284,18 @@ def _step_validate(args) -> int:
 
     susc = args.susceptibility
     if not susc:
-        # Prefer the continuous index; fall back to the class map.
-        for suffix in ("_susceptibility_prob.tif", "_susceptibility.tif"):
+        for suffix in ("_susceptibility_prob.tif", "_susceptibility_class.tif"):
             cand = os.path.join(args.out_dir, f"{args.name}{suffix}")
             if os.path.exists(cand):
                 susc = cand
                 break
     if not susc or not os.path.exists(susc):
-        print(f"error: no susceptibility map found for '{args.name}' in "
+        print(f"error: no stability map found for '{args.name}' in "
               f"{args.out_dir}")
         return 1
     print("STEP 6  Validate against a held-out inventory\n")
-    kind = "continuous index" if validate.is_continuous(susc) else "5 classes"
+    kind = ("continuous failure probability" if validate.is_continuous(susc)
+            else "stability classes")
     print(f"  map       : {susc}  ({kind})")
     print("  inventories:")
 
@@ -315,7 +323,7 @@ def _step_validate(args) -> int:
     print(validate.format_report(result))
 
     os.makedirs(args.out_dir, exist_ok=True)
-    label = args.name or os.path.basename(susc).replace("_susceptibility.tif", "")
+    label = args.name or os.path.splitext(os.path.basename(susc))[0]
     path = os.path.join(args.out_dir, f"{label}_validation.json")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(result.to_dict(), fh, indent=2)
@@ -325,8 +333,8 @@ def _step_validate(args) -> int:
 
 def _step_compare(args) -> int:
     os.makedirs(args.out_dir, exist_ok=True)
-    print("STEP 6  Compare two scenarios\n")
-    out = pipeline.compare_susceptibility(
+    print("STEP 7  Compare two scenarios\n")
+    out = pipeline.compare_probability(
         args.baseline, args.scenario,
         os.path.join(args.out_dir, args.name or "comparison"),
         block=args.block or 1024)
@@ -342,6 +350,7 @@ def _run_all(args) -> int:
         return rc
     print("\n" + "=" * 68 + "\n")
     cfg = _build_config(args)
+    _warn_if_large(cfg)
     out = pipeline.run(cfg, mode=args.mode)
     print("\nOutputs:")
     for k, v in out.items():
@@ -355,8 +364,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="giri_landslide",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Hindu Kush Himalaya landslide susceptibility and hazard "
-                    "model (GIRI/NGI method).",
+        description="Hindu Kush Himalaya landslide hazard model: SINMAP "
+                    "infinite-slope stability over D-infinity flow routing.",
         epilog=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -372,37 +381,29 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="skip the landslide inventories")
     _add_common(p)
 
-    p = sub.add_parser("step3-calibrate", aliases=["calibrate"],
-                       help="fit factor weights to a landslide inventory")
-    p.add_argument("--no-slope-breaks", action="store_true",
-                   help="do not refit the slope table")
-    p.add_argument("--fit-lithology", action="store_true",
-                   help="also fit the rock-type factor from the inventory "
-                        "(needs the full GLiM geodatabase)")
+    p = sub.add_parser("step3-fit", aliases=["fit"],
+                       help="fit soil parameters to a landslide inventory")
+    p.add_argument("--no-cv", action="store_true",
+                   help="skip cross-validation (faster, but then only the "
+                        "optimistic in-sample score is available)")
+    p.add_argument("--background", type=int,
+                   help="background sample size (default: twice the "
+                        "inventory, minimum 2000)")
     _mode(p); _add_common(p)
 
-    p = sub.add_parser("step4-susceptibility", aliases=["susceptibility"],
-                       help="build the susceptibility map")
+    p = sub.add_parser("step4-stability", aliases=["stability",
+                                                   "susceptibility"],
+                       help="failure probability at the fitted conditions")
     _mode(p); _add_common(p)
 
     p = sub.add_parser("step5-hazard", aliases=["hazard"],
-                       help="apply a trigger scenario to get probabilities")
-    p.add_argument("--susceptibility",
-                   help="susceptibility GeoTIFF (default: from --name)")
-    _mode(p); _add_common(p)
-
-    p = sub.add_parser("step4b-physical", aliases=["physical"],
-                       help="physically based stability (SINMAP infinite "
-                            "slope + D-infinity hydrology)")
-    p.add_argument("--no-fit", action="store_true",
-                   help="use default soil parameters instead of fitting them")
+                       help="failure probability under a trigger scenario")
     _mode(p); _add_common(p)
 
     p = sub.add_parser("step6-validate", aliases=["validate"],
-                       help="test a susceptibility map against a held-out "
-                            "inventory (ideally another region)")
+                       help="test a map against a held-out inventory")
     p.add_argument("--susceptibility",
-                   help="susceptibility GeoTIFF (default: from --name)")
+                   help="stability GeoTIFF (default: from --name)")
     p.add_argument("--inventory", required=True, nargs="+",
                    help="one or more INDEPENDENT inventories; multiple paths "
                         "are pooled into a single validation set")
@@ -411,7 +412,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--block", type=int)
 
     p = sub.add_parser("step7-compare", aliases=["compare"],
-                       help="difference two susceptibility maps")
+                       help="difference two failure-probability maps")
     p.add_argument("--baseline", required=True)
     p.add_argument("--scenario", required=True)
     p.add_argument("--name")
@@ -419,7 +420,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--block", type=int)
 
     p = sub.add_parser("run-all", aliases=["run"],
-                       help="download + susceptibility + hazard in one go")
+                       help="download + fit + stability + hazard in one go")
     p.add_argument("--no-inventories", action="store_true")
     _mode(p); _add_common(p)
 
@@ -439,11 +440,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     handlers = {
         "step1-check": _step_check, "check": _step_check,
         "step2-download": _step_download, "download": _step_download,
-        "step3-calibrate": _step_calibrate, "calibrate": _step_calibrate,
-        "step4-susceptibility": _step_susceptibility,
-        "susceptibility": _step_susceptibility,
+        "step3-fit": _step_fit, "fit": _step_fit,
+        "step4-stability": _step_stability, "stability": _step_stability,
+        "susceptibility": _step_stability,
         "step5-hazard": _step_hazard, "hazard": _step_hazard,
-        "step4b-physical": _step_physical, "physical": _step_physical,
         "step6-validate": _step_validate, "validate": _step_validate,
         "step7-compare": _step_compare, "compare": _step_compare,
         "run-all": _run_all, "run": _run_all,

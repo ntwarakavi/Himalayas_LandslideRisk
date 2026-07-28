@@ -1,1 +1,1 @@
-"""The model itself: factors, susceptibility, calibration, validation, triggers, hazard."""
+"""The model: terrain hydrology, slope stability, triggering, validation."""

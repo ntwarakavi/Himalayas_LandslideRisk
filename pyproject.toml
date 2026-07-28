@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "giri-landslide"
-version = "0.1.0"
-description = "Open-source, modular, tile-based GIRI-style landslide hazard model"
+version = "0.2.0"
+description = "Physically based landslide hazard model for the Hindu Kush Himalaya (SINMAP over D-infinity flow routing)"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}

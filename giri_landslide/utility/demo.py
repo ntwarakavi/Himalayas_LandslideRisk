@@ -4,6 +4,11 @@
 (DEM, land cover, lithology, monthly precipitation, PGA) over the configured
 AOI. This lets anyone execute the complete end-to-end model - and its tests -
 on a laptop offline, then swap in the real downloaders for a production run.
+
+The DEM matters most here: the stability model routes flow across it, so the
+synthetic terrain has to have real valleys and divides rather than noise. The
+multi-octave surface below produces both, which is why the demo exercises the
+hydrology rather than sidestepping it.
 """
 
 from __future__ import annotations
@@ -73,14 +78,14 @@ def make_demo_inputs(grid: Grid, data_dir: str) -> Dict[str, object]:
     lc_path = _write(os.path.join(data_dir, "demo", "landcover.tif"), grid, lc,
                      "uint8", 0)
 
-    # --- GLiM Sl factor (0..3) burned directly, banded by a noise field -----
+    # --- GLiM lithology codes, banded by a noise field ----------------------
     litho_noise = _fractal_terrain((h, w), seed=21)
-    sl = np.full((h, w), 2, dtype="uint8")           # moderate
-    sl[litho_noise > 0.6] = 3                         # weak sediments
-    sl[litho_noise < 0.3] = 1                         # hard plutonic rock
-    sl[lc == 80] = 0                                  # water excluded
-    litho_path = _write(os.path.join(data_dir, "demo", "glim_sl.tif"), grid, sl,
-                        "uint8", 255)
+    litho = np.full((h, w), 9, dtype="uint8")        # metamorphics
+    litho[litho_noise > 0.6] = 2                      # siliciclastic sediments
+    litho[litho_noise < 0.3] = 11                     # acid plutonic rock
+    litho[lc == 80] = 15                              # water bodies
+    litho_path = _write(os.path.join(data_dir, "demo", "glim_codes.tif"), grid,
+                        litho, "uint8", 255)
 
     # --- 12 monthly precipitation rasters (mm), monsoonal, orographic -------
     monthly_paths: List[str] = []
@@ -93,11 +98,6 @@ def make_demo_inputs(grid: Grid, data_dir: str) -> Dict[str, object]:
             _write(os.path.join(data_dir, "demo", f"prec_{m:02d}.tif"), grid,
                    pr, "float32", -9999.0))
 
-    # --- ERA5-like volumetric water content (m3/m3) -------------------------
-    vwc = 0.08 + 0.32 * terrain
-    vwc_path = _write(os.path.join(data_dir, "demo", "vwc.tif"), grid, vwc,
-                      "float32", -9999.0)
-
     # --- PGA scenario raster (g): a fault-parallel gradient -----------------
     pga = 0.05 + 0.5 * np.linspace(0, 1, w)[None, :] * (0.5 + 0.5 * terrain)
     pga_path = _write(os.path.join(data_dir, "demo", "pga.tif"), grid, pga,
@@ -107,8 +107,7 @@ def make_demo_inputs(grid: Grid, data_dir: str) -> Dict[str, object]:
         "dem": dem_path,
         "landcover": lc_path,
         "landcover_source": "worldcover",
-        "glim_sl_raster": litho_path,
+        "glim_codes_raster": litho_path,
         "precip_monthly": monthly_paths,
-        "vwc": vwc_path,
         "pga": pga_path,
     }

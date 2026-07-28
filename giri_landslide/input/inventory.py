@@ -22,8 +22,8 @@ Inventory sources for the HKH, in rough order of calibration quality:
     records are geocoded to an administrative region rather than to the
     landslide: all 176 Indian records share the location description
     "Uttarakhand and Himachal Pradesh, India", an area of ~100,000 km2. Use it
-    to see where landslides get reported; do NOT use it to calibrate or to
-    validate a hillslope-scale map. See docs/RUNNING_LOCALLY.md.
+    to see where landslides get reported; do NOT use it to fit parameters
+    or to validate a hillslope-scale map. See docs/RUNNING_LOCALLY.md.
 
 Any of these can be passed via ``inventory_path`` as CSV, GeoJSON or shapefile.
 """

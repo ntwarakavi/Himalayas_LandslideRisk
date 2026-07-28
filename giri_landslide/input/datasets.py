@@ -9,12 +9,11 @@ One place that answers three questions for each dataset:
 
 Datasets are grouped by role in the model:
 
-  TERRAIN    slope, lithology, land cover  -> the "how fragile is the ground"
-                                              factors
-  CLIMATE    present and future rainfall   -> the wetness factor and the
-                                              rainfall trigger
-  INVENTORY  historical landslides         -> used to calibrate the weights
-  TRIGGER    earthquake shaking            -> the earthquake trigger
+  TERRAIN    elevation, and optionally lithology and land cover -> slope and
+                                              catchment area; calibration regions
+  CLIMATE    present and future rainfall   -> the recharge field
+  INVENTORY  historical landslides         -> fits the soil parameters
+  TRIGGER    earthquake shaking            -> the seismic coefficient
 """
 
 from __future__ import annotations

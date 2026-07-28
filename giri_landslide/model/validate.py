@@ -1,26 +1,30 @@
-"""Independent validation of a susceptibility map against a held-out inventory.
+"""Independent validation of a hazard map against a held-out inventory.
 
-Calibration tells you how well a model fits the landslides it was trained on.
+Fitting tells you how well a model reproduces the landslides it was trained on.
 That is not evidence the map works anywhere else. This module answers the
 question that matters for deployment:
 
-    Given landslides the model has never seen - ideally in a different region -
-    do they actually fall in the classes the map calls dangerous?
+    Given landslides the model has never seen - ideally on ground the fit never
+    touched - do they actually fall where the map says they should?
+
+The input may be either the continuous failure probability, which is binned
+into map-area quintiles for reporting, or an integer stability-class raster.
 
 Two complementary measures are reported.
 
-**Frequency ratio per class** is the primary one. For each susceptibility class,
+**Frequency ratio per class** is the primary one. For each class,
 
     FR = (share of landslides in the class) / (share of map area in the class)
 
 FR > 1 means landslides are over-represented there. A usable map has FR rising
-monotonically from class 1 to class 5: the higher the class, the denser the
-landslides. A map can have a respectable AUC and still fail this, which is why
-it is checked explicitly.
+monotonically with class: the higher the class, the denser the landslides. A
+map can have a respectable AUC and still fail this, which is why it is checked
+explicitly.
 
-**AUC** is the probability that a random landslide sits in a higher class than
-a random background point. It compresses the whole map into one number and is
-useful for comparing maps, but it hides non-monotonicity.
+**AUC** is the probability that a random landslide scores higher than a random
+background point. It compresses the whole map into one number and is useful for
+comparing maps, but it hides non-monotonicity. For the continuous index it is
+computed on the raw values, so binning costs it no resolution.
 """
 
 from __future__ import annotations
@@ -30,13 +34,15 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from .susceptibility import SUSC_NODATA
+#: Nodata marker for the integer stability-class rasters.
+CLASS_NODATA = 255
 
 
 @dataclass
 class ValidationResult:
     n_landslides: int
     n_classified: int
+    n_classes: int                          # 5 quantile bins, or the class count
     class_area_pct: Dict[str, float]        # share of map area, per class
     class_landslide_pct: Dict[str, float]   # share of landslides, per class
     frequency_ratio: Dict[str, float]       # landslide share / area share
@@ -111,17 +117,34 @@ def _binned_areas(susc_path: str, edges: List[float],
     return counts
 
 
-def _class_areas(susc_path: str, block: int = 1024) -> Dict[int, int]:
-    """Pixel count per susceptibility class over the whole map."""
+def _class_count(susc_path: str, block: int = 1024) -> int:
+    """Highest class present in an integer class raster."""
     import rasterio
 
     from ..utility.grid import iter_blocks
 
-    counts = {k: 0 for k in range(1, 6)}
+    hi = 0
     with rasterio.open(susc_path) as src:
         for win in iter_blocks(src.width, src.height, block):
             a = src.read(1, window=win)
-            for k in range(1, 6):
+            a = a[a != CLASS_NODATA]
+            if a.size:
+                hi = max(hi, int(a.max()))
+    return max(hi, 2)
+
+
+def _class_areas(susc_path: str, n_classes: int,
+                 block: int = 1024) -> Dict[int, int]:
+    """Pixel count per class over the whole map."""
+    import rasterio
+
+    from ..utility.grid import iter_blocks
+
+    counts = {k: 0 for k in range(1, n_classes + 1)}
+    with rasterio.open(susc_path) as src:
+        for win in iter_blocks(src.width, src.height, block):
+            a = src.read(1, window=win)
+            for k in counts:
                 counts[k] += int(np.count_nonzero(a == k))
     return counts
 
@@ -142,9 +165,13 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
         edges = quantile_bin_edges(susc_path, block=block)
         areas = _binned_areas(susc_path, edges, block=block)
         ls = np.digitize(raw, edges) + 1.0    # bin index, 1 = lowest
+        n_cls = 5
     else:
-        raw = raw[np.isfinite(raw) & (raw != SUSC_NODATA)]
-        areas = _class_areas(susc_path, block=block)
+        # Class rasters carry their own count: the heuristic index used five,
+        # SINMAP's stability classes run to six.
+        raw = raw[np.isfinite(raw) & (raw != CLASS_NODATA)]
+        n_cls = _class_count(susc_path, block=block)
+        areas = _class_areas(susc_path, n_cls, block=block)
         ls = raw
     if len(ls) == 0:
         raise ValueError("inventory points do not overlap valid map pixels")
@@ -152,7 +179,7 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
     total_ls = len(ls)
 
     area_pct, ls_pct, fr = {}, {}, {}
-    for k in range(1, 6):
+    for k in range(1, n_cls + 1):
         a = 100.0 * areas.get(k, 0) / total_area
         n = 100.0 * float((ls == k).sum()) / total_ls
         area_pct[str(k)] = round(a, 3)
@@ -160,7 +187,7 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
         fr[str(k)] = round(n / a, 3) if a > 0 else float("nan")
 
     # Monotonicity over the classes that actually occupy area.
-    present = [k for k in range(1, 6)
+    present = [k for k in range(1, n_cls + 1)
                if areas.get(k, 0) > 0 and np.isfinite(fr[str(k)])]
     seq = [fr[str(k)] for k in present]
     monotonic = all(b >= a - 1e-9 for a, b in zip(seq, seq[1:]))
@@ -169,20 +196,21 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
     # the reporting table, so no resolution is given up here.
     if background_points is not None and len(background_points):
         bg = sample_factors_at_points(background_points, [susc_path])[:, 0]
-        nod = -9999.0 if continuous else SUSC_NODATA
+        nod = -9999.0 if continuous else CLASS_NODATA
         bg = bg[np.isfinite(bg) & (bg != nod)]
         if continuous:
             auc = _auc_from_classes(raw, bg)
     else:                       # fall back to the map's own class distribution
-        bg = np.concatenate([np.full(areas.get(k, 0), k) for k in range(1, 6)
-                             if areas.get(k, 0)])
+        bg = np.concatenate([np.full(areas.get(k, 0), k)
+                             for k in range(1, n_cls + 1) if areas.get(k, 0)])
         if len(bg) > 200000:
             bg = bg[:: max(1, len(bg) // 200000)]
     if not continuous or background_points is None or not len(background_points):
         auc = _auc_from_classes(ls, bg)
 
-    top2_ls = ls_pct["4"] + ls_pct["5"]
-    top2_area = area_pct["4"] + area_pct["5"]
+    top = [str(k) for k in (n_cls - 1, n_cls)]
+    top2_ls = sum(ls_pct[k] for k in top)
+    top2_area = sum(area_pct[k] for k in top)
     efficiency = round(top2_ls / top2_area, 2) if top2_area > 0 else float("nan")
 
     warnings: List[str] = []
@@ -194,7 +222,8 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
                         "class: the ordering of the classes is not supported "
                         "by this inventory")
     if top2_area > 50:
-        warnings.append(f"classes 4-5 cover {top2_area:.0f}% of the map - a "
+        warnings.append(f"the top two classes cover {top2_area:.0f}% of the "
+                        "map - a "
                         "map that calls half the region dangerous is not "
                         "selective enough to be useful")
 
@@ -211,6 +240,7 @@ def validate_susceptibility(susc_path: str, inventory_points: np.ndarray,
 
     return ValidationResult(
         n_landslides=int(len(inventory_points)), n_classified=int(total_ls),
+        n_classes=int(n_cls),
         class_area_pct=area_pct, class_landslide_pct=ls_pct,
         frequency_ratio=fr, monotonic=bool(monotonic), auc=float(auc),
         pct_landslides_in_top2=round(top2_ls, 2),
@@ -245,14 +275,15 @@ def format_report(r: ValidationResult) -> str:
     """Human-readable validation table."""
     lines = ["  class   map area   landslides   freq. ratio",
              "  ----------------------------------------------"]
-    for k in range(1, 6):
+    for k in range(1, r.n_classes + 1):
         fr = r.frequency_ratio[str(k)]
         bar = "#" * min(int(round(fr * 4)), 30) if np.isfinite(fr) else ""
         lines.append(f"    {k}     {r.class_area_pct[str(k)]:6.2f}%    "
                      f"{r.class_landslide_pct[str(k)]:6.2f}%      "
                      f"{fr:5.2f}  {bar}")
     lines.append("")
-    lines.append(f"  landslides in classes 4-5 : {r.pct_landslides_in_top2:.1f}%"
+    top = f"{r.n_classes - 1}-{r.n_classes}"
+    lines.append(f"  landslides in classes {top} : {r.pct_landslides_in_top2:.1f}%"
                  f"  (those classes cover {r.pct_area_in_top2:.1f}% of the map)")
     lines.append(f"  efficiency                : {r.efficiency:.2f}x "
                  "(>1 means the map concentrates landslides)")

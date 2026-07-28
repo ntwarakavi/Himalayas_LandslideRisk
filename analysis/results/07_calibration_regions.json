@@ -1,0 +1,70 @@
+{
+  "rows": [
+    {
+      "model": "whole area",
+      "auc_mean": 0.6557,
+      "auc_std": 0.0125,
+      "auc_folds": [
+        0.6554,
+        0.6531,
+        0.6703,
+        0.6342,
+        0.6654
+      ],
+      "n_folds": 5,
+      "area": "farwest",
+      "mean_regions_fitted": 3.8,
+      "n_lithologies_present": 5
+    },
+    {
+      "model": "per lithology",
+      "auc_mean": 0.6553,
+      "auc_std": 0.0137,
+      "auc_folds": [
+        0.6555,
+        0.6503,
+        0.6687,
+        0.6324,
+        0.6696
+      ],
+      "n_folds": 5,
+      "area": "farwest",
+      "mean_regions_fitted": 3.8,
+      "n_lithologies_present": 5
+    },
+    {
+      "model": "whole area",
+      "auc_mean": 0.8183,
+      "auc_std": 0.0215,
+      "auc_folds": [
+        0.8446,
+        0.8133,
+        0.8015,
+        0.7906,
+        0.8414
+      ],
+      "n_folds": 5,
+      "area": "gorkha",
+      "mean_regions_fitted": 1.6,
+      "n_lithologies_present": 6
+    },
+    {
+      "model": "per lithology",
+      "auc_mean": 0.8179,
+      "auc_std": 0.0224,
+      "auc_folds": [
+        0.8446,
+        0.8152,
+        0.8015,
+        0.7867,
+        0.8414
+      ],
+      "n_folds": 5,
+      "area": "gorkha",
+      "mean_regions_fitted": 1.6,
+      "n_lithologies_present": 6
+    }
+  ],
+  "resolution_deg": 0.00027778,
+  "min_presence": 100
+}

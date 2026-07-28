@@ -94,7 +94,7 @@ regions appear as constants and are worth naming:
 
 A six-class SINMAP stability map is also written. **Use the continuous field.**
 The classes are a legend, and their lower three bands are not ordered by failure
-probability — see [Validation](#validation).
+probability — see [the class map](#the-class-map-is-not-fully-ordered).
 
 ### Triggering
 
@@ -267,84 +267,99 @@ return period retains its present-day definition.
 
 ## Results
 
-Measured on the 2015 Gorkha earthquake area (84.5–85.3° E, 27.6–28.2° N) at
-0.0025°, against the 5,193 Roback landslides falling inside it.
+Full write-up, with all seven experiments and their scripts, in
+[docs/RESULTS.md](docs/RESULTS.md). Headlines below. Every figure is
+**spatial-block cross-validated** unless marked otherwise: whole 0.25° blocks
+are withheld, and the parameter search is rerun inside each fold.
 
-**Fitted parameters.** `C ∈ [0, 0.15]`, `φ ∈ [25°, 35°]`, `R/T ∈ [1×10⁻⁵,
-5×10⁻⁴] m⁻¹`, recharge reference 473 mm wettest-month precipitation. The
-friction range is at the low end of the search grid, which is what weathered
-Himalayan metamorphic regolith should give.
+### Resolution is the single biggest factor
 
-**Skill.**
+Gorkha, Roback inventory, identical points at every grid:
 
-| Measure | AUC |
-|---|---|
-| In-sample | 0.740 |
-| Random 5-fold CV | 0.745 ± 0.012 |
-| Spatial-block 5-fold CV | **0.729 ± 0.024** |
-
-The spatial figure is the one to quote. That it sits so close to the random one
-is the substantive result: the relationship holds on ground the fit never saw,
-so the skill is mechanical rather than spatial interpolation.
-
-**Concentration.** Binning the continuous field into map-area quintiles. These
-are **in-sample**: they score the map against the same Roback inventory the
-parameters were fitted to, so they describe how well the fitted map concentrates
-the landslides it was built from, not how it would behave on new ground. The
-held-out figure is the spatial-block AUC above.
-
-| Quintile | Map area | Landslides | Frequency ratio |
+| Grid | Spatial CV AUC | ± | Capture top 20 % |
 |---|---|---|---|
-| 1 (lowest) | 57.1 % | 24.4 % | 0.43 |
-| 2 | 11.0 % | 6.5 % | 0.59 |
-| 3 | 10.5 % | 8.9 % | 0.84 |
-| 4 | 10.8 % | 14.6 % | 1.35 |
-| 5 (highest) | 10.7 % | 45.6 % | **4.29** |
+| 250 m | 0.7281 | 0.0328 | 58.8 % |
+| 90 m | 0.8059 | 0.0321 | 69.0 % |
+| **30 m** | **0.8156** | 0.0204 | 71.0 % |
 
-The top 21 % of terrain by failure probability holds 60 % of the landslides, a
-concentration of 2.8×. The ordering is monotonic.
+The mechanism is visible in the wetness term: median specific catchment area
+falls from 631 m to 132 m as the grid refines, because a 250 m cell is wider
+than the hollows that concentrate subsurface flow. Most of the gain is realised
+by 90 m. Fitted parameters at 30 m: `C ∈ [0, 0.25]`, `φ ∈ [25°, 35°]`,
+`R/T ∈ [1×10⁻⁵, 5×10⁻⁴] m⁻¹`.
 
-### What did not help
+### It ties statistics, and that is the interesting part
 
-Two additions were built, measured, and found not to earn their keep on this
-area. Both are kept as options because the reason they fail here is specific to
-the test area, but neither is on by default without cause.
+Same points, same folds, every model refitted per fold, Gorkha at 30 m:
 
-- **Spatial recharge** (wettest-month precipitation modulating `R/T`) moves
-  held-out AUC from 0.729 to 0.733 — well inside the ±0.024 fold spread. Over
-  0.8° × 0.6° the precipitation gradient spans only 0.16–1.34× the median. It is
-  left on by default because it is the physically correct treatment and because
-  the gradient across the full HKH is far larger. `--uniform-recharge` turns it
-  off.
-- **Lithology calibration regions** find nothing here because the area is 97 %
-  metamorphics: one region holds 5,038 of the 5,193 landslides, and the only
-  other region large enough to fit (mixed sedimentary, n=122) scores worse
-  (0.624) than the whole-area fit. Zoning needs lithological diversity to pay.
-  Note that cross-validation scores the whole-area parameters, not the
-  per-region ones.
+| Model | Random CV | **Spatial CV** | Drop | Fold ± |
+|---|---|---|---|---|
+| SINMAP (physics) | 0.8222 | **0.8161** | 0.006 | 0.021 |
+| logistic — slope + log SCA | 0.8275 | **0.8220** | 0.006 | 0.022 |
+| random forest — slope + log SCA | 0.8180 | 0.8063 | 0.012 | 0.019 |
+| logistic — + lithology, cover, elevation, precip | 0.8815 | 0.8068 | 0.075 | 0.067 |
+| random forest — + lithology, cover, elevation, precip | **0.9182** | 0.8185 | **0.100** | 0.051 |
 
-### Validation of the class map
+Given the same two predictors the mechanical model and a logistic regression are
+indistinguishable. The headline is the last column but one: a random forest with
+the usual extra predictors reports 0.918 under random CV — unremarkable by the
+standards of the literature — and 0.819 under spatial-block CV. That 0.10 was
+memorised geography, and buying it also triples the between-place variance.
 
-The continuous field is monotonic; the six-class SINMAP map is not.
+### The parameters transfer; the model does not work everywhere
 
-| Class | Map area | Landslides | Frequency ratio |
+| Area | Parameters | Landslides | AUC |
 |---|---|---|---|
-| 1 unconditionally stable | 17.6 % | 7.0 % | 0.40 |
-| 2 stable | 8.5 % | 4.6 % | 0.54 |
-| 3 quasi-stable | 19.8 % | 7.3 % | 0.37 |
-| 4 lower threshold | 40.9 % | 30.9 % | 0.75 |
-| 5 upper threshold | 12.5 % | 41.5 % | 3.33 |
-| 6 unconditionally unstable | 0.75 % | 8.8 % | **11.73** |
+| Gorkha | fitted here | 5,193 | 0.8221 |
+| Far-West Nepal | transferred from Gorkha | 25,679 | 0.6557 |
+| Far-West Nepal | fitted here | 25,679 | 0.6595 |
+| Sikkim | transferred from Gorkha | 255 | 0.7801 |
+| Sikkim | fitted here | 255 | 0.8019 |
 
-Also in-sample, and on the same caveat as the table above. Classes 4–6 are
-ordered correctly and class 6 is the strongest single signal in
-the map: three quarters of a percent of the area holds nearly nine percent of
-the landslides. Classes 1–3 are not ordered, and cannot be: all three have
-failure probability zero by definition and are separated only by how far above 1
-the worst-case factor of safety sits. Landslides falling in them reflect
-mapping and DEM positional error, and processes the model does not represent.
-This is a property of the SINMAP class definition, not a defect in the fit — and
-it is why the continuous field is the product.
+Refitting locally buys 0.004–0.022 AUC, so the fitted parameters are portable.
+But skill in Far-Western Nepal is 0.16 lower than at Gorkha, and refitting does
+not recover it — so the limit is the predictors, not the parameters. Slope and
+topographic wetness separate Gorkha's failures well and Far-West's poorly, which
+is what to expect where bedding, weak mudstone horizons and road cuts control
+failure. **The model suits shallow translational failure on soil-mantled
+crystalline terrain, and suits weak sedimentary hill country considerably less
+well.** Only a local inventory tells you which case you are in.
+
+An appealing hypothesis — that Gorkha's earthquake trigger caps what a static
+map can explain, so a monsoon inventory should score higher — was tested and
+**refuted**: the monsoon inventory scores lower. See
+[docs/RESULTS.md §4](docs/RESULTS.md) for the two candidate explanations that
+were tested and largely ruled out.
+
+### Trigger conventions
+
+Of the two numbers that are neither mechanics nor fitted, one is inert and one
+is not. Over their plausible ranges the rainfall coefficient of variation moves
+AUC by 0.003 and the unstable area by two points; the pseudo-static fraction of
+PGA moves the unstable area from 57 % to 90 % and degrades the ranking itself.
+**Quote a seismic scenario as a range over `pga_fraction`; a rainfall scenario
+needs no such hedge.**
+
+### What did not work
+
+- **Lithology calibration regions**: −0.0004 AUC held out, in both Gorkha and
+  the geologically varied Far-West. Off by default. The result is specific to
+  GLiM level-1 zoning, which collapses Far-West's dozen named formations into
+  five classes.
+- **Spatial recharge**: +0.005 AUC, inside the fold spread. Left on as the
+  physically correct treatment; `--uniform-recharge` disables it.
+- **Crown rather than centroid sampling** of polygon inventories: +0.017 for
+  whole-landslide polygons, −0.006 where polygons are already source areas.
+  Real, correctly signed, second-order.
+
+### The class map is not fully ordered
+
+The continuous field is monotonic; the six-class SINMAP map is not, and cannot
+be. Classes 1–3 all have failure probability zero by definition and differ only
+in margin of stability, so landslide density cannot order them. Classes 4–6 are
+ordered correctly, and class 6 is the strongest single signal in the map — 0.75 %
+of the area holding 8.8 % of the landslides, a frequency ratio of 11.7. **Use
+the continuous field**; the classes are a legend.
 
 ## Repository layout
 
@@ -368,8 +383,19 @@ giri_landslide/
     ├── grid.py            Reference grid, warping, tiled processing
     └── demo.py            Synthetic inputs for offline testing
 
+analysis/                  Experiments behind docs/RESULTS.md
+├── common.py              Shared sampling, folds and survey masking
+├── 01_resolution.py       Grid resolution and the wetness term
+├── 02_transfer.py         Applying one area's parameters to another
+├── 03_benchmark.py        Against logistic regression and random forest
+├── 04_monsoon.py          Triggering mechanism and skill
+├── 05_sensitivity.py      The two unfitted conventions
+├── 06_inventory_geometry.py  Where a polygon inventory should be sampled
+├── 07_calibration_regions.py Whether per-lithology parameters help
+└── results/               JSON output, version-controlled
+
 configs/                   Run configurations
-docs/                      Detailed operating guide
+docs/                      Operating guide and measured results
 scripts/                   Offline demonstration
 tests/                     Test suite, no network required
 data/, outputs/            Generated, not version-controlled
@@ -404,15 +430,19 @@ on a map somewhere new.
 
 ### Resolution
 
-The default DEM is Copernicus GLO-30. Unlike a heuristic index with tables
-calibrated at a particular cell size, the physics carries nothing that a finer
-DEM would invalidate — and flow convergence, which the wetness term depends on,
-is exactly what a coarse DEM smooths away.
+**This is the most consequential choice a user makes**, and it is measured:
+spatial-block AUC runs 0.728 at 250 m, 0.806 at 90 m, 0.816 at 30 m. Flow
+convergence is what the wetness term depends on, and it is exactly what a coarse
+grid smooths away.
 
-The grid resolution is set separately by `--res`, and it is the one that
-matters: at `--res 0.0025` (about 250 m) the 30 m DEM is downsampled and the
-source barely matters. Specific catchment area is resolution-sensitive by
-construction, so **refit after changing `--res`**.
+The default DEM is Copernicus GLO-30, but the grid set by `--res` is what
+actually matters: at `--res 0.0025` (~250 m) a 30 m DEM is simply downsampled
+and the source is irrelevant. The package default of `0.00083333` (~90 m) is a
+deliberate compromise — it captures nine tenths of the benefit at a ninth of the
+cost of 30 m, and flow routing is not tiled, so cost rises steeply.
+
+Specific catchment area is resolution-sensitive by construction, so **refit
+after changing `--res`**; parameters fitted at one grid do not describe another.
 
 ## Status
 
@@ -422,10 +452,9 @@ Implemented and tested:
 - SINMAP failure probability and stability classes
 - Pseudo-static seismic loading and Newmark critical acceleration
 - Soil parameter fitting with random and spatial-block cross-validation
-- Optional calibration regions by lithology or land cover
 - Rainfall and earthquake trigger scenarios
 - Present and CMIP6 future-climate recharge
-- Held-out validation
+- Held-out validation, and the seven experiments in `analysis/`
 
 Outstanding:
 
@@ -437,14 +466,24 @@ Outstanding:
    so depth cannot be separated from cohesion. A soil-depth model would
    constrain both independently.
 3. **Two trigger parameters are conventions, not fits** — the rainfall
-   coefficient of variation and the PGA fraction. Relative patterns across a map
-   are unaffected; the absolute level of a scenario probability is not.
-4. **Risk.** No exposure or vulnerability data. Scope documented in
-   `model/risk.py`.
-5. **Inventory coverage.** Nepal and Sikkim only. Pakistan, Afghanistan,
+   coefficient of variation and the PGA fraction. The rainfall one is measurably
+   inert; the PGA fraction is not, and moves the unstable area from 57 % to 90 %
+   across its plausible range. Quote seismic scenarios as a range over it.
+4. **Domain of validity.** Skill is 0.816 on soil-mantled crystalline terrain at
+   Gorkha and 0.656 in the weak sedimentary hill country of Far-Western Nepal,
+   and refitting locally does not recover the difference. There is nothing in a
+   fitted parameter set that warns which case an area is; only a local inventory
+   does.
+5. **Calibration regions do not work as implemented** (−0.0004 AUC held out,
+   including where the geology is varied). Off by default; the result is
+   specific to GLiM level-1 zoning.
+6. **Risk.** No exposure or vulnerability data, and no runout model — the
+   stability model says where material detaches, not where it arrives. Scope
+   documented in `model/risk.py`.
+7. **Inventory coverage.** Nepal and Sikkim only. Pakistan, Afghanistan,
    Uttarakhand, Himachal, Bhutan and Myanmar have no usable inventory, so
    parameters there are extrapolated.
-6. **Region-wide execution.** The HKH at 30 m is far beyond a single run and
+8. **Region-wide execution.** The HKH at 30 m is far beyond a single run and
    must be tiled by basin; no tiling driver exists.
 
 ## Testing

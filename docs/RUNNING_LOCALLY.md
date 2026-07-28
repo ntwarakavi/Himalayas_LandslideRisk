@@ -41,7 +41,7 @@ Check the install:
 python -m pytest tests/ -q
 ```
 
-39 tests, no network, a few seconds. They check the mechanics against exact
+41 tests, no network, a few seconds. They check the mechanics against exact
 analytic answers — FS = 1 at the friction angle, mass conservation in flow
 routing, the Newmark yield coefficient — so if they pass, the physics is wired
 up correctly.
@@ -105,6 +105,12 @@ Note that `--res` and `--dem-source` are independent. At `--res 0.0025` a 30 m
 DEM is downsampled to ~250 m and the source barely matters; the finer DEM only
 pays once the grid can resolve it.
 
+**Resolution is the most consequential setting here.** Measured on Gorkha,
+spatial-block AUC runs 0.728 at 250 m, 0.806 at 90 m and 0.816 at 30 m, because
+a coarse cell cannot represent the hollows that concentrate subsurface flow. Use
+90 m unless you have the compute for 30 m; do not use 250 m for anything but a
+first look. Full numbers in [RESULTS.md](RESULTS.md).
+
 ## 5. Fitting the parameters to real landslides
 
 This is the step that turns a plausible map into a defensible one.
@@ -115,18 +121,18 @@ python -m giri_landslide.cli step3-fit --config configs/02_gorkha_fit.json
 ```
 
 The fit searches 48 parameter sets and cross-validates twice. On the Gorkha
-area it takes a few minutes and prints:
+area at 30 m it takes a few minutes and prints:
 
 ```
   Fitted parameter ranges
-    cohesion C        0.000 .. 0.150
+    cohesion C        0.000 .. 0.250
     friction phi      25.0 .. 35.0 deg
     R/T               1.00e-05 .. 5.00e-04 1/m
     recharge ref      473 mm wettest-month precip
 
-  In-sample AUC       0.740   (5193 landslides, 10386 background)
-  random   CV AUC     0.745 +/- 0.012
-  spatial  CV AUC     0.729 +/- 0.024
+  In-sample AUC       0.822   (5193 landslides, 10386 background)
+  random   CV AUC     0.822 +/- 0.003
+  spatial  CV AUC     0.816 +/- 0.020
 ```
 
 ### Reading those numbers
@@ -136,11 +142,13 @@ points on the same hillsides, so it measures interpolation as much as skill. A
 spatial-block split withholds whole 0.25° blocks, so no test point has training
 data nearby — that is the number that says what to expect somewhere new.
 
-**The gap between them is the diagnostic.** Here it is 0.016, small enough that
+**The gap between them is the diagnostic.** Here it is 0.006, small enough that
 the relationship is genuinely mechanical rather than spatial. A gap above 0.03
-triggers a warning.
+triggers a warning. For comparison, a random forest given lithology and land
+cover as well shows a gap of 0.100 on this same data — almost all of its
+apparent skill is memorised geography.
 
-**The fold spread matters as much as the mean.** ±0.024 across five blocks means
+**The fold spread matters as much as the mean.** ±0.020 across five blocks means
 the mean describes no particular place; that spread is the range to expect when
 you apply the map somewhere the fit never saw.
 
@@ -152,7 +160,7 @@ automatically when `--name` matches, or point at it explicitly with
 
 ```bash
 python -m giri_landslide.cli step3-fit --name farwest \
-    --bbox 80.0 28.8 81.5 30.2 --res 0.0025 \
+    --bbox 80.558 28.913 81.592 29.856 --res 0.00083333 \
     --inventory data/raw/inventory/farwest/<file>.shp
 ```
 
@@ -169,6 +177,17 @@ parameters absorb reflects conditions during the mapped events, so matching the
 mechanism is still preferable.
 
 Never fit and validate on the same inventory. Fit on one, validate on another.
+
+**Check the mapped extent.** Background points stand in for terrain that did not
+fail, so any drawn outside the ground the inventory's authors surveyed are
+really saying "nobody looked". Far-West Nepal and Sikkim survey only about 60 %
+of their own bounding boxes. All three inventories publish an extent polygon;
+`analysis/common.py` shows how to mask against one.
+
+**Expect the model to work better in some terrain than others.** Held-out AUC is
+0.816 on Gorkha's soil-mantled crystalline terrain and 0.656 in the weak
+sedimentary hill country of Far-Western Nepal, and refitting locally does not
+close the gap. See [RESULTS.md §4](RESULTS.md).
 
 ## 6. Validating
 

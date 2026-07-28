@@ -1,0 +1,65 @@
+{
+  "rows": [
+    {
+      "area": "farwest",
+      "sampled_at": "centroid",
+      "n_presence": 26347,
+      "median_slope_deg": 35.06,
+      "median_sca_m": 201.6,
+      "in_sample_auc": 0.6486,
+      "cv_spatial_mean": 0.6448,
+      "cv_spatial_std": 0.0122
+    },
+    {
+      "area": "farwest",
+      "sampled_at": "upper_quartile",
+      "n_presence": 26344,
+      "median_slope_deg": 36.63,
+      "median_sca_m": 133.8,
+      "in_sample_auc": 0.6625,
+      "cv_spatial_mean": 0.6585,
+      "cv_spatial_std": 0.0119
+    },
+    {
+      "area": "farwest",
+      "sampled_at": "crown",
+      "n_presence": 26344,
+      "median_slope_deg": 36.71,
+      "median_sca_m": 109.4,
+      "in_sample_auc": 0.6657,
+      "cv_spatial_mean": 0.6619,
+      "cv_spatial_std": 0.01
+    },
+    {
+      "area": "gorkha",
+      "sampled_at": "centroid",
+      "n_presence": 5193,
+      "median_slope_deg": 41.07,
+      "median_sca_m": 118.9,
+      "in_sample_auc": 0.8215,
+      "cv_spatial_mean": 0.8156,
+      "cv_spatial_std": 0.0204
+    },
+    {
+      "area": "gorkha",
+      "sampled_at": "upper_quartile",
+      "n_presence": 5193,
+      "median_slope_deg": 40.84,
+      "median_sca_m": 112.3,
+      "in_sample_auc": 0.8176,
+      "cv_spatial_mean": 0.8137,
+      "cv_spatial_std": 0.0212
+    },
+    {
+      "area": "gorkha",
+      "sampled_at": "crown",
+      "n_presence": 5192,
+      "median_slope_deg": 40.54,
+      "median_sca_m": 106.9,
+      "in_sample_auc": 0.813,
+      "cv_spatial_mean": 0.8099,
+      "cv_spatial_std": 0.0219
+    }
+  ],
+  "resolution_deg": 0.00027778
+}

@@ -3,172 +3,172 @@
     {
       "model": "SINMAP (physics)",
       "auc_mean": 0.8161,
-      "auc_std": 0.0208,
+      "auc_std": 0.0207,
       "auc_folds": [
-        0.846,
-        0.8134,
-        0.7983,
-        0.7901,
-        0.8326
+        0.8461,
+        0.8133,
+        0.7982,
+        0.7906,
+        0.8325
       ],
       "n_folds": 5,
       "scheme": "spatial",
-      "capture_top5pct": 35.32,
+      "capture_top5pct": 35.2,
       "capture_top10pct": 48.49,
-      "capture_top20pct": 68.46
+      "capture_top20pct": 68.79
     },
     {
       "model": "logistic [terrain]",
-      "auc_mean": 0.8218,
+      "auc_mean": 0.822,
       "auc_std": 0.0221,
       "auc_folds": [
-        0.8515,
-        0.8157,
+        0.8517,
+        0.8156,
         0.8071,
-        0.7922,
+        0.7927,
         0.8427
       ],
       "n_folds": 5,
       "scheme": "spatial",
-      "capture_top5pct": 32.51,
-      "capture_top10pct": 48.99,
-      "capture_top20pct": 69.39
+      "capture_top5pct": 32.53,
+      "capture_top10pct": 49.05,
+      "capture_top20pct": 69.4
     },
     {
       "model": "random forest [terrain]",
-      "auc_mean": 0.8052,
-      "auc_std": 0.0187,
+      "auc_mean": 0.8063,
+      "auc_std": 0.0193,
       "auc_folds": [
-        0.8331,
+        0.8337,
         0.8035,
-        0.7907,
-        0.781,
-        0.818
+        0.7896,
+        0.7823,
+        0.8223
       ],
       "n_folds": 5,
       "scheme": "spatial",
-      "capture_top5pct": 28.99,
-      "capture_top10pct": 45.34,
-      "capture_top20pct": 67.55
+      "capture_top5pct": 28.73,
+      "capture_top10pct": 45.97,
+      "capture_top20pct": 68.11
     },
     {
       "model": "logistic [context]",
-      "auc_mean": 0.807,
-      "auc_std": 0.0662,
+      "auc_mean": 0.8068,
+      "auc_std": 0.0666,
       "auc_folds": [
-        0.8853,
-        0.7998,
-        0.6887,
-        0.8131,
-        0.8481
+        0.8855,
+        0.7997,
+        0.6876,
+        0.8135,
+        0.8478
       ],
       "n_folds": 5,
       "scheme": "spatial",
-      "capture_top5pct": 36.07,
-      "capture_top10pct": 52.11,
+      "capture_top5pct": 36.02,
+      "capture_top10pct": 51.98,
       "capture_top20pct": 65.98
     },
     {
       "model": "random forest [context]",
-      "auc_mean": 0.819,
-      "auc_std": 0.0516,
+      "auc_mean": 0.8185,
+      "auc_std": 0.0505,
       "auc_folds": [
-        0.8784,
-        0.7967,
-        0.7301,
-        0.8398,
-        0.85
+        0.8783,
+        0.7952,
+        0.7324,
+        0.8419,
+        0.8447
       ],
       "n_folds": 5,
       "scheme": "spatial",
-      "capture_top5pct": 36.28,
-      "capture_top10pct": 51.09,
-      "capture_top20pct": 68.09
+      "capture_top5pct": 35.88,
+      "capture_top10pct": 50.96,
+      "capture_top20pct": 69.04
     },
     {
       "model": "SINMAP (physics)",
       "auc_mean": 0.8222,
-      "auc_std": 0.0059,
+      "auc_std": 0.0029,
       "auc_folds": [
-        0.8178,
-        0.8277,
-        0.8128,
-        0.8252,
-        0.8273
+        0.8222,
+        0.8202,
+        0.8181,
+        0.8239,
+        0.8266
       ],
       "n_folds": 5,
       "scheme": "random",
-      "capture_top5pct": 36.85,
-      "capture_top10pct": 53.4,
-      "capture_top20pct": 70.96
+      "capture_top5pct": 36.5,
+      "capture_top10pct": 53.75,
+      "capture_top20pct": 71.14
     },
     {
       "model": "logistic [terrain]",
-      "auc_mean": 0.8274,
-      "auc_std": 0.0051,
+      "auc_mean": 0.8275,
+      "auc_std": 0.0033,
       "auc_folds": [
-        0.8242,
-        0.8322,
-        0.8188,
-        0.8303,
-        0.8314
+        0.8298,
+        0.8237,
+        0.8235,
+        0.8286,
+        0.8317
       ],
       "n_folds": 5,
       "scheme": "random",
-      "capture_top5pct": 36.73,
-      "capture_top10pct": 54.27,
-      "capture_top20pct": 71.03
+      "capture_top5pct": 37.44,
+      "capture_top10pct": 54.4,
+      "capture_top20pct": 71.02
     },
     {
       "model": "random forest [terrain]",
-      "auc_mean": 0.8188,
-      "auc_std": 0.0037,
+      "auc_mean": 0.818,
+      "auc_std": 0.0044,
       "auc_folds": [
-        0.8235,
-        0.822,
-        0.8129,
-        0.8179,
-        0.8179
+        0.8246,
+        0.8133,
+        0.8132,
+        0.8184,
+        0.8204
       ],
       "n_folds": 5,
       "scheme": "random",
-      "capture_top5pct": 33.56,
-      "capture_top10pct": 52.08,
-      "capture_top20pct": 69.76
+      "capture_top5pct": 33.18,
+      "capture_top10pct": 51.62,
+      "capture_top20pct": 70.11
     },
     {
       "model": "logistic [context]",
-      "auc_mean": 0.8818,
-      "auc_std": 0.0064,
+      "auc_mean": 0.8815,
+      "auc_std": 0.0077,
       "auc_folds": [
-        0.8779,
-        0.8805,
-        0.8756,
         0.8808,
-        0.894
+        0.8741,
+        0.8774,
+        0.879,
+        0.8963
       ],
       "n_folds": 5,
       "scheme": "random",
-      "capture_top5pct": 54.75,
-      "capture_top10pct": 69.44,
-      "capture_top20pct": 80.61
+      "capture_top5pct": 54.96,
+      "capture_top10pct": 69.5,
+      "capture_top20pct": 80.73
     },
     {
       "model": "random forest [context]",
-      "auc_mean": 0.919,
-      "auc_std": 0.0046,
+      "auc_mean": 0.9182,
+      "auc_std": 0.0061,
       "auc_folds": [
-        0.9164,
-        0.9214,
-        0.9153,
-        0.9151,
-        0.9269
+        0.917,
+        0.9167,
+        0.9184,
+        0.9099,
+        0.929
       ],
       "n_folds": 5,
       "scheme": "random",
-      "capture_top5pct": 59.87,
-      "capture_top10pct": 75.67,
-      "capture_top20pct": 88.52
+      "capture_top5pct": 61.33,
+      "capture_top10pct": 75.62,
+      "capture_top20pct": 87.72
     }
   ],
   "resolution_deg": 0.00027778,

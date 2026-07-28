@@ -25,12 +25,12 @@
       "capture_top20pct": 70.96
     },
     {
-      "auc": 0.655,
-      "n_presence": 23320,
-      "n_background": 46640,
-      "capture_top5pct": 12.98,
-      "capture_top10pct": 18.91,
-      "capture_top20pct": 35.26,
+      "auc": 0.6557,
+      "n_presence": 25679,
+      "n_background": 51358,
+      "capture_top5pct": 14.47,
+      "capture_top10pct": 21.67,
+      "capture_top20pct": 37.46,
       "area": "farwest",
       "mode": "transferred from gorkha",
       "parameters": {
@@ -49,12 +49,12 @@
       }
     },
     {
-      "auc": 0.66,
-      "n_presence": 23320,
-      "n_background": 46640,
-      "capture_top5pct": 9.0,
-      "capture_top10pct": 19.7,
-      "capture_top20pct": 36.68,
+      "auc": 0.6595,
+      "n_presence": 25679,
+      "n_background": 51358,
+      "capture_top5pct": 12.09,
+      "capture_top10pct": 22.27,
+      "capture_top20pct": 38.49,
       "area": "farwest",
       "mode": "fitted here",
       "parameters": {
@@ -67,18 +67,18 @@
           35.0
         ],
         "rt": [
-          0.0002,
-          0.01
+          4e-05,
+          0.002
         ]
       }
     },
     {
-      "auc": 0.7599,
-      "n_presence": 226,
+      "auc": 0.7801,
+      "n_presence": 255,
       "n_background": 2000,
-      "capture_top5pct": 26.11,
-      "capture_top10pct": 34.96,
-      "capture_top20pct": 56.64,
+      "capture_top5pct": 26.27,
+      "capture_top10pct": 41.57,
+      "capture_top20pct": 58.43,
       "area": "sikkim",
       "mode": "transferred from gorkha",
       "parameters": {
@@ -97,26 +97,26 @@
       }
     },
     {
-      "auc": 0.806,
-      "n_presence": 226,
+      "auc": 0.8019,
+      "n_presence": 255,
       "n_background": 2000,
-      "capture_top5pct": 28.76,
-      "capture_top10pct": 42.92,
-      "capture_top20pct": 64.16,
+      "capture_top5pct": 27.84,
+      "capture_top10pct": 42.35,
+      "capture_top20pct": 64.31,
       "area": "sikkim",
       "mode": "fitted here",
       "parameters": {
         "cohesion": [
           0.0,
-          0.25
+          0.4
         ],
         "friction_deg": [
-          35.0,
-          45.0
+          30.0,
+          40.0
         ],
         "rt": [
-          0.0002,
-          0.01
+          4e-05,
+          0.002
         ]
       }
     }

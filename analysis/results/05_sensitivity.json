@@ -5,20 +5,20 @@
       "value": 0.2,
       "return_period_yr": 10.0,
       "multiplier": 1.304,
-      "auc": 0.8207,
-      "rank_corr_vs_default": 0.9771,
-      "pct_above_0.5": 38.95,
-      "mean_probability": 0.3923
+      "auc": 0.8208,
+      "rank_corr_vs_default": 0.9674,
+      "pct_above_0.5": 38.94,
+      "mean_probability": 0.3922
     },
     {
       "convention": "rainfall_cv",
       "value": 0.2,
       "return_period_yr": 100.0,
       "multiplier": 1.683,
-      "auc": 0.8192,
-      "rank_corr_vs_default": 0.9804,
-      "pct_above_0.5": 40.16,
-      "mean_probability": 0.4037
+      "auc": 0.8193,
+      "rank_corr_vs_default": 0.9933,
+      "pct_above_0.5": 40.14,
+      "mean_probability": 0.4036
     },
     {
       "convention": "rainfall_cv",
@@ -26,8 +26,8 @@
       "return_period_yr": 1000.0,
       "multiplier": 2.055,
       "auc": 0.8176,
-      "rank_corr_vs_default": 0.9806,
-      "pct_above_0.5": 41.17,
+      "rank_corr_vs_default": 0.9936,
+      "pct_above_0.5": 41.16,
       "mean_probability": 0.414
     },
     {
@@ -35,20 +35,20 @@
       "value": 0.25,
       "return_period_yr": 10.0,
       "multiplier": 1.383,
-      "auc": 0.8203,
+      "auc": 0.8204,
       "rank_corr_vs_default": 0.9683,
-      "pct_above_0.5": 39.23,
-      "mean_probability": 0.3948
+      "pct_above_0.5": 39.21,
+      "mean_probability": 0.3947
     },
     {
       "convention": "rainfall_cv",
       "value": 0.25,
       "return_period_yr": 100.0,
       "multiplier": 1.861,
-      "auc": 0.8184,
-      "rank_corr_vs_default": 0.9746,
-      "pct_above_0.5": 40.68,
-      "mean_probability": 0.4088
+      "auc": 0.8185,
+      "rank_corr_vs_default": 0.9948,
+      "pct_above_0.5": 40.67,
+      "mean_probability": 0.4087
     },
     {
       "convention": "rainfall_cv",
@@ -56,9 +56,9 @@
       "return_period_yr": 1000.0,
       "multiplier": 2.33,
       "auc": 0.8167,
-      "rank_corr_vs_default": 0.9817,
-      "pct_above_0.5": 41.9,
-      "mean_probability": 0.4213
+      "rank_corr_vs_default": 0.9773,
+      "pct_above_0.5": 41.88,
+      "mean_probability": 0.4212
     },
     {
       "convention": "rainfall_cv",
@@ -67,8 +67,8 @@
       "multiplier": 1.463,
       "auc": 0.8201,
       "rank_corr_vs_default": 1.0,
-      "pct_above_0.5": 39.49,
-      "mean_probability": 0.3973
+      "pct_above_0.5": 39.48,
+      "mean_probability": 0.3972
     },
     {
       "convention": "rainfall_cv",
@@ -77,8 +77,8 @@
       "multiplier": 2.042,
       "auc": 0.8177,
       "rank_corr_vs_default": 1.0,
-      "pct_above_0.5": 41.14,
-      "mean_probability": 0.4137
+      "pct_above_0.5": 41.13,
+      "mean_probability": 0.4136
     },
     {
       "convention": "rainfall_cv",
@@ -87,8 +87,8 @@
       "multiplier": 2.609,
       "auc": 0.8156,
       "rank_corr_vs_default": 1.0,
-      "pct_above_0.5": 42.6,
-      "mean_probability": 0.4282
+      "pct_above_0.5": 42.58,
+      "mean_probability": 0.4281
     },
     {
       "convention": "rainfall_cv",
@@ -96,8 +96,8 @@
       "return_period_yr": 10.0,
       "multiplier": 1.545,
       "auc": 0.8197,
-      "rank_corr_vs_default": 0.9843,
-      "pct_above_0.5": 39.7,
+      "rank_corr_vs_default": 0.9684,
+      "pct_above_0.5": 39.69,
       "mean_probability": 0.3997
     },
     {
@@ -105,30 +105,30 @@
       "value": 0.35,
       "return_period_yr": 100.0,
       "multiplier": 2.226,
-      "auc": 0.8169,
-      "rank_corr_vs_default": 0.977,
-      "pct_above_0.5": 41.65,
-      "mean_probability": 0.4186
+      "auc": 0.817,
+      "rank_corr_vs_default": 0.9914,
+      "pct_above_0.5": 41.63,
+      "mean_probability": 0.4185
     },
     {
       "convention": "rainfall_cv",
       "value": 0.35,
       "return_period_yr": 1000.0,
       "multiplier": 2.894,
-      "auc": 0.8143,
-      "rank_corr_vs_default": 0.989,
-      "pct_above_0.5": 43.19,
-      "mean_probability": 0.4349
+      "auc": 0.8144,
+      "rank_corr_vs_default": 0.9911,
+      "pct_above_0.5": 43.17,
+      "mean_probability": 0.4348
     },
     {
       "convention": "rainfall_cv",
       "value": 0.4,
       "return_period_yr": 10.0,
       "multiplier": 1.629,
-      "auc": 0.8193,
-      "rank_corr_vs_default": 0.984,
-      "pct_above_0.5": 40.0,
-      "mean_probability": 0.4022
+      "auc": 0.8194,
+      "rank_corr_vs_default": 0.9953,
+      "pct_above_0.5": 39.99,
+      "mean_probability": 0.4021
     },
     {
       "convention": "rainfall_cv",
@@ -136,9 +136,9 @@
       "return_period_yr": 100.0,
       "multiplier": 2.413,
       "auc": 0.8164,
-      "rank_corr_vs_default": 0.9897,
-      "pct_above_0.5": 42.1,
-      "mean_probability": 0.4234
+      "rank_corr_vs_default": 0.9892,
+      "pct_above_0.5": 42.08,
+      "mean_probability": 0.4233
     },
     {
       "convention": "rainfall_cv",
@@ -146,9 +146,9 @@
       "return_period_yr": 1000.0,
       "multiplier": 3.183,
       "auc": 0.8132,
-      "rank_corr_vs_default": 0.9841,
+      "rank_corr_vs_default": 0.9785,
       "pct_above_0.5": 43.78,
-      "mean_probability": 0.4415
+      "mean_probability": 0.4414
     }
   ],
   "earthquake": [
@@ -157,8 +157,8 @@
       "value": 0.3,
       "pga_g": 0.35,
       "k_h": 0.105,
-      "auc": 0.8166,
-      "rank_corr_vs_default": 0.9702,
+      "auc": 0.8167,
+      "rank_corr_vs_default": 0.9552,
       "pct_above_0.5": 57.27,
       "mean_probability": 0.5648
     },
@@ -167,9 +167,9 @@
       "value": 0.5,
       "pga_g": 0.35,
       "k_h": 0.175,
-      "auc": 0.796,
+      "auc": 0.7961,
       "rank_corr_vs_default": 1.0,
-      "pct_above_0.5": 69.44,
+      "pct_above_0.5": 69.45,
       "mean_probability": 0.6795
     },
     {
@@ -177,8 +177,8 @@
       "value": 0.7,
       "pga_g": 0.35,
       "k_h": 0.245,
-      "auc": 0.7608,
-      "rank_corr_vs_default": 0.946,
+      "auc": 0.7609,
+      "rank_corr_vs_default": 0.9412,
       "pct_above_0.5": 79.58,
       "mean_probability": 0.7784
     },
@@ -187,9 +187,9 @@
       "value": 1.0,
       "pga_g": 0.35,
       "k_h": 0.35,
-      "auc": 0.6868,
-      "rank_corr_vs_default": 0.7591,
-      "pct_above_0.5": 90.03,
+      "auc": 0.6867,
+      "rank_corr_vs_default": 0.7547,
+      "pct_above_0.5": 90.02,
       "mean_probability": 0.8867
     }
   ],

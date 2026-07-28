@@ -28,10 +28,13 @@ python -m giri_landslide.cli step8-package --name demo | tail -12
 
 cat <<'EOF'
 
-Done. All synthetic - this proves the code runs, not the science. The demo
-terrain sits well away from failure, so the climate scenarios move the
-probability only slightly; what they do move is the recharge field, which you
-can check directly:
+Done. All synthetic - this proves the code runs, not the science.
+
+About a sixth of this terrain sits above failure probability 0.5, so the map has
+a real range in it. The climate scenarios still shift the probability only
+slightly, because a 20% wetting moves few cells across FS = 1 once the wetness
+term is already capped on the convergent ground. What the scenarios definitely
+do move is the recharge field, which you can check directly:
 
     data/work/demo_recharge_current.tif            median 1.00 by definition
     data/work/demo_recharge_ssp585_2081-2100.tif   median 1.20

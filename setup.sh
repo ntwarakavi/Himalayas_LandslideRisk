@@ -22,6 +22,11 @@ echo "==> Installing dependencies"
 python -m pip install --upgrade pip -q
 python -m pip install -r requirements.txt
 
+# Editable install, so `python -m giri_landslide.cli` works from any directory
+# rather than only from the repository root.
+echo "==> Installing the package (editable)"
+python -m pip install -e . --no-deps -q
+
 echo "==> Verifying the install"
 python - <<'PY'
 import numpy, rasterio, requests

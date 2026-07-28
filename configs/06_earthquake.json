@@ -1,0 +1,32 @@
+{
+  "_comment": "PHASE 3 - seismic scenarios. The trigger enters as a pseudo-static coefficient k_h = pga_fraction * PGA added to the force balance, not as a lookup. pga_fraction is a convention, not a fit, and it matters: over its plausible range 0.3-1.0 the unstable area runs from 57 to 90 per cent. Quote seismic results as a range over it. step5 also writes the Newmark critical acceleration, which is the map to read against a shaking scenario.",
+  "name": "gorkha_eq",
+  "bbox": [
+    84.5,
+    27.6,
+    85.3,
+    28.2
+  ],
+  "region_bbox": [
+    60.0,
+    16.0,
+    105.0,
+    39.0
+  ],
+  "resolution_deg": 0.00027778,
+  "trigger": "earthquake",
+  "pga_scenarios_g": [
+    0.15,
+    0.25,
+    0.35
+  ],
+  "pga_fraction": 0.5,
+  "pga_path": null,
+  "dem_source": "copernicus30",
+  "fitted_params": "outputs/gorkha_fitted_params.json",
+  "output": "both",
+  "block_size": 1024,
+  "data_dir": "data/raw",
+  "work_dir": "data/work",
+  "out_dir": "outputs"
+}

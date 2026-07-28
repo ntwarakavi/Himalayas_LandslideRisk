@@ -41,7 +41,7 @@ Check the install:
 python -m pytest tests/ -q
 ```
 
-41 tests, no network, a few seconds. They check the mechanics against exact
+48 tests, no network, a few seconds. They check the mechanics against exact
 analytic answers — FS = 1 at the friction angle, mass conservation in flow
 routing, the Newmark yield coefficient — so if they pass, the physics is wired
 up correctly.
@@ -52,9 +52,11 @@ up correctly.
 ./scripts/run_demo.sh
 ```
 
-Fabricates a synthetic mountain catchment and runs stability, both trigger
-scenarios and the comparison step against it. Under a minute. It proves the
-code works, not the science — the terrain is noise with valleys in it.
+Fabricates a synthetic mountain catchment and walks all four phases against it:
+susceptibility, every trigger scenario, a climate sweep and the manifest. About
+a minute. It proves the code runs, not the science — the terrain is noise with
+valleys in it, and phase 2 is skipped because calibration needs a real
+inventory.
 
 ## 3. Your first real run
 
@@ -62,7 +64,7 @@ Two commands. The first fetches data, the second builds a map.
 
 ```bash
 python -m giri_landslide.cli step2-download --config configs/01_quickstart.json
-python -m giri_landslide.cli step4-stability --config configs/01_quickstart.json
+python -m giri_landslide.cli step5-susceptibility --config configs/01_quickstart.json
 ```
 
 About 120 MB and a few minutes. This uses SINMAP's generic parameter ranges
@@ -116,8 +118,8 @@ first look. Full numbers in [RESULTS.md](RESULTS.md).
 This is the step that turns a plausible map into a defensible one.
 
 ```bash
-python -m giri_landslide.cli step2-download --config configs/02_gorkha_fit.json
-python -m giri_landslide.cli step3-fit --config configs/02_gorkha_fit.json
+python -m giri_landslide.cli step2-download --config configs/02_calibrate_gorkha.json
+python -m giri_landslide.cli step3-fit --config configs/02_calibrate_gorkha.json
 ```
 
 The fit searches 48 parameter sets and cross-validates twice. On the Gorkha
@@ -192,7 +194,7 @@ close the gap. See [RESULTS.md §4](RESULTS.md).
 ## 6. Validating
 
 ```bash
-python -m giri_landslide.cli step6-validate --name gorkha \
+python -m giri_landslide.cli step4-validate --name gorkha \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
 ```
 
@@ -229,10 +231,10 @@ scalar in the factor of safety, so hazard and stability share a code path.
 
 ```bash
 # a 100-year storm
-python -m giri_landslide.cli step5-hazard --name gorkha --return-period 100
+python -m giri_landslide.cli step6-hazard --name gorkha --return-period 100
 
 # 0.35 g of shaking
-python -m giri_landslide.cli step5-hazard --name gorkha \
+python -m giri_landslide.cli step6-hazard --name gorkha \
     --trigger earthquake --pga 0.35
 ```
 
@@ -255,43 +257,91 @@ For a real seismic hazard grid rather than a uniform value, set `pga_path` to a
 PGA raster in g (the GEM global model is the usual source — see
 `python -m giri_landslide.cli info`).
 
-## 8. Future climate
+## 8. Current and future climate
+
+Climate enters the model at one place only — the recharge field. Soil
+parameters, terrain and the meaning of a return period are all unchanged.
 
 ```bash
-python -m giri_landslide.cli step4-stability --config configs/05_future_climate.json
-python -m giri_landslide.cli step7-compare \
-    --baseline outputs/gorkha_susceptibility_prob.tif \
-    --scenario outputs/gorkha_ssp585_susceptibility_prob.tif \
-    --name climate
+# the scenarios named in the config
+python -m giri_landslide.cli step7-climate --config configs/03_production_gorkha.json
+
+# or name them directly
+python -m giri_landslide.cli step7-climate --name gorkha \
+    --scenarios current ssp245:2061-2080 ssp585:2081-2100
 ```
 
-CMIP6 precipitation replaces the present-day climatology in the recharge field.
-The scenario is normalised by the **present-day** reference stored in
-`fitted_params`, so a uniform wetting shows up rather than cancelling out.
+```
+  scenario              mean P   unstable %   mean change   % more likely
+  ------------------------------------------------------------------------
+  current               0.1931       16.88       +0.0000            0.00
+  ssp245_2061-2080      0.1941       16.95       +0.0010            2.36
+  ssp585_2081-2100      0.1956       17.17       +0.0024            7.34
+```
 
-Both runs must be on the same grid or `step7-compare` refuses. It writes a
-signed difference raster, a summary JSON and a diverging-colour PNG.
+One step produces every map, every change raster against the present day, and a
+summary row per scenario. The baseline is always evaluated first and always
+included, because every future is reported as a difference from it.
 
-The triggering return period keeps its present-day definition: the terrain takes
-centuries to adapt, so a "100-year storm" still means today's.
+**Why the baseline goes first.** A future precipitation field is normalised by
+the *present-day* recharge reference in millimetres, recorded when the
+parameters were fitted. Normalising it by its own median instead would divide
+out exactly the signal being looked for — a uniformly wetter future would come
+back looking identical to today. If no fit exists, the reference is measured
+from the present-day field, which keeps the *changes* meaningful even though the
+absolute level is uncalibrated.
 
-## 9. Calibration regions
+Scenario specifications are `current`, or `<pathway>:<period>`:
 
-Optional. Fits separate soil parameters per rock type or per land-cover class:
+| | |
+|---|---|
+| Pathways | `ssp126` `ssp245` `ssp370` `ssp585` |
+| Periods | `2021-2040` `2041-2060` `2061-2080` `2081-2100` |
+| GCM | `--climate-model`, default IPSL-CM6A-LR |
+
+Two ready-made sweeps ask different questions.
+`configs/04_climate_pathways.json` holds the window fixed and varies forcing, so
+the spread between maps is the pathway alone.
+`configs/05_climate_trajectory.json` holds forcing fixed and varies the window,
+giving the time course.
+
+The triggering return period keeps its present-day definition: terrain takes
+far longer than a century to adjust, and redefining the trigger at the same time
+would confound two effects in one map.
+
+## 9. Packaging the deliverables
 
 ```bash
-python -m giri_landslide.cli step3-fit --config configs/06_calibration_regions.json
+python -m giri_landslide.cli step8-package --name gorkha
 ```
 
-A region only gets its own parameters if it holds at least
+Nothing is recomputed and nothing is copied. This catalogues what exists and
+attaches what a reader needs in order to know what a raster means: the fitted
+parameters, the held-out score, the grid read from the rasters themselves, the
+data sources, the two trigger conventions, and the interpretation notes.
+
+Run it last, and ship it with the maps. A map without this file is a picture,
+not a deliverable.
+
+## 9b. Calibration regions (optional; measured, and they do not help)
+
+Fits separate soil parameters per rock type or land-cover class:
+
+```bash
+python -m giri_landslide.cli step3-fit --name gorkha \
+    --calibration-regions lithology --inventory <path>
+```
+
+A region gets its own parameters only if it holds at least
 `min_region_presence` landslides (default 100); the rest fall back to the
-whole-area fit. Lithology needs the 1.1 GB GLiM geodatabase, which is not
-downloaded unless you ask for regions.
+whole-area fit. Lithology needs the 1.1 GB GLiM geodatabase, downloaded only
+when regions are requested.
 
-This pays only where the area spans several rock types. On the small Gorkha AOI
-— 97 % metamorphics — it finds nothing. Note also that cross-validation scores
-the whole-area parameters, not the per-region ones, so the CV figure is not
-evidence for the zoning.
+Measured at **−0.0004 AUC held out**, in both Gorkha and the geologically varied
+Far-West — including the area chosen to give the idea its best chance. Off by
+default. The negative result is specific to GLiM level-1 zoning, which collapses
+Far-West's dozen named formations into five classes; a local geological map
+might do better.
 
 ## 10. Where everything lands
 
@@ -305,7 +355,8 @@ data/work/        per-run intermediates, safe to delete
   <name>_dem.tif             DEM on the run grid
   <name>_slope_tan.tif       slope as a gradient
   <name>_sca.tif             specific catchment area, m
-  <name>_recharge_scale.tif  dimensionless recharge multiplier
+  <name>_recharge_<scenario>.tif  dimensionless recharge multiplier,
+                             one per climate scenario
   <name>_regions.tif         calibration regions, if any
 outputs/          the products
   <name>_fitted_params.json
@@ -334,7 +385,9 @@ JSON. The fields that matter most:
 | `--dem-source` | `copernicus30` (default) or `copernicus90` |
 | `--samples` | Monte Carlo draws per pixel (default 200; the probability resolves to 1/n) |
 | `--uniform-recharge` | Hold recharge uniform, isolating terrain |
-| `--calibration-regions` | `lithology` or `landcover` |
+| `--calibration-regions` | `lithology` or `landcover` (measured at -0.0004 AUC) |
+| `--climate` | scenario for a single run: `current` or `ssp585:2061-2080` |
+| `--scenarios` | step7 only: the list to sweep |
 | `--output` | `probability`, `classes` or `both` |
 | `cv_block_deg` | Spatial-block size in degrees (default 0.25 ≈ 25 km) |
 | `rainfall_cv`, `pga_fraction` | The two trigger conventions |

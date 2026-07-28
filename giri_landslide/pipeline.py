@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import rasterio
 from rasterio.enums import Resampling
 
 from . import config as C
+from .model import climate as CL
 from .model import hazard, hydrology, physical
 from .input import sources
 from .utility import demo
@@ -122,13 +123,23 @@ def metres_per_cell(bbox, resolution_deg: float) -> Tuple[float, float]:
 # input resolution
 # ---------------------------------------------------------------------------
 
-def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
-    """Return a dict of raw (ungridded) input source paths for the run."""
+def resolve_inputs(cfg: C.Config, mode: str,
+                   scen: Optional[CL.ClimateScenario] = None
+                   ) -> Dict[str, object]:
+    """Return a dict of raw (ungridded) input source paths for the run.
+
+    ``scen`` selects which climate the precipitation comes from; it defaults to
+    whatever ``cfg.climate`` names. Everything else - terrain, lithology, land
+    cover - is climate-independent and is resolved identically either way.
+    """
+    scen = scen or CL.scenario(cfg.climate, cfg.climate_model, cfg.climate_res)
     bbox = cfg.clipped_bbox()
     if mode == "demo":
         grid = Grid.from_bbox(bbox, cfg.resolution_deg)
-        _log("demo", "generating synthetic inputs")
-        return demo.make_demo_inputs(grid, cfg.data_dir)
+        _log("demo", f"generating synthetic inputs ({scen.key})")
+        inputs = demo.make_demo_inputs(grid, cfg.data_dir, scen=scen)
+        inputs["climate"] = scen
+        return inputs
 
     inputs: Dict[str, object] = {}
 
@@ -189,23 +200,22 @@ def resolve_inputs(cfg: C.Config, mode: str) -> Dict[str, object]:
                 for f in os.listdir(cfg.precip_monthly_dir)
                 if f.endswith(".tif"))
         elif mode == "download":
-            if cfg.climate == "current":
+            if scen.is_baseline:
                 _log("download:precip",
                      f"WorldClim v2.1 monthly ({cfg.worldclim_res})")
                 inputs["precip_monthly"] = sources.download_worldclim_precip(
                     cfg.data_dir, res=cfg.worldclim_res)
             else:
-                _log("download:precip",
-                     f"CMIP6 {cfg.climate_model} {cfg.climate} "
-                     f"{cfg.climate_period} ({cfg.climate_res})")
+                _log("download:precip", f"CMIP6 {scen.label}")
                 fut = sources.download_worldclim_future(
-                    cfg.data_dir, ssp=cfg.climate, period=cfg.climate_period,
-                    model=cfg.climate_model, res=cfg.climate_res)
+                    cfg.data_dir, ssp=scen.ssp, period=scen.period,
+                    model=scen.gcm, res=scen.resolution)
                 if not fut:
                     raise RuntimeError(
-                        f"future-climate precipitation unavailable for "
-                        f"{cfg.climate_model}/{cfg.climate}/{cfg.climate_period}")
+                        "future-climate precipitation unavailable for "
+                        f"{scen.gcm}/{scen.ssp}/{scen.period}")
                 inputs["precip_monthly"] = fut
+    inputs["climate"] = scen
 
     if cfg.pga_path:
         inputs["pga"] = cfg.pga_path
@@ -257,7 +267,8 @@ def stage_terrain(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
 
 
 def stage_recharge(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
-                   reference_mm: Optional[float] = None
+                   reference_mm: Optional[float] = None,
+                   scen: Optional[CL.ClimateScenario] = None
                    ) -> Tuple[str, float]:
     """Dimensionless recharge scale, and the reference it is measured against.
 
@@ -266,12 +277,18 @@ def stage_recharge(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
     precipitation is the available proxy: it is the season when the soil column
     is closest to saturation and when the inventories were mostly filled.
 
-    The field is normalised by a fixed reference in millimetres rather than by
-    its own median, so that a scenario in which the whole area gets wetter
-    shows up as a scale above 1 instead of cancelling out.
+    ``reference_mm`` fixes what a multiplier of 1 means. It is set once, under
+    the present-day baseline, when the soil parameters are fitted, and every
+    later scenario is divided by that same number. Normalising a future field
+    by its own median instead would divide out exactly the signal being looked
+    for - a uniformly wetter future would come back looking like today.
+
+    Work files are tagged with the scenario key, so the baseline and its
+    futures coexist in one working directory without overwriting each other.
     """
     _ensure_dirs(cfg)
-    path = _work(cfg, "recharge_scale.tif")
+    scen = scen or inputs.get("climate") or CL.BASELINE
+    path = _work(cfg, f"recharge_{scen.key}.tif")
     if not cfg.spatial_recharge or "precip_monthly" not in inputs:
         if cfg.spatial_recharge:
             _log("recharge", "precipitation absent -> uniform recharge")
@@ -282,13 +299,13 @@ def stage_recharge(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
     # result depends only on the grid and the climate, so it is cached like the
     # terrain. A cached file on a different grid, or one left truncated by an
     # interrupted run, fails the grid check and is rebuilt.
-    precip = _work(cfg, "precip_max_month.tif")
+    precip = _work(cfg, f"precip_max_month_{scen.key}.tif")
     if _matches_grid(precip, grid):
-        _log("recharge", "wettest-month precipitation already staged, reusing")
+        _log("recharge", f"{scen.key}: wettest-month precipitation reused")
     else:
-        _log("recharge", "wettest-month precipitation")
+        _log("recharge", f"{scen.key}: wettest-month precipitation")
         sources.max_monthly_precip(inputs["precip_monthly"], grid, precip,
-                                   tmp_prefix=_work(cfg, "tmp"),
+                                   tmp_prefix=_work(cfg, f"tmp_{scen.key}"),
                                    block=cfg.block_size)
     p = _read(precip)
     ref = reference_mm or float(np.nanmedian(p))
@@ -296,7 +313,8 @@ def stage_recharge(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
         ref = float(np.nanmean(p)) or 1.0
     scale = p / ref
     _log("recharge", f"reference {ref:.0f} mm; scale spans "
-                     f"{np.nanmin(scale):.2f}-{np.nanmax(scale):.2f}")
+                     f"{np.nanmin(scale):.2f}-{np.nanmax(scale):.2f} "
+                     f"(median {np.nanmedian(scale):.2f})")
     _write(grid, scale, path)
     return path, float(ref)
 
@@ -498,29 +516,49 @@ def load_fitted(cfg: C.Config) -> Tuple[physical.SoilParameters,
 
 
 # ---------------------------------------------------------------------------
-# steps 4 and 5: stability under reference conditions, and under a scenario
+# production: stability under a climate, and under a trigger scenario
 # ---------------------------------------------------------------------------
 
 def run_stability(cfg: C.Config, mode: str = "download",
                   scenario: Optional[dict] = None,
-                  label: str = "susceptibility") -> Dict[str, str]:
+                  label: str = "susceptibility",
+                  climate: Optional[CL.ClimateScenario] = None,
+                  reference_mm: Optional[float] = None) -> Dict[str, str]:
     """Failure probability over the AOI.
 
-    With ``scenario`` None this is susceptibility: the probability of failure
-    at the recharge the parameters were fitted at, with no seismic loading.
-    With a scenario it is hazard: the same calculation with recharge scaled or
-    an inertial term added. There is deliberately only one code path, because
-    in a physical model the two differ by the value of two scalars.
+    Three things vary and everything else is shared:
+
+    * ``climate`` selects which precipitation drives the recharge field.
+    * ``scenario`` supplies a trigger - a recharge multiplier, a seismic
+      coefficient, or both.
+    * with neither, this is susceptibility: failure probability at the recharge
+      the parameters were fitted at, with no shaking.
+
+    There is deliberately one code path, because in a physical model
+    susceptibility, hazard and a climate projection differ only in the value of
+    two scalars and the choice of precipitation raster.
     """
     _ensure_dirs(cfg)
+    climate = climate or CL.scenario(cfg.climate, cfg.climate_model,
+                                     cfg.climate_res)
     bbox = cfg.clipped_bbox()
     grid = Grid.from_bbox(bbox, cfg.resolution_deg)
     _log("grid", f"{grid.width}x{grid.height} px @ {cfg.resolution_deg} deg")
 
-    inputs = resolve_inputs(cfg, mode)
+    inputs = resolve_inputs(cfg, mode, scen=climate)
     terrain = stage_terrain(cfg, grid, inputs)
-    params, by_region, reference_mm = load_fitted(cfg)
-    recharge_path, _ = stage_recharge(cfg, grid, inputs, reference_mm)
+    params, by_region, fitted_ref = load_fitted(cfg)
+    reference_mm = reference_mm or fitted_ref
+    if not climate.is_baseline and not reference_mm:
+        raise ValueError(
+            "a future-climate run needs the present-day recharge reference. "
+            "Either run step3-fit, which records it, or evaluate the baseline "
+            "first so it can be measured.")
+    # stage_recharge measures the reference when none was supplied, so take
+    # back what it used: that number is what a multiplier of 1 means, and every
+    # later scenario has to be divided by the same one.
+    recharge_path, reference_mm = stage_recharge(cfg, grid, inputs,
+                                                 reference_mm, scen=climate)
     region_path = stage_regions(cfg, grid, inputs) if by_region else None
 
     slope, sca = _read(terrain["slope"]), _read(terrain["sca"])
@@ -570,11 +608,15 @@ def run_stability(cfg: C.Config, mode: str = "download",
 
     summary = {
         "label": label,
+        "climate": climate.as_dict(),
         "parameters": params.as_dict(),
         "n_calibration_regions": len(by_region),
         "recharge_reference_mm": reference_mm,
         "scenario": scenario,
         "unstable_area_pct": _area_above(pfail, 0.5),
+        "mean_probability": float(np.nanmean(pfail)),
+        "bbox": list(bbox),
+        "resolution_deg": cfg.resolution_deg,
         "outputs": out,
     }
     path = _out(cfg, f"{label}_summary.json")
@@ -591,15 +633,24 @@ def _area_above(arr: np.ndarray, threshold: float) -> float:
     return float(100.0 * (arr[ok] > threshold).mean()) if ok.any() else 0.0
 
 
-def run_susceptibility(cfg: C.Config, mode: str = "download") -> Dict[str, str]:
-    """STEP 4 - stability under the conditions the parameters were fitted at."""
-    return run_stability(cfg, mode, scenario=None, label="susceptibility")
+def run_susceptibility(cfg: C.Config, mode: str = "download",
+                       climate: Optional[CL.ClimateScenario] = None,
+                       reference_mm: Optional[float] = None) -> Dict[str, str]:
+    """STEP 5 - susceptibility under one climate, no trigger applied."""
+    climate = climate or CL.scenario(cfg.climate, cfg.climate_model,
+                                     cfg.climate_res)
+    label = ("susceptibility" if climate.is_baseline
+             else f"susceptibility_{climate.key}")
+    return run_stability(cfg, mode, scenario=None, label=label,
+                         climate=climate, reference_mm=reference_mm)
 
 
 def run_hazard(cfg: C.Config, mode: str = "download",
                return_period_yr: Optional[float] = None,
-               pga_g: Optional[float] = None) -> Dict[str, str]:
-    """STEP 5 - stability under a stated triggering scenario."""
+               pga_g: Optional[float] = None,
+               climate: Optional[CL.ClimateScenario] = None
+               ) -> Dict[str, str]:
+    """STEP 6 - stability under a stated triggering scenario."""
     rp = return_period_yr or cfg.scenario_return_period_yr
     pga = pga_g if pga_g is not None else cfg.scenario_pga_g
     terms = hazard.scenario_terms(cfg.trigger, return_period_yr=rp, pga_g=pga,
@@ -608,7 +659,118 @@ def run_hazard(cfg: C.Config, mode: str = "download",
     terms["description"] = hazard.describe_scenario(cfg.trigger, terms, rp, pga)
     label = (f"hazard_rp{rp:g}" if cfg.trigger == "rainfall"
              else f"hazard_pga{pga:g}")
-    return run_stability(cfg, mode, scenario=terms, label=label)
+    return run_stability(cfg, mode, scenario=terms, label=label,
+                         climate=climate)
+
+
+def run_hazard_suite(cfg: C.Config, mode: str = "download",
+                     climate: Optional[CL.ClimateScenario] = None
+                     ) -> Dict[str, object]:
+    """STEP 6 - every trigger scenario the config asks for.
+
+    Rainfall return periods and peak ground accelerations produce separate
+    maps rather than one blended figure, because they are different questions
+    and a user needs to know which one a map answers.
+    """
+    out: Dict[str, object] = {"rainfall": {}, "earthquake": {}}
+    trigger = cfg.trigger
+    try:
+        cfg.trigger = "rainfall"
+        for rp in cfg.return_periods_yr:
+            _log("hazard", f"rainfall, {rp:g}-year return period")
+            out["rainfall"][f"{rp:g}yr"] = run_hazard(
+                cfg, mode, return_period_yr=rp, climate=climate)
+        cfg.trigger = "earthquake"
+        for pga in cfg.pga_scenarios_g:
+            _log("hazard", f"earthquake, PGA {pga:g} g")
+            out["earthquake"][f"{pga:g}g"] = run_hazard(
+                cfg, mode, pga_g=pga, climate=climate)
+    finally:
+        cfg.trigger = trigger
+    return out
+
+
+# ---------------------------------------------------------------------------
+# step 7: the climate sweep
+# ---------------------------------------------------------------------------
+
+def run_climate(cfg: C.Config, mode: str = "download",
+                specs: Optional[Sequence[str]] = None) -> Dict[str, object]:
+    """STEP 7 - susceptibility under present and future climates, and the change.
+
+    The baseline is always evaluated, because every future is reported as a
+    difference from it. Each future is normalised by the *present-day* recharge
+    reference recorded at fitting time, so a uniformly wetter projection shows
+    up as a shift rather than cancelling against its own median.
+
+    Terrain is routed once and shared by every scenario; only the recharge
+    field and the outputs differ.
+    """
+    scenarios = CL.parse_all(list(specs or cfg.climate_suite),
+                             cfg.climate_model, cfg.climate_res)
+    if not any(s.is_baseline for s in scenarios):
+        scenarios.insert(0, CL.BASELINE)
+
+    _log("climate", f"{len(scenarios)} scenarios: "
+                    + ", ".join(s.key for s in scenarios))
+
+    # The baseline goes first, and not only for reporting: it fixes the
+    # recharge reference every future is divided by. Taking it from the fit is
+    # preferable, since that is the recharge the soil parameters describe, but
+    # measuring it from the present-day field keeps the sweep runnable without
+    # an inventory - the futures then still shift against a fixed present day
+    # rather than against their own medians.
+    maps: Dict[str, Dict[str, str]] = {}
+    _log("climate", CL.BASELINE.label)
+    maps[CL.BASELINE.key] = run_susceptibility(cfg, mode, climate=CL.BASELINE)
+    with open(maps[CL.BASELINE.key]["summary"], encoding="utf-8") as fh:
+        reference_mm = json.load(fh).get("recharge_reference_mm")
+    _log("climate", f"present-day recharge reference {reference_mm or 0:.0f} mm")
+
+    for s in scenarios:
+        if s.is_baseline:
+            continue
+        _log("climate", s.label)
+        maps[s.key] = run_susceptibility(cfg, mode, climate=s,
+                                         reference_mm=reference_mm)
+
+    baseline = maps[CL.BASELINE.key]["probability"]
+    changes, rows = {}, []
+    with rasterio.open(baseline) as src:
+        b = src.read(1).astype("float64")
+        b[b == src.nodata] = np.nan
+    rows.append({"scenario": CL.BASELINE.key, "label": CL.BASELINE.label,
+                 "mean_probability": round(float(np.nanmean(b)), 4),
+                 "unstable_area_pct": round(_area_above(b, 0.5), 2),
+                 "mean_change": 0.0, "pct_more_likely": 0.0})
+
+    for s in scenarios:
+        if s.is_baseline:
+            continue
+        prefix = _out(cfg, f"climate_{s.key}")
+        changes[s.key] = compare_probability(baseline,
+                                             maps[s.key]["probability"],
+                                             prefix, block=cfg.block_size)
+        with open(changes[s.key]["summary"], encoding="utf-8") as fh:
+            st = json.load(fh)
+        with rasterio.open(maps[s.key]["probability"]) as src:
+            a = src.read(1).astype("float64")
+            a[a == src.nodata] = np.nan
+        rows.append({"scenario": s.key, "label": s.label,
+                     "mean_probability": round(float(np.nanmean(a)), 4),
+                     "unstable_area_pct": round(_area_above(a, 0.5), 2),
+                     "mean_change": st["mean_change"],
+                     "pct_more_likely": st["pct_more_likely"]})
+
+    report = {"scenarios": rows,
+              "maps": {k: v.get("probability") for k, v in maps.items()},
+              "changes": {k: v["change"] for k, v in changes.items()}}
+    path = _out(cfg, "climate_summary.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+    report["summary"] = path
+    _log("done", f"climate sweep -> {path}")
+    return report
 
 
 # ---------------------------------------------------------------------------
@@ -728,18 +890,132 @@ def quicklook(prob_path: str, out_png: str) -> str:
 # whole workflow
 # ---------------------------------------------------------------------------
 
-def run(cfg: C.Config, mode: str = "demo") -> Dict[str, str]:
-    """Fit (if an inventory is supplied), then susceptibility, then hazard."""
-    out: Dict[str, str] = {}
+# ---------------------------------------------------------------------------
+# step 8: package the deliverables
+# ---------------------------------------------------------------------------
+
+def run_package(cfg: C.Config) -> Dict[str, str]:
+    """STEP 8 - collect what was produced, with the provenance to defend it.
+
+    Nothing is recomputed and nothing is copied. This walks the output
+    directory, records what exists, and attaches the things a reader needs in
+    order to know what a raster means: the fitted parameters, the held-out
+    score, the grid, the data sources and the two trigger conventions.
+
+    A map without this file is not a deliverable, it is a picture.
+    """
+    _ensure_dirs(cfg)
+    prefix = f"{cfg.name}_"
+    products = sorted(f for f in os.listdir(cfg.out_dir)
+                      if f.startswith(prefix)
+                      and f.endswith((".tif", ".png", ".json")))
+
+    fit_path = cfg.fitted_params or _out(cfg, "fitted_params.json")
+    fit = {}
+    if os.path.exists(fit_path):
+        with open(fit_path, encoding="utf-8") as fh:
+            fit = json.load(fh)
+
+    def group(kind: str) -> List[str]:
+        return [f for f in products if kind in f and f.endswith(".tif")]
+
+    # Describe the rasters that exist, not the config that happens to be in
+    # hand: step8 is routinely run without the --bbox/--res the products were
+    # made with, and a manifest that misreports their extent is worse than no
+    # manifest at all.
+    area = {"bbox": list(cfg.clipped_bbox()),
+            "resolution_deg": cfg.resolution_deg,
+            "cells": cfg.cell_count(),
+            "dem_source": cfg.dem_source,
+            "read_from": "config"}
+    rasters = [f for f in products if f.endswith(".tif")]
+    if rasters:
+        with rasterio.open(os.path.join(cfg.out_dir, rasters[0])) as src:
+            b = src.bounds
+            area = {"bbox": [b.left, b.bottom, b.right, b.top],
+                    "resolution_deg": abs(src.transform.a),
+                    "cells": src.width * src.height,
+                    "width": src.width, "height": src.height,
+                    "crs": str(src.crs),
+                    "dem_source": cfg.dem_source,
+                    "read_from": rasters[0]}
+
+    manifest = {
+        "name": cfg.name,
+        "model": "SINMAP infinite-slope stability over D-infinity flow routing",
+        "package_version": __import__("giri_landslide").__version__,
+        "area": area,
+        "calibration": {
+            "inventory": fit.get("inventory"),
+            "n_presence": fit.get("n_presence"),
+            "n_background": fit.get("n_background"),
+            "parameters": fit.get("parameters"),
+            "recharge_reference_mm": fit.get("recharge_reference_mm"),
+            "in_sample_auc": fit.get("in_sample_auc"),
+            "held_out_auc": (fit.get("cv_spatial") or {}).get("auc_mean"),
+            "held_out_auc_sd": (fit.get("cv_spatial") or {}).get("auc_std"),
+            "warnings": fit.get("warnings", []),
+        },
+        "conventions": {
+            "rainfall_cv": cfg.rainfall_cv,
+            "pga_fraction": cfg.pga_fraction,
+            "note": "neither is fitted here; see docs/RESULTS.md section 5. "
+                    "The rainfall value is effectively inert; the PGA fraction "
+                    "is not, so quote seismic scenarios as a range over it.",
+        },
+        "products": {
+            "susceptibility": group("susceptibility"),
+            "hazard": group("hazard"),
+            "climate_change": group("climate"),
+            "critical_acceleration": group("critical_acceleration"),
+            "reports": [f for f in products if f.endswith(".json")],
+            "quicklooks": [f for f in products if f.endswith(".png")],
+        },
+        "interpretation": [
+            "The continuous failure probability is the product; the six-class "
+            "map is a legend whose lower three bands are not ordered.",
+            "Values are relative. Differences between pixels are meaningful; "
+            "the value at a pixel is not a frequency of failure per year.",
+            "Skill was measured on soil-mantled crystalline terrain. It is "
+            "markedly lower in weak sedimentary hill country, and nothing in "
+            "the parameters warns which case an area is.",
+        ],
+    }
+    path = _out(cfg, "manifest.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+    n = sum(len(v) for v in manifest["products"].values())
+    _log("package", f"{n} products catalogued -> {path}")
+    return {"manifest": path}
+
+
+# ---------------------------------------------------------------------------
+# the whole sequence
+# ---------------------------------------------------------------------------
+
+def run(cfg: C.Config, mode: str = "demo",
+        climate_suite: bool = True) -> Dict[str, object]:
+    """Calibrate if an inventory is supplied, then produce every output.
+
+    This is the whole workflow end to end: fit, susceptibility under the
+    present day, every trigger scenario, the climate sweep, and the manifest.
+    """
+    out: Dict[str, object] = {}
     if cfg.inventory_path:
         fit = run_fit(cfg, mode=mode)
         cfg.fitted_params = fit["path"]
         out["fitted_params"] = fit["path"]
-    out.update(run_susceptibility(cfg, mode=mode))
-    out.update({f"hazard_{k}": v for k, v in run_hazard(cfg, mode=mode).items()})
+
+    base = run_susceptibility(cfg, mode=mode)
+    out["susceptibility"] = base
+    out["hazard"] = run_hazard_suite(cfg, mode=mode)
+    if climate_suite:
+        out["climate"] = run_climate(cfg, mode=mode)
+
     try:
-        out["quicklook"] = quicklook(out["probability"],
+        out["quicklook"] = quicklook(base["probability"],
                                      _out(cfg, "quicklook.png"))
     except Exception as exc:  # matplotlib optional
         _log("quicklook", f"skipped ({exc})")
+    out.update(run_package(cfg))
     return out

@@ -25,7 +25,7 @@ conventions:
 If the model really is about initiation, the crown should score best, and the
 gap is the cost of sampling an inventory in the wrong place.
 
-    python analysis/06_inventory_geometry.py
+    python analysis/05_inventory_geometry.py
 """
 
 from __future__ import annotations
@@ -169,7 +169,7 @@ def main() -> None:
         ("cv_spatial_mean", "spatialCV", ".4f"),
     ]))
 
-    K.save("06_inventory_geometry", {"rows": rows, "resolution_deg": RES})
+    K.save("05_inventory_geometry", {"rows": rows, "resolution_deg": RES})
 
 
 if __name__ == "__main__":

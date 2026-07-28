@@ -1,5 +1,5 @@
 {
-  "_comment": "STEP 3 - the reference fit. Gorkha earthquake footprint in Nepal, whose Roback inventory (24,795 satellite-mapped source areas) is the best available in the region. Pass --inventory to swap in farwest (monsoon) or sikkim. Read the spatial-block CV figure and any '!' warnings before trusting the parameters, then validate with step6.",
+  "_comment": "PHASE 2 - the reference calibration. Gorkha earthquake footprint in Nepal, whose Roback inventory ships mapped source areas, which is what an infinite-slope model predicts. Read the spatial-block CV figure and any '!' warnings before trusting the parameters, then validate against a different inventory with step4.",
   "name": "gorkha",
   "bbox": [
     84.5,
@@ -13,8 +13,7 @@
     105.0,
     39.0
   ],
-  "resolution_deg": 0.0025,
-  "trigger": "rainfall",
+  "resolution_deg": 0.00027778,
   "inventory_path": "data/raw/inventory/roback/Roback_Nepal_final_files/Source20170209.shp",
   "dem_source": "copernicus30",
   "worldclim_res": "30s",
@@ -22,6 +21,7 @@
   "cv_folds": 5,
   "n_samples": 200,
   "n_samples_fit": 60,
+  "climate": "current",
   "output": "both",
   "block_size": 1024,
   "data_dir": "data/raw",

@@ -16,7 +16,7 @@ This is not a like-for-like comparison of two areas - the terrain and the
 mapping differ too - so the number to read is the direction and size of the
 gap, not a ranking of the two catchments.
 
-    python analysis/04_monsoon.py
+    python analysis/03_domain.py
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def main() -> None:
               f"C {r['parameters']['cohesion']}  "
               f"R/T {r['parameters']['rt']}")
 
-    K.save("04_monsoon", {"areas": rows, "resolution_deg": RES})
+    K.save("03_domain", {"areas": rows, "resolution_deg": RES})
 
 
 if __name__ == "__main__":

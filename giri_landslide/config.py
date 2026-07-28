@@ -176,16 +176,23 @@ class Config:
     glim_full: bool = True                    # fetch/use full-resolution GLiM
     worldclim_res: str = "30s"                # 30s | 2.5m | 5m | 10m
 
-    # Climate scenario -------------------------------------------------------
-    # "current" uses the WorldClim 1970-2000 baseline. An SSP name switches
-    # recharge to downscaled CMIP6 projections: a wetter future raises R,
-    # raises wetness, and lowers the factor of safety. The scenario field is
-    # normalised by the *present-day* reference so a uniform wetting shows up
-    # rather than cancelling.
-    climate: str = "current"                  # current|ssp126|ssp245|ssp370|ssp585
-    climate_period: str = "2061-2080"         # 2021-2040|2041-2060|2061-2080|2081-2100
+    # Climate ----------------------------------------------------------------
+    # Climate enters only through the recharge field. "current" is the
+    # WorldClim 1970-2000 baseline; an SSP specification switches recharge to
+    # downscaled CMIP6 projections, so a wetter future raises R, raises wetness
+    # and lowers the factor of safety. See model/climate.py.
+    #
+    #   climate           the scenario a single stability run is evaluated
+    #                     under: "current", or "ssp585:2061-2080"
+    #   climate_suite     the scenarios step7 sweeps. The baseline is always
+    #                     included, since every future is measured against it.
+    climate: str = "current"
+    climate_suite: List[str] = field(
+        default_factory=lambda: ["current", "ssp245:2061-2080",
+                                 "ssp585:2061-2080"])
     climate_model: str = "IPSL-CM6A-LR"       # a mid-sensitivity CMIP6 model
     climate_res: str = "2.5m"                 # CMIP6 grid (30s is ~22 GB/file)
+
     glim_path: Optional[str] = None           # GLiM vector (.shp/.gdb) or raster
     precip_monthly_dir: Optional[str] = None  # 12 monthly precip rasters (mm)
     pga_path: Optional[str] = None            # PGA raster (g) for seismic runs
@@ -205,7 +212,11 @@ class Config:
     #: Extra outputs that cost almost nothing once the fit exists.
     write_critical_acceleration: bool = True
 
-    fitted: Optional[dict] = field(default=None)   # inlined fit, if any
+    #: Scenarios step6 evaluates: rainfall return periods (years) and peak
+    #: ground accelerations (g). Each produces its own map.
+    return_periods_yr: List[float] = field(
+        default_factory=lambda: [10.0, 100.0, 1000.0])
+    pga_scenarios_g: List[float] = field(default_factory=lambda: [0.15, 0.35])
 
     # ---- (de)serialisation ------------------------------------------------
     @classmethod

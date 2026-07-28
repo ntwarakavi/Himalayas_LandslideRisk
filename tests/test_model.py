@@ -20,7 +20,9 @@ import numpy as np
 from giri_landslide import config as C
 from giri_landslide import pipeline
 from giri_landslide.input import inventory
-from giri_landslide.model import crossval, hazard, hydrology as H, physical as P
+from giri_landslide.model import (climate as CL, crossval, hazard,
+                                  hydrology as H, physical as P)
+from giri_landslide.utility import demo
 from giri_landslide.utility.grid import Grid
 
 
@@ -512,6 +514,140 @@ def _demo_config(tmp, **kw):
     return C.Config(**base)
 
 
+# ---------------------------------------------------------------------------
+# climate scenarios
+# ---------------------------------------------------------------------------
+
+def test_climate_scenario_parsing():
+    assert CL.scenario("current").is_baseline
+    assert CL.scenario("baseline").key == "current"
+
+    s = CL.scenario("ssp585:2061-2080")
+    assert (s.ssp, s.period, s.is_baseline) == ("ssp585", "2061-2080", False)
+    assert s.key == "ssp585_2061-2080"
+    # A bare pathway takes the last window rather than failing.
+    assert CL.scenario("ssp245").period == CL.PERIODS[-1]
+
+    for bad in ("ssp999:2061-2080", "ssp585:1999-2000"):
+        try:
+            CL.scenario(bad)
+            assert False, f"expected {bad} to raise"
+        except ValueError:
+            pass
+
+
+def test_climate_suites_always_include_the_baseline():
+    """Every future is reported as a change from today, so today must be there."""
+    for group in (CL.suite(), CL.trajectory("ssp370")):
+        assert group[0].is_baseline
+        assert len({s.key for s in group}) == len(group), "duplicate scenarios"
+
+    # parse_all preserves order and drops repeats.
+    got = CL.parse_all(["ssp245:2041-2060", "current", "ssp245:2041-2060"])
+    assert [s.key for s in got] == ["ssp245_2041-2060", "current"]
+
+
+def test_future_recharge_is_normalised_by_the_present_day_reference():
+    """A uniformly wetter future must show as a shift, not cancel out."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="clim")
+        grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
+
+        base = CL.BASELINE
+        inputs = pipeline.resolve_inputs(cfg, "demo", scen=base)
+        _, reference = pipeline.stage_recharge(cfg, grid, inputs, scen=base)
+        assert reference > 0
+
+        future = CL.scenario("ssp585:2081-2100")
+        f_inputs = pipeline.resolve_inputs(cfg, "demo", scen=future)
+        f_path, f_ref = pipeline.stage_recharge(cfg, grid, f_inputs,
+                                                reference_mm=reference,
+                                                scen=future)
+        assert f_ref == reference, "the reference must not be re-measured"
+
+        import rasterio
+        with rasterio.open(f_path) as src:
+            a = src.read(1)
+            a = a[a != src.nodata]
+        expected = demo.demo_precip_factor(future)
+        assert abs(float(np.median(a)) - expected) < 0.02, (
+            "future recharge should sit at the wetting factor above the "
+            "present-day reference")
+
+        # Had it been normalised by its own median it would sit at 1.0.
+        assert float(np.median(a)) > 1.05
+
+
+def test_climate_scenarios_do_not_share_work_files():
+    """Two climates on one grid must not overwrite each other's recharge."""
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="two")
+        grid = Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg)
+        paths = set()
+        for spec in ("current", "ssp126:2021-2040", "ssp585:2081-2100"):
+            s = CL.scenario(spec)
+            inputs = pipeline.resolve_inputs(cfg, "demo", scen=s)
+            path, _ = pipeline.stage_recharge(cfg, grid, inputs,
+                                              reference_mm=500.0, scen=s)
+            paths.add(path)
+        assert len(paths) == 3, paths
+
+
+def test_climate_sweep_produces_maps_and_changes():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="sweep", resolution_deg=0.005)
+        report = pipeline.run_climate(
+            cfg, mode="demo", specs=["ssp585:2081-2100"])
+
+        keys = [r["scenario"] for r in report["scenarios"]]
+        assert keys[0] == "current", "the baseline must be evaluated first"
+        assert "ssp585_2081-2100" in keys
+        assert os.path.exists(report["summary"])
+        for path in report["maps"].values():
+            assert os.path.exists(path)
+        for path in report["changes"].values():
+            assert os.path.exists(path)
+
+        # A wetter future cannot make the ground safer on average.
+        fut = [r for r in report["scenarios"]
+               if r["scenario"] == "ssp585_2081-2100"][0]
+        assert fut["mean_change"] >= 0.0
+
+
+def test_package_manifest_carries_provenance():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _demo_config(tmp, name="pack", resolution_deg=0.005)
+        pipeline.run_susceptibility(cfg, mode="demo")
+        out = pipeline.run_package(cfg)
+
+        m = json.load(open(out["manifest"]))
+        assert m["name"] == "pack"
+        assert "SINMAP" in m["model"]
+        assert m["area"]["cells"] > 0
+        assert m["conventions"]["pga_fraction"] == cfg.pga_fraction
+        assert m["products"]["susceptibility"], "no susceptibility products"
+        assert any("legend" in s for s in m["interpretation"])
+
+
+def test_manifest_describes_the_rasters_not_the_config():
+    """step8 is run without the --bbox/--res the products were made with."""
+    with tempfile.TemporaryDirectory() as tmp:
+        made = _demo_config(tmp, name="prov", bbox=(83.0, 27.5, 83.2, 27.7),
+                            resolution_deg=0.005)
+        pipeline.run_susceptibility(made, mode="demo")
+
+        # A config carrying a different area entirely, as happens when step8
+        # is invoked with only --name.
+        stale = _demo_config(tmp, name="prov", bbox=(84.0, 28.0, 85.0, 29.0),
+                             resolution_deg=0.0008333333)
+        m = json.load(open(pipeline.run_package(stale)["manifest"]))
+
+        assert m["area"]["read_from"].endswith(".tif")
+        assert abs(m["area"]["bbox"][0] - 83.0) < 1e-6, m["area"]["bbox"]
+        assert abs(m["area"]["resolution_deg"] - 0.005) < 1e-9
+        assert m["area"]["cells"] == 40 * 40
+
+
 def test_end_to_end_demo_rainfall():
     import rasterio
 
@@ -613,7 +749,7 @@ def test_recharge_stage_is_cached_and_grid_checked():
         inputs = pipeline.resolve_inputs(cfg, "demo")
 
         path, ref = pipeline.stage_recharge(cfg, grid, inputs)
-        precip = os.path.join(cfg.work_dir, "rech_precip_max_month.tif")
+        precip = os.path.join(cfg.work_dir, "rech_precip_max_month_current.tif")
         stamp = os.path.getmtime(precip)
         assert ref > 0
 

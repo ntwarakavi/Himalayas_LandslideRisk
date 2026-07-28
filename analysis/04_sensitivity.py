@@ -21,7 +21,7 @@ they behave very differently:
   this moves, absolute statements about a scenario do depend on the convention,
   and should be quoted as a range.
 
-    python analysis/05_sensitivity.py
+    python analysis/04_sensitivity.py
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ def main() -> None:
         ("mean_probability", "mean P", ".4f"),
     ]))
 
-    K.save("05_sensitivity", {"rainfall": rain_rows, "earthquake": quake_rows,
+    K.save("04_sensitivity", {"rainfall": rain_rows, "earthquake": quake_rows,
                               "parameters": params.as_dict(),
                               "resolution_deg": RES})
 

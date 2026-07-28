@@ -1,5 +1,5 @@
 {
-  "_comment": "STEP 4 QUICKSTART - fastest real run. Small AOI on the Himachal front at 250 m with the 90 m DEM and a coarse climatology, so it finishes in minutes on roughly 120 MB. No inventory, so it uses SINMAP's generic parameter ranges: the pattern is meaningful, the level is not. Use 02 for a fitted run.",
+  "_comment": "PHASE 3 QUICKSTART - fastest real run. Small AOI on the Himachal front at 90 m with the 90 m DEM, so it finishes in minutes on roughly 120 MB. No inventory, so SINMAP's generic parameter ranges are used: the pattern is meaningful, the level is not. Use 02 for a calibrated run.",
   "name": "quickstart",
   "bbox": [
     76.0,
@@ -13,10 +13,10 @@
     105.0,
     39.0
   ],
-  "resolution_deg": 0.0025,
-  "trigger": "rainfall",
+  "resolution_deg": 0.00083333,
   "dem_source": "copernicus90",
   "worldclim_res": "10m",
+  "climate": "current",
   "output": "both",
   "block_size": 1024,
   "data_dir": "data/raw",

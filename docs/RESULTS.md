@@ -68,7 +68,7 @@ Three things worth noting:
 
 ## 2. Benchmark against statistical models
 
-`analysis/03_benchmark.py` — Gorkha at 30 m. Same presence points, same
+Gorkha at 30 m. (The benchmark script was removed when the codebase was consolidated on SINMAP, since it instantiated other models; it is recoverable with `git show 407d976:analysis/03_benchmark.py`.) Same presence points, same
 background points, same spatial folds for every model. Every model, including
 the SINMAP parameter search, is refitted inside each fold.
 
@@ -170,7 +170,7 @@ so it is not the parameters — it is the predictors.
 
 ## 4. Where the model does not work
 
-`analysis/04_monsoon.py` — the same model, fitted and cross-validated
+`analysis/03_domain.py` — the same model, fitted and cross-validated
 independently in each area at 30 m.
 
 | Area | Landslides | In-sample | Random CV | **Spatial CV** | ± | top 20 % |
@@ -188,7 +188,7 @@ Two candidate explanations were tested and both were largely ruled out.
 
 ### 4a. It is not mainly where the inventory is sampled
 
-`analysis/06_inventory_geometry.py`. An infinite-slope model predicts
+`analysis/05_inventory_geometry.py`. An infinite-slope model predicts
 *initiation*. Roback ships mapped source areas, whose centroid sits in the
 initiation zone; Far-West ships whole-landslide polygons, whose centroid sits
 somewhere down the runout on gentler, more convergent ground. Sampling the
@@ -211,7 +211,7 @@ worth getting right, not the explanation.
 
 ### 4b. It is not lithological zoning either
 
-`analysis/07_calibration_regions.py`. Far-West's own attributes name a dozen
+`analysis/06_calibration_regions.py`. Far-West's own attributes name a dozen
 formations — Ranimatta, Lakharpata, Siwalik sandstones, basic rocks — with
 thousands of failures each, exactly the heterogeneity SINMAP's calibration
 regions exist for, and exactly what Gorkha (97 % metamorphics) lacks. Both
@@ -251,7 +251,7 @@ you which case you are in — only a local inventory does.
 
 ## 5. Sensitivity to the unfitted conventions
 
-`analysis/05_sensitivity.py` — Gorkha at 30 m. Two numbers in the model are
+`analysis/04_sensitivity.py` — Gorkha at 30 m. Two numbers in the model are
 neither mechanics nor fitted: the rainfall coefficient of variation and the
 pseudo-static fraction of PGA. What rests on them?
 
@@ -326,7 +326,7 @@ is not much use.
 
 ## 8. Which model to use
 
-`analysis/08_transfer_benchmark.py` — every model fitted on Gorkha at 30 m and
+Every model fitted on Gorkha at 30 m and
 applied **unchanged** to two other catchments, scored against their own
 inventories. The Gorkha column is in-sample for every model alike, so it is a
 fair "apparent performance" comparison; the away columns are what a user

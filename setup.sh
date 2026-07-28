@@ -57,11 +57,13 @@ Activate the environment in every new shell:
 Next steps:
     ./scripts/run_demo.sh                        # offline, no downloads
 
-    python -m giri_landslide.cli step2-download  --config configs/01_quickstart.json
-    python -m giri_landslide.cli step4-stability --config configs/01_quickstart.json
+    # phase 1 + 3: fetch data and build a map with generic parameters
+    python -m giri_landslide.cli step2-download        --config configs/01_quickstart.json
+    python -m giri_landslide.cli step5-susceptibility  --config configs/01_quickstart.json
 
-    # then fit the soil parameters to real landslides:
-    python -m giri_landslide.cli step3-fit       --config configs/02_gorkha_fit.json
+    # phase 2: calibrate to real landslides, then validate on another inventory
+    python -m giri_landslide.cli step3-fit      --config configs/02_calibrate_gorkha.json
+    python -m giri_landslide.cli step4-validate --name gorkha --inventory <path>
 
 See docs/RUNNING_LOCALLY.md for the full walkthrough.
 EOF

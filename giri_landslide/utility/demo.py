@@ -55,8 +55,35 @@ def _fractal_terrain(shape, seed: int = 7) -> np.ndarray:
     return field
 
 
-def make_demo_inputs(grid: Grid, data_dir: str) -> Dict[str, object]:
-    """Create synthetic inputs on ``grid``; return a paths dict for the pipeline."""
+#: Synthetic wetting per pathway, as a multiplier on monthly precipitation.
+#: Roughly the direction and spread the CMIP6 ensemble gives for South Asian
+#: monsoon precipitation, so the offline demo exercises the climate path with a
+#: signal in it rather than reporting "no change" and leaving a user unable to
+#: tell whether the machinery works.
+DEMO_CLIMATE_WETTING = {"ssp126": 1.04, "ssp245": 1.09,
+                        "ssp370": 1.14, "ssp585": 1.20}
+
+
+def demo_precip_factor(scen) -> float:
+    """Precipitation multiplier for a synthetic climate scenario."""
+    if scen is None or getattr(scen, "is_baseline", True):
+        return 1.0
+    wet = DEMO_CLIMATE_WETTING.get(scen.ssp, 1.10)
+    # Later windows get more of the signal, on a straight ramp across the four
+    # twenty-year periods the archive offers.
+    periods = ("2021-2040", "2041-2060", "2061-2080", "2081-2100")
+    step = periods.index(scen.period) + 1 if scen.period in periods else 4
+    return 1.0 + (wet - 1.0) * step / len(periods)
+
+
+def make_demo_inputs(grid: Grid, data_dir: str,
+                     scen=None) -> Dict[str, object]:
+    """Create synthetic inputs on ``grid``; return a paths dict for the pipeline.
+
+    ``scen`` is a :class:`giri_landslide.model.climate.ClimateScenario`. Only
+    the precipitation depends on it, which mirrors the real model: climate
+    enters through recharge and nothing else.
+    """
     h, w = grid.shape
     terrain = _fractal_terrain((h, w))
 
@@ -88,15 +115,17 @@ def make_demo_inputs(grid: Grid, data_dir: str) -> Dict[str, object]:
                         litho, "uint8", 255)
 
     # --- 12 monthly precipitation rasters (mm), monsoonal, orographic -------
+    tag = getattr(scen, "key", "current")
+    wetting = demo_precip_factor(scen)
     monthly_paths: List[str] = []
-    base = 40.0 + 260.0 * terrain                     # orographic gradient
+    base = (40.0 + 260.0 * terrain) * wetting         # orographic gradient
     monthly_factor = [0.3, 0.35, 0.5, 0.8, 1.4, 2.6, 3.2, 3.0, 1.8, 0.9,
                       0.4, 0.3]                        # monsoon peak Jul/Aug
     for m, f in enumerate(monthly_factor, start=1):
         pr = base * f
         monthly_paths.append(
-            _write(os.path.join(data_dir, "demo", f"prec_{m:02d}.tif"), grid,
-                   pr, "float32", -9999.0))
+            _write(os.path.join(data_dir, "demo", f"prec_{tag}_{m:02d}.tif"),
+                   grid, pr, "float32", -9999.0))
 
     # --- PGA scenario raster (g): a fault-parallel gradient -----------------
     pga = 0.05 + 0.5 * np.linspace(0, 1, w)[None, :] * (0.5 + 0.5 * terrain)

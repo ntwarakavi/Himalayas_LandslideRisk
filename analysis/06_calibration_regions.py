@@ -14,7 +14,7 @@ per-region parameters *inside each spatial fold* and scores them on the fold
 withheld. If the zoning is capturing real mechanical differences it will win
 there; if it is fitting noise, it will not.
 
-    python analysis/07_calibration_regions.py
+    python analysis/06_calibration_regions.py
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def main() -> None:
             print(f"\n  {area}: zoning changes held-out AUC by {d:+.4f} "
                   f"(fold spread +/-{a[0]['auc_std']:.4f})")
 
-    K.save("07_calibration_regions", {"rows": rows, "resolution_deg": RES,
+    K.save("06_calibration_regions", {"rows": rows, "resolution_deg": RES,
                                       "min_presence": MIN_PRESENCE})
 
 

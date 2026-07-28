@@ -71,8 +71,17 @@ def _read(path: str) -> np.ndarray:
 
 def _write(grid: Grid, arr: np.ndarray, path: str, dtype: str = "float32",
            nodata=-9999.0) -> str:
-    with rasterio.open(path, "w", **grid.profile(dtype, nodata)) as dst:
+    """Write a band, atomically.
+
+    Work files are named after the run, so two runs of the same name - two
+    experiments sharing a cached grid, say - can target the same path at once.
+    Writing through a temporary and renaming means a reader either sees the old
+    file or the complete new one, never a half-written raster.
+    """
+    tmp = f"{path}.tmp{os.getpid()}"
+    with rasterio.open(tmp, "w", **grid.profile(dtype, nodata)) as dst:
         dst.write(np.where(np.isfinite(arr), arr, nodata).astype(dtype), 1)
+    os.replace(tmp, path)
     return path
 
 
@@ -268,11 +277,18 @@ def stage_recharge(cfg: C.Config, grid: Grid, inputs: Dict[str, object],
         _uniform_raster(grid, 1.0, path)
         return path, float(reference_mm or 0.0)
 
+    # Warping twelve monthly global rasters onto the grid is not free, and the
+    # result depends only on the grid and the climate, so it is cached like the
+    # terrain. A cached file on a different grid, or one left truncated by an
+    # interrupted run, fails the grid check and is rebuilt.
     precip = _work(cfg, "precip_max_month.tif")
-    _log("recharge", "wettest-month precipitation")
-    sources.max_monthly_precip(inputs["precip_monthly"], grid, precip,
-                               tmp_prefix=_work(cfg, "tmp"),
-                               block=cfg.block_size)
+    if _matches_grid(precip, grid):
+        _log("recharge", "wettest-month precipitation already staged, reusing")
+    else:
+        _log("recharge", "wettest-month precipitation")
+        sources.max_monthly_precip(inputs["precip_monthly"], grid, precip,
+                                   tmp_prefix=_work(cfg, "tmp"),
+                                   block=cfg.block_size)
     p = _read(precip)
     ref = reference_mm or float(np.nanmedian(p))
     if not np.isfinite(ref) or ref <= 0:

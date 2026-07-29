@@ -48,8 +48,8 @@ echo "==> Running the offline test suite"
 python -m pytest tests/ -q
 
 if [[ "$WITH_DATA" == "1" ]]; then
-    echo "==> Pre-fetching the quickstart datasets (~120 MB, one-off)"
-    python -m h_sim.cli step2-download --config configs/01_quickstart.json
+    echo "==> Pre-fetching the calibration datasets (~1.5 GB, one-off)"
+    python -m h_sim.cli step2-download --config configs/01_calibrate.json
 fi
 
 cat <<'EOF'
@@ -60,15 +60,18 @@ Activate the environment in every new shell:
     source .venv/bin/activate
 
 Next steps:
-    ./scripts/run_demo.sh                        # offline, no downloads
+    ./scripts/run_demo.sh                                          # offline
 
-    # phase 1 + 3: fetch data and build a map with generic parameters
-    python -m h_sim.cli step2-download        --config configs/01_quickstart.json
-    python -m h_sim.cli step5-susceptibility  --config configs/01_quickstart.json
+    # what the region-wide run would cost, before committing to it
+    python -m h_sim.cli step9-region --dry-run --config configs/02_hkh_region.json
 
-    # phase 2: calibrate to real landslides, then validate on another inventory
-    python -m h_sim.cli step3-fit      --config configs/02_calibrate_gorkha.json
-    python -m h_sim.cli step4-validate --name gorkha --inventory <path>
+    # fit the soil parameters once, then check they travel
+    python -m h_sim.cli step2-download --config configs/01_calibrate.json
+    python -m h_sim.cli step3-fit      --config configs/01_calibrate.json
+    python -m h_sim.cli step4-validate --build --name gorkha --inventory <path>
+
+    # the product: every mountain province in the Hindu Kush Himalaya
+    python -m h_sim.cli step9-region --config configs/02_hkh_region.json --everything
 
 See docs/RUNNING_LOCALLY.md for the full walkthrough.
 EOF

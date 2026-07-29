@@ -1585,17 +1585,27 @@ def run_package(cfg: C.Config) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 
 def run(cfg: C.Config, mode: str = "demo",
-        climate_suite: bool = True) -> Dict[str, object]:
+        climate_suite: bool = True,
+        region: bool = False) -> Dict[str, object]:
     """Calibrate if an inventory is supplied, then produce every output.
 
-    This is the whole workflow end to end: fit, susceptibility under the
-    present day, every trigger scenario, the climate sweep, and the manifest.
+    With ``region``, production is the province-by-province sweep over the
+    whole Hindu Kush Himalaya, which is what this model is for. Without it,
+    production is the single area of interest in ``cfg`` - useful for
+    calibrating, validating and debugging, not a deliverable.
     """
     out: Dict[str, object] = {}
     if cfg.inventory_path:
         fit = run_fit(cfg, mode=mode)
         cfg.fitted_params = fit["path"]
         out["fitted_params"] = fit["path"]
+
+    if region:
+        out["region"] = run_region(cfg, mode=mode, hazard=True,
+                                   climate=climate_suite, risk=True,
+                                   webmap=True)
+        out.update(run_package(cfg))
+        return out
 
     base = run_susceptibility(cfg, mode=mode)
     out["susceptibility"] = base

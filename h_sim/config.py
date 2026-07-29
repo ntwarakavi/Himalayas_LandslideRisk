@@ -108,7 +108,11 @@ class Config:
     """
 
     name: str = "hkh"
-    bbox: Tuple[float, float, float, float] = (84.5, 27.6, 85.3, 28.2)  # Gorkha
+    #: Area of interest for the single-area steps only. Those steps exist to
+    #: fit and check parameters, not to make deliverables: the product is the
+    #: province-by-province sweep over ``region_bbox``, which ignores this.
+    #: The default is the Gorkha calibration window.
+    bbox: Tuple[float, float, float, float] = (84.5, 27.6, 85.3, 28.2)
     resolution_deg: float = 0.0008333333
     trigger: str = "rainfall"
 

@@ -63,8 +63,8 @@ inventory.
 Two commands. The first fetches data, the second builds a map.
 
 ```bash
-python -m h_sim.cli step2-download --config configs/01_quickstart.json
-python -m h_sim.cli step5-susceptibility --config configs/01_quickstart.json
+python -m h_sim.cli step2-download --config configs/01_calibrate.json
+python -m h_sim.cli step9-region --config configs/03_hkh_recon.json --units Sikkim
 ```
 
 About 120 MB and a few minutes. This uses SINMAP's generic parameter ranges
@@ -118,8 +118,8 @@ first look. Full numbers in [RESULTS.md](RESULTS.md).
 This is the step that turns a plausible map into a defensible one.
 
 ```bash
-python -m h_sim.cli step2-download --config configs/02_calibrate_gorkha.json
-python -m h_sim.cli step3-fit --config configs/02_calibrate_gorkha.json
+python -m h_sim.cli step2-download --config configs/01_calibrate.json
+python -m h_sim.cli step3-fit --config configs/01_calibrate.json
 ```
 
 The fit searches 48 parameter sets and cross-validates twice. On the Gorkha
@@ -269,7 +269,7 @@ parameters, terrain and the meaning of a return period are all unchanged.
 
 ```bash
 # the scenarios named in the config
-python -m h_sim.cli step7-climate --config configs/03_production_gorkha.json
+python -m h_sim.cli step7-climate --config configs/02_hkh_region.json
 
 # or name them directly
 python -m h_sim.cli step7-climate --name gorkha \
@@ -309,13 +309,12 @@ That is the window a road alignment or a settlement plan is decided over, and it
 is what `step10-risk` scores assets against. Later windows show a bigger signal
 and are one flag away, but a map of 2090 is not a decision anyone can act on,
 and the further out the window the more of its spread is the choice of GCM
-rather than the pathway. `configs/05_climate_trajectory.json` runs all four
-windows when the question is the time course rather than the horizon.
+rather than the pathway. Name later windows with `--scenarios` when the
+question is the time course rather than the planning horizon.
 
-Two ready-made sweeps ask different questions.
-`configs/04_climate_pathways.json` holds the window fixed and varies forcing, so
-the spread between maps is the pathway alone.
-`configs/05_climate_trajectory.json` holds forcing fixed and varies the window,
+`configs/04_hkh_climate.json` holds the window fixed and varies forcing across
+the region, so the spread between maps is the pathway alone. To vary the window
+instead, pass `--scenarios` with one pathway across several periods,
 giving the time course.
 
 The triggering return period keeps its present-day definition: terrain takes
@@ -325,8 +324,8 @@ would confound two effects in one map.
 ## 8b. Regional production, one province at a time
 
 ```bash
-python -m h_sim.cli step9-region --dry-run --config configs/08_hkh_region.json
-python -m h_sim.cli step9-region --config configs/08_hkh_region.json --everything
+python -m h_sim.cli step9-region --dry-run --config configs/02_hkh_region.json
+python -m h_sim.cli step9-region --config configs/02_hkh_region.json --everything
 ```
 
 **Provinces are chosen on relief, not on the region's bounding box.** That box

@@ -1,0 +1,47 @@
+{
+  "_comment": "SEISMIC SCENARIOS across the region. The trigger enters as a pseudo-static coefficient k_h = pga_fraction * PGA added to the force balance, not as a separate model. pga_fraction is a convention and is NOT fitted here, and unstable area is genuinely sensitive to it - 57% at 0.3 against 90% at 1.0 - so quote seismic maps as a range over it. Rainfall needs no such hedge.",
+  "name": "hkh_eq",
+  "resolution_deg": 0.00083333,
+  "dem_source": "copernicus30",
+  "region_bbox": [
+    60.0,
+    16.0,
+    105.0,
+    39.0
+  ],
+  "fitted_params": "outputs/gorkha_fitted_params.json",
+  "trigger": "earthquake",
+  "output": "both",
+  "spatial_recharge": true,
+  "climate": "current",
+  "climate_suite": [
+    "current",
+    "ssp245:2041-2060",
+    "ssp585:2041-2060"
+  ],
+  "return_periods_yr": [
+    10,
+    100,
+    1000
+  ],
+  "pga_scenarios_g": [
+    0.15,
+    0.35,
+    0.6
+  ],
+  "risk_climate": [
+    "current",
+    "ssp245:2021-2040",
+    "ssp585:2021-2040",
+    "ssp245:2041-2060",
+    "ssp585:2041-2060"
+  ],
+  "admin_buffer_deg": 0.05,
+  "admin_max_cells": 40000000,
+  "admin_elevation_res": "5m",
+  "admin_mountain_elevation_m": 1000.0,
+  "admin_local_relief_m": 500.0,
+  "admin_min_mountain_fraction": 0.1,
+  "admin_min_mountain_area_km2": 1000.0,
+  "admin_min_mountain_peak_m": 1400.0
+}

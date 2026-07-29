@@ -63,7 +63,7 @@ Products:
 Steps 3 and 5 - the fit and the validation - are skipped here because both need
 a real landslide inventory. On real data they are not optional:
 
-    python -m h_sim.cli step2-download --config configs/02_calibrate_gorkha.json
-    python -m h_sim.cli step3-fit      --config configs/02_calibrate_gorkha.json
+    python -m h_sim.cli step2-download --config configs/01_calibrate.json
+    python -m h_sim.cli step3-fit      --config configs/01_calibrate.json
     python -m h_sim.cli step4-validate --name gorkha --inventory <another inventory>
 EOF

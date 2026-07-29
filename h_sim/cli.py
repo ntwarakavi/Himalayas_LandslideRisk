@@ -3,9 +3,13 @@
 Himalayan Slope Instability Model - SINMAP infinite-slope stability over
 D-infinity flow routing.
 
-Eleven commands, in this order. Each writes files and prints what it produced,
-so you can stop after any one, inspect the output, and carry on. Nothing is
-re-downloaded and the expensive stage is cached.
+The product is region-wide: failure probability, exposed settlements and
+exposed road segments for every mountain province in the Hindu Kush Himalaya,
+present day and to 2060. Six commands get you there, in this order.
+
+Each writes files and prints what it produced, so you can stop after any one,
+inspect the output, and carry on. Nothing is re-downloaded and the expensive
+stage is cached.
 
 The number inside a command name is part of the name, not its position in the
 sequence - they were numbered as they were added and never renumbered. Run them
@@ -13,28 +17,34 @@ top to bottom as listed here, not in numerical order.
 
      1  step1-check          what is cached, what is reachable, what it costs
      2  step2-download       fetch it
-     3  step3-fit            fit the soil parameters to an inventory
-     4  step5-susceptibility present-day failure probability
-     5  step4-validate       score that map against a SECOND inventory.
-                             --build first makes a map over the held-out
-                             inventory's own ground, which is what transfer
-                             validation between catchments needs.
-     6  step6-hazard         rainfall and earthquake scenarios
-     7  step7-climate        CMIP6 futures, and the change from today
-     8  step10-risk          settlements and road segments, scored per climate
-     9  step11-map           a browsable page of the whole run
-    10  step9-region         all of the above, province by province, over the
-                             eight countries. --everything turns on hazard,
-                             climate, exposure and a page per province, and
-                             writes one ranked index over the sweep.
-    11  step8-package        manifest: every product and its provenance
+     3  step3-fit            fit the soil parameters, once, for the region
+     4  step4-validate       check they travel: score against a SECOND
+                             inventory. --build applies them over the held-out
+                             inventory's own ground, which is the only honest
+                             test of a regional extrapolation.
+     5  step9-region         THE PRODUCT. Every mountain province in the Hindu
+                             Kush Himalaya: susceptibility, trigger scenarios,
+                             climate futures, settlement and road exposure and
+                             a page each, plus one ranked index over the sweep.
+                             --everything turns all of that on.
+     6  step8-package        manifest: every product and its provenance
 
-    run-all                  1-9 in sequence
+    run-all                  the whole thing, calibration through region
     info                     dataset sources, licences and citations
 
-Order matters. Do not ship a map from parameters that have not been through
+These run one area of interest at a time and step9-region calls them per
+province, so they are for debugging a single province rather than for making
+deliverables:
+
+        step5-susceptibility present-day failure probability
+        step6-hazard         rainfall and earthquake scenarios
+        step7-climate        CMIP6 futures, and the change from today
+        step10-risk          settlements and road segments, per climate
+        step11-map           a browsable page of one run
+
+Order matters. Do not ship maps from parameters that have not been through
 step4 on an independent inventory - a fit always looks good on the landslides
-it was fitted to.
+it was fitted to, and the regional product applies one fit 95 times.
 """
 
 from __future__ import annotations
@@ -692,7 +702,8 @@ def _run_all(args) -> int:
     print("\n" + "=" * 68 + "\n")
     cfg = _build_config(args)
     _warn_if_large(cfg)
-    out = pipeline.run(cfg, mode=args.mode, climate_suite=not args.no_climate)
+    out = pipeline.run(cfg, mode=args.mode, climate_suite=not args.no_climate,
+                       region=not args.single_area)
     print("\nOutputs:")
     for k, v in out.items():
         print(f"  {k:22s} {v if isinstance(v, str) else '(group)'}")
@@ -840,6 +851,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--no-inventories", action="store_true")
     p.add_argument("--no-climate", action="store_true",
                    help="skip the climate sweep")
+    p.add_argument("--single-area", dest="single_area", action="store_true",
+                   help="produce for the config's bbox instead of sweeping "
+                        "the region. For debugging, not for deliverables")
     _mode(p); _add_common(p)
 
     sub.add_parser("info", help="dataset sources, licences and citations")

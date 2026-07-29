@@ -1393,6 +1393,35 @@ def test_a_layer_without_countries_is_not_silently_emptied():
         assert len(units) == 1
 
 
+def test_shipped_configs_load_and_target_the_region():
+    """The product is region-wide; only the calibration config is a small area."""
+    import glob
+
+    paths = sorted(glob.glob("configs/*.json"))
+    assert paths, "no configs found"
+    regional = 0
+    for path in paths:
+        cfg = C.Config.from_json(path)
+        assert cfg.name, path
+        assert cfg.region_bbox == C.HKH_BBOX, path
+        if "calibrate" not in path:
+            # a regional config is run by step9-region, which sweeps
+            # region_bbox and never reads bbox
+            regional += 1
+    assert regional >= 3, [p for p in paths]
+    assert any("calibrate" in p for p in paths), "the fit needs a config too"
+
+
+def test_run_all_sweeps_the_region_by_default():
+    import inspect
+
+    params = inspect.signature(pipeline.run).parameters
+    assert "region" in params
+    assert params["region"].default is False   # the API default
+    src = inspect.getsource(pipeline.run)
+    assert "run_region" in src
+
+
 def test_climate_scenario_round_trips_through_a_dict():
     """The web map rebuilds scenarios from what step10 wrote, not from specs."""
     s = CL.scenario("ssp585:2021-2040")

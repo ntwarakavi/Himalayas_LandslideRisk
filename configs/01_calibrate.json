@@ -1,5 +1,5 @@
 {
-  "_comment": "PHASE 2 - the reference calibration. Gorkha earthquake footprint in Nepal, whose Roback inventory ships mapped source areas, which is what an infinite-slope model predicts. Read the spatial-block CV figure and any '!' warnings before trusting the parameters, then validate against a different inventory with step4.",
+  "_comment": "CALIBRATION ONLY - not a product. The soil parameters are fitted once for the whole region, and this is where: the Gorkha earthquake footprint in Nepal, whose Roback inventory ships mapped source areas, which is what an infinite-slope model predicts. No map from this run is a deliverable - the deliverable is outputs/gorkha_fitted_params.json, which 02 reads. Check the spatial-block CV figure and any '!' warnings before trusting it.",
   "name": "gorkha",
   "bbox": [
     84.5,

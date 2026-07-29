@@ -1224,6 +1224,66 @@ def test_defaults_sit_on_the_planning_horizon():
                for s in CL.suite())
 
 
+def test_validate_offers_to_build_and_masks_the_survey_extent():
+    """The two things that made step4 fail in practice.
+
+    A map has to exist before it can be scored, and inventories in this region
+    do not overlap - so the useful behaviour is building a map over the
+    held-out inventory's own ground. Background must then be confined to the
+    surveyed polygon, or unmapped terrain is scored as landslide-free.
+    """
+    from h_sim import cli
+    from h_sim.input import inventory as INV
+
+    assert hasattr(cli, "_build_for_validation")
+    assert hasattr(cli, "_inventory_extent")
+    assert hasattr(INV, "survey_masked_reference")
+
+    # extent of a synthetic inventory, padded
+    with tempfile.TemporaryDirectory() as tmp:
+        csv_path = os.path.join(tmp, "inv.csv")
+        with open(csv_path, "w") as fh:
+            fh.write("latitude,longitude\n27.5,88.1\n27.6,88.4\n")
+        ext = cli._inventory_extent([csv_path], pad_deg=0.01)
+        assert ext is not None
+        assert ext[0] < 88.1 and ext[2] > 88.4
+        assert cli._inventory_extent([os.path.join(tmp, "nope.csv")]) is None
+
+
+def test_survey_mask_confines_background():
+    """Background drawn outside the surveyed polygon means 'nobody looked'."""
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from h_sim.input import inventory as INV
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ref = os.path.join(tmp, "ref.tif")
+        tr = from_origin(88.0, 27.6, 0.01, 0.01)
+        prof = dict(driver="GTiff", height=20, width=20, count=1,
+                    dtype="float32", crs="EPSG:4326", transform=tr,
+                    nodata=-9999.0)
+        with rasterio.open(ref, "w", **prof) as dst:
+            dst.write(np.ones((20, 20), "float32"), 1)
+
+        poly = os.path.join(tmp, "extent.geojson")
+        with open(poly, "w") as fh:
+            json.dump({"type": "FeatureCollection", "features": [
+                {"type": "Feature", "properties": {},
+                 "geometry": {"type": "Polygon", "coordinates": [[
+                     [88.0, 27.5], [88.1, 27.5], [88.1, 27.6],
+                     [88.0, 27.6], [88.0, 27.5]]]}}]}, fh)
+
+        out, frac = INV.survey_masked_reference(
+            poly, ref, os.path.join(tmp, "masked.tif"))
+        assert 0.2 < frac < 0.3, frac      # a quarter of a 20x20 grid
+
+        bbox = (88.0, 27.4, 88.2, 27.6)
+        bg = INV.background_points(bbox, 200, out, seed=3)
+        assert len(bg) > 50
+        assert bg[:, 0].max() <= 88.11 and bg[:, 1].min() >= 27.49
+
+
 def test_climate_scenario_round_trips_through_a_dict():
     """The web map rebuilds scenarios from what step10 wrote, not from specs."""
     s = CL.scenario("ssp585:2021-2040")

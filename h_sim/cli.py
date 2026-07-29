@@ -271,8 +271,67 @@ def _step_fit(args) -> int:
         print(f"\n  ! {w}")
 
     print(f"\n  Fitted parameters -> {report['path']}")
-    print("\nNext:  step4-validate against an inventory this fit never saw")
+    print("\nNext:  step4-validate against an inventory this fit never saw.")
+    print("       Validation needs a map, and if the held-out inventory is in "
+          "another\n       catchment it needs a map over *that* ground - "
+          "which --build will make:\n")
+    print(f"    python -m h_sim.cli step4-validate --build --name {cfg.name} \\"
+          f"\n        --inventory <an inventory this fit never saw>")
     return 0
+
+
+def _inventory_extent(paths, pad_deg: float = 0.02):
+    """Bounding box of the inventories, padded. None if none of them load."""
+    import numpy as np
+
+    from .input import inventory
+
+    lo = []
+    for src in paths:
+        try:
+            pts = inventory.load_inventory(src)
+        except Exception:                                # noqa: BLE001
+            continue
+        if len(pts):
+            lo.append(pts)
+    if not lo:
+        return None
+    pts = np.vstack(lo)
+    return (float(pts[:, 0].min()) - pad_deg, float(pts[:, 1].min()) - pad_deg,
+            float(pts[:, 0].max()) + pad_deg, float(pts[:, 1].max()) + pad_deg)
+
+
+def _build_for_validation(args, bbox) -> Optional[str]:
+    """Compute a susceptibility map over ``bbox`` from an existing fit.
+
+    This is what transfer validation needs: the parameters fitted in one
+    catchment, applied over another, then scored against that catchment's own
+    inventory. Doing it by hand means calling step5 with a second name and
+    remembering to pass --fitted-params, which is where the sequence usually
+    goes wrong.
+    """
+    cfg = _build_config(args)
+    cfg.bbox = tuple(bbox)
+    if getattr(args, "res", None):
+        cfg.resolution_deg = args.res
+    if not cfg.fitted_params:
+        cand = os.path.join(cfg.out_dir, f"{args.name}_fitted_params.json") \
+            if args.name else None
+        if cand and os.path.exists(cand):
+            cfg.fitted_params = cand
+    if not cfg.fitted_params or not os.path.exists(cfg.fitted_params):
+        print("error: --build needs fitted parameters. Run step3-fit, or "
+              "pass --fitted-params.")
+        return None
+
+    cfg.name = args.build_name or (f"{args.name}_on_target" if args.name
+                                   else "validation")
+    print(f"  building a map over the inventory's extent as '{cfg.name}'")
+    print(f"  parameters from {cfg.fitted_params}\n")
+    _warn_if_large(cfg)
+    out = pipeline.run_susceptibility(cfg, mode=args.mode)
+    print()
+    return out.get("probability")
 
 
 def _step_validate(args) -> int:
@@ -283,18 +342,73 @@ def _step_validate(args) -> int:
     from .input import inventory
     from .model import validate
 
+    paths = args.inventory if isinstance(args.inventory, list) \
+        else [args.inventory]
+    extent = _inventory_extent(paths)
+
     susc = args.susceptibility
-    if not susc:
+    if not susc and args.name:
         for suffix in ("_susceptibility_prob.tif", "_susceptibility_class.tif"):
             cand = os.path.join(args.out_dir, f"{args.name}{suffix}")
             if os.path.exists(cand):
                 susc = cand
                 break
-    if not susc or not os.path.exists(susc):
-        print(f"error: no stability map found for '{args.name}' in "
-              f"{args.out_dir}. Run step5-susceptibility first.")
-        return 1
+
     print("STEP 4  Validate against a held-out inventory\n")
+
+    # A map that exists but sits somewhere else is the same problem as no map,
+    # and the common one: inventories in this region are geographically
+    # disjoint, so the map fitted on Gorkha does not cover Sikkim at all.
+    elsewhere = False
+    if susc and os.path.exists(susc) and extent:
+        import rasterio
+        with rasterio.open(susc) as src:
+            b = src.bounds
+        elsewhere = not (b.left < extent[2] and b.right > extent[0]
+                         and b.bottom < extent[3] and b.top > extent[1])
+        if elsewhere:
+            print(f"  {os.path.basename(susc)} covers "
+                  f"{b.left:.2f}, {b.bottom:.2f} to {b.right:.2f}, {b.top:.2f}")
+            print(f"  the inventory covers "
+                  f"{extent[0]:.2f}, {extent[1]:.2f} to "
+                  f"{extent[2]:.2f}, {extent[3]:.2f}")
+            print("  These do not overlap, so this map cannot be scored "
+                  "against this inventory.\n")
+
+    if not susc or not os.path.exists(susc) or elsewhere:
+        if not extent:
+            print(f"error: no usable map for '{args.name}', and the inventory "
+                  "could not be read either.")
+            return 1
+        if args.build:
+            susc = _build_for_validation(args, extent)
+            if not susc:
+                return 1
+        else:
+            if not elsewhere:
+                print(f"  no stability map found for '{args.name}' in "
+                      f"{args.out_dir}.\n")
+            print("  Validating a fit against an inventory somewhere else is "
+                  "transfer\n  validation, and it needs a map over *that* "
+                  "ground, built with the\n  parameters you are testing. "
+                  "Add --build to do it here:\n")
+            res = getattr(args, "res", None) or 0.00083333
+            print(f"    python -m h_sim.cli step4-validate --build \\\n"
+                  f"        --name {args.name or '<fitted run>'} "
+                  f"--res {res:g} \\\n"
+                  f"        --inventory {' '.join(paths)}\n")
+            print("  or do the two steps yourself:\n")
+            print(f"    python -m h_sim.cli step5-susceptibility "
+                  f"--name {(args.name or 'run')}_on_target \\\n"
+                  f"        --bbox {extent[0]:.2f} {extent[1]:.2f} "
+                  f"{extent[2]:.2f} {extent[3]:.2f} --res {res:g} \\\n"
+                  f"        --fitted-params {args.out_dir}/"
+                  f"{args.name or '<run>'}_fitted_params.json")
+            print(f"    python -m h_sim.cli step4-validate "
+                  f"--name {(args.name or 'run')}_on_target \\\n"
+                  f"        --inventory {' '.join(paths)}")
+            return 1
+
     kind = ("continuous failure probability" if validate.is_continuous(susc)
             else "stability classes")
     print(f"  map       : {susc}  ({kind})")
@@ -304,8 +418,6 @@ def _step_validate(args) -> int:
     with rasterio.open(susc) as src:
         b = src.bounds
         bbox = (b.left, b.bottom, b.right, b.top)
-    paths = args.inventory if isinstance(args.inventory, list) \
-        else [args.inventory]
     parts = []
     for src in paths:
         sub = inventory.load_inventory(src, bbox=bbox)
@@ -318,7 +430,16 @@ def _step_validate(args) -> int:
         print("  nothing to validate: the inventory does not overlap the map.")
         return 1
 
-    bg = inventory.background_points(bbox, max(4 * len(pts), 2000), susc)
+    reference = susc
+    if args.survey_extent:
+        masked = os.path.join(args.out_dir,
+                              f"{args.name or 'validation'}_surveyed.tif")
+        reference, frac = inventory.survey_masked_reference(
+            args.survey_extent, susc, masked)
+        print(f"  surveyed extent covers {frac * 100:.1f}% of the map; "
+              "background is drawn only inside it\n")
+
+    bg = inventory.background_points(bbox, max(4 * len(pts), 2000), reference)
     result = validate.validate_susceptibility(susc, pts, bg,
                                               block=args.block or 1024)
     print(validate.format_report(result))
@@ -610,8 +731,32 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--inventory", required=True, nargs="+",
                    help="one or more INDEPENDENT inventories; multiple paths "
                         "are pooled into a single validation set")
+    p.add_argument("--build", action="store_true",
+                   help="if no map covers the inventory, compute one over its "
+                        "extent from --fitted-params first. This is transfer "
+                        "validation: the parameters fitted in one catchment, "
+                        "scored in another")
+    p.add_argument("--build-name", dest="build_name",
+                   help="name for the map --build creates "
+                        "(default: <name>_on_target)")
+    p.add_argument("--survey-extent", dest="survey_extent",
+                   help="polygon of the ground the inventory's authors "
+                        "actually surveyed. Background is drawn only inside "
+                        "it; without this, unmapped terrain is scored as "
+                        "landslide-free and the AUC comes out low")
+    p.add_argument("--res", type=float,
+                   help="grid resolution for --build, in degrees")
+    p.add_argument("--fitted-params", dest="fitted_params",
+                   help="parameter JSON to test (default: from --name)")
+    p.add_argument("--config", help="JSON config file, for --build settings")
+    p.add_argument("--mode", choices=["demo", "download", "local"],
+                   default="download")
     p.add_argument("--name")
     p.add_argument("--out-dir", dest="out_dir", default="outputs")
+    p.add_argument("--data-dir", dest="data_dir")
+    p.add_argument("--work-dir", dest="work_dir")
+    p.add_argument("--dem-source", dest="dem_source",
+                   choices=["copernicus90", "copernicus30"])
     p.add_argument("--block", type=int)
 
     p = sub.add_parser("step5-susceptibility",

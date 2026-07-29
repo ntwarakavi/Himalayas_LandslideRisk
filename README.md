@@ -231,25 +231,39 @@ and that applying the critical acceleration drives `FS` to exactly 1.
 
 ## How to run
 
-Four phases. **The order matters**: do not produce a map from parameters that
-have not been through phase 2 on an independent inventory, because a fit always
-looks good on the landslides it was fitted to.
+Four phases, run in order. Inside the table, **read top to bottom** — that is the
+order to run things in. The number inside a command name is part of its name, not
+its position in the sequence: `step8-package` runs last and `step9-region` runs
+before it, because the commands were numbered as they were added rather than
+renumbered every time.
 
-| Phase | Step | Command | Produces |
-|---|---|---|---|
-| **1 Set up** | 1 | `step1-check` | Dataset availability report |
-| | 2 | `step2-download` | Cached source data |
-| **2 Calibrate & validate** | 3 | `step3-fit` | Soil parameters, cross-validated |
-| | 4 | `step4-validate` | Score against a held-out inventory |
-| **3 Produce** | 5 | `step5-susceptibility` | Present-day failure probability |
-| | 6 | `step6-hazard` | Rainfall and earthquake scenarios |
-| | 7 | `step7-climate` | CMIP6 futures and the change from today |
-| | 9 | `step9-region` | The above, one state or province at a time |
-| | 10 | `step10-risk` | Settlements and road segments, scored per climate |
-| | 11 | `step11-map` | A browsable Leaflet page of the whole run |
-| **4 Package** | 8 | `step8-package` | Manifest: products and provenance |
+| # | Phase | Command | Needs | Produces |
+|---|---|---|---|---|
+| 1 | **Set up** | `step1-check` | — | Dataset availability report |
+| 2 | | `step2-download` | — | Cached source data |
+| 3 | **Calibrate** | `step3-fit` | an inventory | Soil parameters, cross-validated |
+| 4 | **Produce** | `step5-susceptibility` | step 3 | Present-day failure probability |
+| 5 | **Validate** | `step4-validate` | step 4 + a *second* inventory | Score against a held-out inventory |
+| 6 | **Produce** | `step6-hazard` | step 3 | Rainfall and earthquake scenarios |
+| 7 | | `step7-climate` | step 3 | CMIP6 futures and the change from today |
+| 8 | | `step9-region` | step 3 | The above, one state or province at a time |
+| 9 | | `step10-risk` | step 4 | Settlements and road segments, scored per climate |
+| 10 | | `step11-map` | step 9 | A browsable Leaflet page of the whole run |
+| 11 | **Package** | `step8-package` | anything above | Manifest: products and provenance |
 
-`run-all` executes every phase in sequence.
+`run-all` executes the whole sequence.
+
+**`step4-validate` runs after `step5-susceptibility`, not before it.** This is the
+one place the naming misleads, and it is worth being explicit about: validation
+scores a *map*, so a map has to exist first. If the held-out inventory sits in a
+different catchment from the map — which is the normal case here, since the
+region's inventories are geographically disjoint — pass `--build` and step 4 will
+compute a map over that inventory's own extent using the parameters you are
+testing. That is transfer validation, and it is the honest test.
+
+**Do not skip phase 2.** A fit always looks good on the landslides it was fitted
+to. Nothing in a parameter set tells you whether it travels; only a second
+inventory does.
 
 ### Phase 1 — set up
 
@@ -264,7 +278,7 @@ and totals the outstanding download; `--offline` restricts it to the local cache
 precipitation climatology are fetched by default — land cover and the 1.1 GB
 GLiM geodatabase come down only if a run asks for calibration regions.
 
-### Phase 2 — calibrate and validate
+### Phase 2 — calibrate
 
 ```bash
 python -m h_sim.cli step3-fit --config configs/02_calibrate_gorkha.json
@@ -293,21 +307,63 @@ python -m h_sim.cli step3-fit --config configs/02_calibrate_gorkha.json
 - **The fold spread matters as much as the mean.** ±0.020 across five blocks is
   the range to expect when applying the map somewhere new.
 
-Then validate against an inventory the fit never saw:
+Validation comes next, but it needs a map, so **run `step5-susceptibility`
+first** — see the phase 3 block below, then come back.
+
+### Phase 2b — validate (after the first map exists)
 
 ```bash
+# same catchment: score the map you just built
 python -m h_sim.cli step4-validate --name gorkha \
+    --inventory <an inventory the fit never saw>
+
+# different catchment: build a map over that inventory's ground first
+python -m h_sim.cli step4-validate --build --name gorkha --res 0.00083333 \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
+```
+
+The second form is the one you usually want here. The region's inventories do
+not overlap — Gorkha spans 84.5–85.3° E and Sikkim 88.1–88.9° E — so a Gorkha map
+cannot be scored against Sikkim landslides at all. `--build` applies the fitted
+parameters over the held-out inventory's own extent and scores there, which is
+transfer validation and the honest test of whether a fit travels. Without it,
+step 4 stops and prints the commands to run.
+
+```
+  landslides in classes 4-5 : 60.8%  (those classes cover 30.4% of the map)
+  efficiency                : 2.00x (>1 means the map concentrates landslides)
+  AUC                       : 0.702
+  monotonic class ordering  : yes
+  VERDICT: fair - ordering holds but discrimination is modest
 ```
 
 Read the report in this order: **monotonic ordering** first (frequency ratio must
 rise with class, or nothing else matters), then **efficiency** (below ~1.5 the map
 is not selective enough to act on), then **AUC**.
 
-Two traps worth avoiding: never fit and validate on the same inventory, and
-check the inventory's **mapped extent** — background points drawn outside the
+Two traps worth avoiding. **Never fit and validate on the same inventory.** And
+**check the inventory's mapped extent** — background points drawn outside the
 ground its authors surveyed mean "nobody looked", not "no landslide". Far-West
-Nepal and Sikkim survey only about 60 % of their own bounding boxes.
+Nepal and Sikkim survey only about 60 % of their own bounding boxes, so pass the
+polygon:
+
+```bash
+python -m h_sim.cli step4-validate --name gorkha_on_target \
+    --inventory  data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp \
+    --survey-extent data/raw/inventory/sikkim/Google_Earth_mapped_extent_21Dec2021.shp
+```
+
+Masking does not reliably *raise* the score, and it is not meant to. On this run
+it moved AUC from 0.702 to 0.690, because the unsurveyed ground here is mostly
+low-susceptibility terrain that was supplying easy true negatives. What it does
+is make the negatives mean what they claim to mean, which is the point.
+
+Do not compare these numbers with the 0.780 transfer figure in
+[docs/RESULTS.md §3](docs/RESULTS.md). That is a different protocol — 30 m rather
+than 90 m, the surveyed polygon's own bounds rather than the inventory's, and
+target-group background rather than uniform. Both are honest; they answer
+slightly different questions, and only figures produced the same way should be
+put side by side.
 
 ### Phase 3 — produce
 

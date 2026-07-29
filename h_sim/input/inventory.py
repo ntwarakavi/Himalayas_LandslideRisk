@@ -540,3 +540,47 @@ def background_points(bbox: Sequence[float], n: int, reference_raster: str,
             if nod is None or v != nod:
                 pts.append((x, y))
     return np.asarray(pts, dtype="float64").reshape(-1, 2)
+
+
+def survey_masked_reference(polygon_path: str, reference_raster: str,
+                            out_path: str) -> Tuple[str, float]:
+    """A copy of ``reference_raster`` blanked outside a surveyed-extent polygon.
+
+    Background points stand in for "terrain that did not fail". Drawn beyond the
+    ground an inventory's authors actually examined, they instead mean "nobody
+    looked", and every landslide-prone hillside in unmapped terrain becomes a
+    false negative. The effect is large and uneven: Gorkha's study box is 99.8 %
+    surveyed, but Far-West Nepal's is 60.5 % and Sikkim's 63.8 %, so validation
+    scores on those two are depressed by several points of AUC when the mask is
+    left off.
+
+    Most inventories publish the polygon alongside the landslides. Pass it to
+    ``step4-validate --survey-extent``.
+
+    Returns the masked raster's path and the fraction of the map it keeps.
+    """
+    import fiona
+    import rasterio
+    from rasterio.features import rasterize
+    from rasterio.warp import transform_geom
+
+    with fiona.open(polygon_path) as src:
+        crs = src.crs or "EPSG:4326"
+        shapes = [(transform_geom(crs, "EPSG:4326", f["geometry"]), 1)
+                  for f in src if f["geometry"] is not None]
+    if not shapes:
+        return reference_raster, 1.0
+
+    with rasterio.open(reference_raster) as src:
+        prof = src.profile.copy()
+        band = src.read(1)
+        nod = src.nodata if src.nodata is not None else -9999.0
+        inside = rasterize(shapes, out_shape=(src.height, src.width),
+                           transform=src.transform, fill=0, dtype="uint8")
+
+    band = band.astype("float32")
+    band[inside == 0] = nod
+    prof.update(dtype="float32", nodata=nod, count=1)
+    with rasterio.open(out_path, "w", **prof) as dst:
+        dst.write(band, 1)
+    return out_path, float((inside != 0).mean())

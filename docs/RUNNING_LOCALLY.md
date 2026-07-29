@@ -193,6 +193,11 @@ close the gap. See [RESULTS.md §4](RESULTS.md).
 
 ## 6. Validating
 
+**Run this after section 7's `step5-susceptibility`, not before.** Validation
+scores a map, so a map has to exist. The command name says step 4, but the
+commands were numbered as they were added and never renumbered; the running
+order is 1, 2, 3, 5, **4**, 6, 7, 9, 10, 11, 8.
+
 ```bash
 python -m h_sim.cli step4-validate --name gorkha \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
@@ -547,6 +552,16 @@ single pass. Halve the extent or coarsen `--res`; see
 **`no fit found -> SINMAP generic ranges`** — steps 4 and 5 could not find a
 fitted-parameters JSON. Run `step3-fit` first, or pass `--fitted-params`. The
 map will still build, but its level is not calibrated.
+
+**`no stability map found for '<name>'`** — step 4 validates a map, and none
+exists yet. Run `step5-susceptibility` first. If the held-out inventory is in a
+different catchment, run `step4-validate --build` instead: it computes a map
+over that inventory's own extent from the fitted parameters, which is what
+transfer validation needs.
+
+**`These do not overlap`** — the map and the held-out inventory are in different
+places, which is normal here: Gorkha spans 84.5-85.3 E and Sikkim 88.1-88.9 E.
+Add `--build`.
 
 **Specific catchment area looks like noise** — the DEM did not warp correctly.
 Open `data/work/<name>_dem.tif` and check it holds real elevations over the

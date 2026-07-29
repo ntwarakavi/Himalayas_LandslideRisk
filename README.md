@@ -513,15 +513,15 @@ python -m h_sim.cli step7-climate --config configs/03_production_gorkha.json
 
 # or name scenarios directly
 python -m h_sim.cli step7-climate --name gorkha \
-    --scenarios current ssp245:2061-2080 ssp585:2081-2100
+    --scenarios current ssp245:2041-2060 ssp585:2041-2060
 ```
 
 ```
   scenario              mean P   unstable %   mean change   % more likely
   ------------------------------------------------------------------------
   current               0.1931       16.88       +0.0000            0.00
-  ssp245_2061-2080      0.1941       16.95       +0.0010            2.36
-  ssp585_2081-2100      0.1956       17.17       +0.0024            7.34
+  ssp245_2041-2060      0.1938       16.93       +0.0006            1.22
+  ssp585_2041-2060      0.1945       17.03       +0.0014            4.02
 ```
 
 Scenarios are `current`, or `<ssp>:<period>`:
@@ -529,8 +529,16 @@ Scenarios are `current`, or `<ssp>:<period>`:
 | | |
 |---|---|
 | Pathways | `ssp126` `ssp245` `ssp370` `ssp585` |
-| Periods | `2021-2040` `2041-2060` `2061-2080` `2081-2100` |
+| Periods | `2021-2040` **`2041-2060`** (default) `2061-2080` `2081-2100` |
 | GCM | `--climate-model`, default IPSL-CM6A-LR (mid-range sensitivity) |
+
+**Every default lands on 2041-2060** — a twenty to thirty year planning horizon,
+which is the horizon a road alignment or a settlement plan is actually decided
+over. The end-of-century windows show a larger signal, which is why they are
+usually quoted and why they are not the default here: a map of 2090 is not a
+decision anyone can act on, and the further out the window, the more of its
+spread is the choice of general circulation model rather than the pathway. Ask
+for them explicitly when the question is how bad it eventually gets.
 
 Two ready-made sweeps: `configs/04_climate_pathways.json` holds the window fixed
 and varies forcing; `configs/05_climate_trajectory.json` holds forcing fixed and

@@ -20,7 +20,7 @@ python -m h_sim.cli step6-hazard $COMMON --all | tail -10
 echo
 echo ">> step7  climate: present day against two futures"
 python -m h_sim.cli step7-climate $COMMON \
-    --scenarios current ssp245:2061-2080 ssp585:2081-2100 | tail -10
+    --scenarios current ssp245:2041-2060 ssp585:2041-2060 | tail -10
 
 echo
 echo ">> step10 risk: what the map means for towns and roads, now and later"
@@ -47,7 +47,7 @@ term is already capped on the convergent ground. What the scenarios definitely
 do move is the recharge field, which you can check directly:
 
     data/work/demo_recharge_current.tif            median 1.00 by definition
-    data/work/demo_recharge_ssp585_2081-2100.tif   median 1.20
+    data/work/demo_recharge_ssp585_2041-2060.tif   median 1.10
 
 Products:
   outputs/demo_susceptibility_prob.tif      probability of failure  <- the product

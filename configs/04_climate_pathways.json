@@ -19,10 +19,10 @@
   "fitted_params": "outputs/gorkha_fitted_params.json",
   "climate_suite": [
     "current",
-    "ssp126:2061-2080",
-    "ssp245:2061-2080",
-    "ssp370:2061-2080",
-    "ssp585:2061-2080"
+    "ssp126:2041-2060",
+    "ssp245:2041-2060",
+    "ssp370:2041-2060",
+    "ssp585:2041-2060"
   ],
   "climate_model": "IPSL-CM6A-LR",
   "climate_res": "2.5m",

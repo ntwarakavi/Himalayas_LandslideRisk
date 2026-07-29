@@ -45,6 +45,18 @@ SSPS: Tuple[str, ...] = ("ssp126", "ssp245", "ssp370", "ssp585")
 #: Twenty-year windows the downscaled archive provides.
 PERIODS: Tuple[str, ...] = ("2021-2040", "2041-2060", "2061-2080", "2081-2100")
 
+#: The window every default lands on: a planning horizon of twenty to thirty
+#: years, which is what infrastructure decisions are actually taken over.
+#: Centred on 2050, it is the archive's closest window to that horizon.
+#:
+#: The end-of-century windows show a larger signal, which is the reason they are
+#: usually quoted and the reason they are not the default here. A map of 2090 is
+#: not a decision a road alignment or a settlement plan can be made against, and
+#: the further out the window, the more of its spread is the choice of general
+#: circulation model rather than the pathway. Ask for them explicitly when the
+#: question is how bad it eventually gets.
+DEFAULT_PERIOD = "2041-2060"
+
 #: Default general circulation model. Mid-range for climate sensitivity among
 #: the CMIP6 ensemble, so it is neither the optimistic nor the pessimistic edge.
 DEFAULT_GCM = "IPSL-CM6A-LR"
@@ -96,8 +108,8 @@ def scenario(spec: str, gcm: str = DEFAULT_GCM,
              resolution: str = DEFAULT_GCM_RESOLUTION) -> ClimateScenario:
     """Parse a scenario specification.
 
-    Accepts ``"current"``, an SSP with a period (``"ssp585:2061-2080"``), or a
-    bare SSP, which takes the last period in :data:`PERIODS`.
+    Accepts ``"current"``, an SSP with a period (``"ssp585:2041-2060"``), or a
+    bare SSP, which takes :data:`DEFAULT_PERIOD`.
     """
     spec = spec.strip().lower()
     if spec in ("current", "baseline", "present"):
@@ -107,7 +119,7 @@ def scenario(spec: str, gcm: str = DEFAULT_GCM,
     if ssp not in SSPS:
         raise ValueError(f"unknown pathway {ssp!r}; expected one of "
                          f"{', '.join(SSPS)} or 'current'")
-    period = period or PERIODS[-1]
+    period = period or DEFAULT_PERIOD
     if period not in PERIODS:
         raise ValueError(f"unknown period {period!r}; expected one of "
                          f"{', '.join(PERIODS)}")
@@ -143,7 +155,7 @@ def parse_all(specs: Sequence[str], gcm: str = DEFAULT_GCM,
     return out
 
 
-def suite(ssps: Sequence[str] = SSPS, period: str = "2061-2080",
+def suite(ssps: Sequence[str] = SSPS, period: str = DEFAULT_PERIOD,
           gcm: str = DEFAULT_GCM,
           resolution: str = DEFAULT_GCM_RESOLUTION) -> List[ClimateScenario]:
     """Baseline plus one period across several pathways.

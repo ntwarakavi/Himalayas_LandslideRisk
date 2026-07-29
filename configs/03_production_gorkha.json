@@ -20,8 +20,8 @@
   "climate": "current",
   "climate_suite": [
     "current",
-    "ssp245:2061-2080",
-    "ssp585:2061-2080"
+    "ssp245:2041-2060",
+    "ssp585:2041-2060"
   ],
   "return_periods_yr": [
     10.0,

@@ -69,11 +69,12 @@ def demo_precip_factor(scen) -> float:
     if scen is None or getattr(scen, "is_baseline", True):
         return 1.0
     wet = DEMO_CLIMATE_WETTING.get(scen.ssp, 1.10)
-    # Later windows get more of the signal, on a straight ramp across the four
+    # Later windows get more of the signal, on a straight ramp across the
     # twenty-year periods the archive offers.
-    periods = ("2021-2040", "2041-2060", "2061-2080", "2081-2100")
-    step = periods.index(scen.period) + 1 if scen.period in periods else 4
-    return 1.0 + (wet - 1.0) * step / len(periods)
+    from ..model.climate import PERIODS
+    step = (PERIODS.index(scen.period) + 1 if scen.period in PERIODS
+            else len(PERIODS))
+    return 1.0 + (wet - 1.0) * step / len(PERIODS)
 
 
 def make_demo_inputs(grid: Grid, data_dir: str,

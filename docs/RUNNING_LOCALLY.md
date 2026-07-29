@@ -268,15 +268,15 @@ python -m h_sim.cli step7-climate --config configs/03_production_gorkha.json
 
 # or name them directly
 python -m h_sim.cli step7-climate --name gorkha \
-    --scenarios current ssp245:2061-2080 ssp585:2081-2100
+    --scenarios current ssp245:2041-2060 ssp585:2041-2060
 ```
 
 ```
   scenario              mean P   unstable %   mean change   % more likely
   ------------------------------------------------------------------------
   current               0.1931       16.88       +0.0000            0.00
-  ssp245_2061-2080      0.1941       16.95       +0.0010            2.36
-  ssp585_2081-2100      0.1956       17.17       +0.0024            7.34
+  ssp245_2041-2060      0.1938       16.93       +0.0006            1.22
+  ssp585_2041-2060      0.1945       17.03       +0.0014            4.02
 ```
 
 One step produces every map, every change raster against the present day, and a
@@ -296,8 +296,16 @@ Scenario specifications are `current`, or `<pathway>:<period>`:
 | | |
 |---|---|
 | Pathways | `ssp126` `ssp245` `ssp370` `ssp585` |
-| Periods | `2021-2040` `2041-2060` `2061-2080` `2081-2100` |
+| Periods | `2021-2040` **`2041-2060`** (default) `2061-2080` `2081-2100` |
 | GCM | `--climate-model`, default IPSL-CM6A-LR |
+
+Everything defaults to **2041-2060**, a twenty to thirty year planning horizon.
+That is the window a road alignment or a settlement plan is decided over, and it
+is what `step10-risk` scores assets against. Later windows show a bigger signal
+and are one flag away, but a map of 2090 is not a decision anyone can act on,
+and the further out the window the more of its spread is the choice of GCM
+rather than the pathway. `configs/05_climate_trajectory.json` runs all four
+windows when the question is the time course rather than the horizon.
 
 Two ready-made sweeps ask different questions.
 `configs/04_climate_pathways.json` holds the window fixed and varies forcing, so
@@ -517,7 +525,7 @@ JSON. The fields that matter most:
 | `--samples` | Monte Carlo draws per pixel (default 200; the probability resolves to 1/n) |
 | `--uniform-recharge` | Hold recharge uniform, isolating terrain |
 | `--calibration-regions` | `lithology` or `landcover` (measured at -0.0004 AUC) |
-| `--climate` | scenario for a single run: `current` or `ssp585:2061-2080` |
+| `--climate` | scenario for a single run: `current` or `ssp585:2041-2060` |
 | `--scenarios` | step7 only: the list to sweep |
 | `--output` | `probability`, `classes` or `both` |
 | `cv_block_deg` | Spatial-block size in degrees (default 0.25 ≈ 25 km) |

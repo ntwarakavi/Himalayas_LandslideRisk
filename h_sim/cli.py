@@ -104,7 +104,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="rainfall scenario, years")
     g.add_argument("--climate",
                    help="climate for a single run: 'current' or "
-                        "'ssp585:2061-2080'")
+                        "'ssp585:2041-2060'")
     g.add_argument("--output", choices=["probability", "classes", "both"],
                    help="continuous failure probability, SINMAP classes, "
                         "or both (default)")
@@ -629,7 +629,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("step7-climate", aliases=["climate"],
                        help="present and CMIP6 future climates, and the change")
     p.add_argument("--scenarios", nargs="+", metavar="SPEC",
-                   help="e.g. current ssp245:2061-2080 ssp585:2081-2100 "
+                   help="e.g. current ssp245:2041-2060 ssp585:2081-2100 "
                         "(default: config climate_suite)")
     _mode(p); _add_common(p)
 

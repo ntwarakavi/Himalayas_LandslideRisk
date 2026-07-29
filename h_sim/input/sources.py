@@ -204,7 +204,7 @@ def download_worldclim_precip(data_dir: str, res: str = "10m") -> List[str]:
 
 
 def download_worldclim_future(data_dir: str, ssp: str,
-                              period: str = "2061-2080",
+                              period: str = "2041-2060",
                               model: str = "IPSL-CM6A-LR",
                               res: str = "2.5m") -> Optional[List]:
     """Download downscaled CMIP6 monthly precipitation for a future scenario.

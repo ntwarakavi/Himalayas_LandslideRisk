@@ -183,13 +183,18 @@ class Config:
     # and lowers the factor of safety. See model/climate.py.
     #
     #   climate           the scenario a single stability run is evaluated
-    #                     under: "current", or "ssp585:2061-2080"
+    #                     under: "current", or "ssp585:2041-2060"
     #   climate_suite     the scenarios step7 sweeps. The baseline is always
     #                     included, since every future is measured against it.
+    #                     The window is climate.DEFAULT_PERIOD - a twenty to
+    #                     thirty year planning horizon rather than end of
+    #                     century, which is the horizon decisions are taken
+    #                     over. Name a later window explicitly to see how bad
+    #                     it eventually gets.
     climate: str = "current"
     climate_suite: List[str] = field(
-        default_factory=lambda: ["current", "ssp245:2061-2080",
-                                 "ssp585:2061-2080"])
+        default_factory=lambda: ["current", "ssp245:2041-2060",
+                                 "ssp585:2041-2060"])
     climate_model: str = "IPSL-CM6A-LR"       # a mid-sensitivity CMIP6 model
     climate_res: str = "2.5m"                 # CMIP6 grid (30s is ~22 GB/file)
 
@@ -228,11 +233,13 @@ class Config:
         default_factory=lambda: ["motorway", "trunk", "primary", "secondary",
                                  "tertiary", "unclassified"])
     #: Climate scenarios each settlement and road segment is scored under.
-    #: The default is the present day plus the two CMIP6 windows that fall
-    #: inside a twenty to thirty year planning horizon, under an intermediate
-    #: and a very high forcing pathway. That is four futures rather than one
-    #: because the spread between pathways at a fixed date is the honest
-    #: measure of how much of the change is a modelling choice.
+    #: The present day plus both CMIP6 windows inside the planning horizon -
+    #: 2021-2040 and climate.DEFAULT_PERIOD - under an intermediate and a very
+    #: high pathway. Two windows rather than one because the trajectory across
+    #: the horizon is the question, and two pathways because the spread between
+    #: them at a fixed date is the honest measure of how much of the change is
+    #: a modelling choice. Four futures is four downloads and four stability
+    #: runs; cut it with --risk-climate if that is too much.
     risk_climate: List[str] = field(
         default_factory=lambda: ["current",
                                  "ssp245:2021-2040", "ssp585:2021-2040",

@@ -95,7 +95,7 @@ REGISTRY: List[Dataset] = [
         group=CLIMATE, licence="CC BY 4.0", approx_mb=131.0, required=False,
         rel_path="worldclim_future",
         probe_url=("https://geodata.ucdavis.edu/cmip6/2.5m/IPSL-CM6A-LR/ssp585/"
-                   "wc2.1_2.5m_prec_IPSL-CM6A-LR_ssp585_2061-2080.tif"),
+                   "wc2.1_2.5m_prec_IPSL-CM6A-LR_ssp585_2041-2060.tif"),
         note="only needed for --climate ssp126|ssp245|ssp370|ssp585",
     ),
 

@@ -525,8 +525,9 @@ def test_climate_scenario_parsing():
     s = CL.scenario("ssp585:2061-2080")
     assert (s.ssp, s.period, s.is_baseline) == ("ssp585", "2061-2080", False)
     assert s.key == "ssp585_2061-2080"
-    # A bare pathway takes the last window rather than failing.
-    assert CL.scenario("ssp245").period == CL.PERIODS[-1]
+    # A bare pathway takes the planning-horizon window rather than failing.
+    assert CL.scenario("ssp245").period == CL.DEFAULT_PERIOD
+    assert CL.DEFAULT_PERIOD in CL.PERIODS
 
     for bad in ("ssp999:2061-2080", "ssp585:1999-2000"):
         try:
@@ -1209,6 +1210,18 @@ def test_short_scenario_labels():
     assert pipeline._short_scenario(CL.BASELINE) == "present day"
     assert (pipeline._short_scenario(CL.scenario("ssp245:2041-2060"))
             == "SSP2-4.5 2041-60")
+
+
+def test_defaults_sit_on_the_planning_horizon():
+    """Nothing should quietly default to end of century."""
+    cfg = C.Config()
+    assert all(s == "current" or s.endswith(CL.DEFAULT_PERIOD)
+               for s in cfg.climate_suite), cfg.climate_suite
+    assert all(s == "current" or s.split(":")[1] in ("2021-2040",
+                                                     CL.DEFAULT_PERIOD)
+               for s in cfg.risk_climate), cfg.risk_climate
+    assert all(s.is_baseline or s.period == CL.DEFAULT_PERIOD
+               for s in CL.suite())
 
 
 def test_climate_scenario_round_trips_through_a_dict():

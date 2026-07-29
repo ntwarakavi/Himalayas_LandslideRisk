@@ -1427,6 +1427,39 @@ def test_no_point_catalogue_is_shipped():
         assert d.key not in ("glc", "coolr"), d.key
 
 
+def test_demo_rasters_are_written_atomically():
+    """Every demo run writes the same paths; a half-written one poisons the next.
+
+    A truncated GeoTIFF fails to open with "TIFFReadDirectory: Failed to read
+    directory", which reads as a code fault rather than a damaged file, so the
+    writer must never leave one behind.
+    """
+    import rasterio
+
+    from h_sim.utility import demo as D
+
+    grid = Grid.from_bbox((83.0, 27.5, 83.1, 27.6), 0.01)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "sub", "r.tif")
+        arr = np.ones(grid.shape, "float32")
+        D._write(path, grid, arr, "float32", -9999.0)
+        with rasterio.open(path) as src:
+            assert src.read(1).shape == grid.shape
+        # no temporary survives a successful write
+        assert not [f for f in os.listdir(os.path.dirname(path))
+                    if ".tmp" in f]
+
+        # nor a failed one: a bad dtype raises before the rename
+        try:
+            D._write(path, grid, arr, "not-a-dtype", -9999.0)
+        except BaseException:
+            pass
+        assert not [f for f in os.listdir(os.path.dirname(path))
+                    if ".tmp" in f]
+        with rasterio.open(path) as src:      # the good file is untouched
+            assert src.read(1).shape == grid.shape
+
+
 def test_climate_scenario_round_trips_through_a_dict():
     """The web map rebuilds scenarios from what step10 wrote, not from specs."""
     s = CL.scenario("ssp585:2021-2040")

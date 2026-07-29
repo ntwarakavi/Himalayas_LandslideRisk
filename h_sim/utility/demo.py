@@ -23,10 +23,27 @@ from .grid import Grid
 
 
 def _write(path: str, grid: Grid, arr: np.ndarray, dtype: str, nodata) -> str:
+    """Write a synthetic raster, atomically.
+
+    Every demo run writes the same fixed paths, so two of them at once - or one
+    interrupted part-way - leaves a truncated GeoTIFF that the next run cannot
+    open. That happened, and the error it produces ("TIFFReadDirectory: Failed
+    to read directory") looks like a code fault rather than a damaged file.
+    Writing through a temporary and renaming means a reader sees either the old
+    file or the complete new one. The pipeline's writer already did this; this
+    one was missed.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     prof = grid.profile(dtype, nodata)
-    with rasterio.open(path, "w", **prof) as dst:
-        dst.write(arr.astype(dtype), 1)
+    tmp = f"{path}.tmp{os.getpid()}"
+    try:
+        with rasterio.open(tmp, "w", **prof) as dst:
+            dst.write(arr.astype(dtype), 1)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
     return path
 
 

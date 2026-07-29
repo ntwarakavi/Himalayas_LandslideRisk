@@ -420,33 +420,6 @@ def test_inventory_polygon_centroid_and_reprojection():
         {"type": "Polygon", "coordinates": []}) is None
 
 
-def test_glc_accuracy_screening():
-    """GLC loading must drop records too coarsely placed to test a fine map."""
-    with tempfile.TemporaryDirectory() as tmp:
-        p = os.path.join(tmp, "glc.csv")
-        with open(p, "w") as fh:
-            fh.write("location_accuracy,country_name,landslide_trigger,"
-                     "longitude,latitude\n")
-            fh.write("exact,Nepal,downpour,84.1,28.1\n")
-            fh.write("1km,Nepal,rain,84.2,28.2\n")
-            fh.write("25km,Nepal,downpour,84.3,28.3\n")     # too coarse
-            fh.write("unknown,Nepal,downpour,84.4,28.4\n")  # unquantified
-            fh.write("exact,Peru,downpour,-72.0,-13.0\n")   # wrong country
-
-        assert len(inventory.load_glc_csv(p, max_accuracy="1km")) == 3
-        assert len(inventory.load_glc_csv(p, max_accuracy="exact")) == 2
-        assert len(inventory.load_glc_csv(p, max_accuracy="25km")) == 4
-        assert len(inventory.load_glc_csv(p, countries=("Nepal",))) == 2
-        assert len(inventory.load_glc_csv(
-            p, countries=("Nepal",), triggers=("rain",))) == 1
-        assert len(inventory.load_glc_csv(
-            p, bbox=(84.0, 28.0, 84.15, 28.15))) == 1
-
-
-# ---------------------------------------------------------------------------
-# validation
-# ---------------------------------------------------------------------------
-
 def test_validate_handles_continuous_index():
     """Validation must score the continuous field, not only a class map."""
     import rasterio
@@ -1000,7 +973,7 @@ def test_dataset_cache_detection():
     """A dataset counts as cached only when its file/dir actually has content."""
     from h_sim.input import datasets
 
-    ds = datasets.BY_KEY["coolr"]
+    ds = datasets.BY_KEY["gorkha"]
     with tempfile.TemporaryDirectory() as tmp:
         assert ds.cached(tmp) is False
         target = ds.local_path(tmp)
@@ -1011,7 +984,7 @@ def test_dataset_cache_detection():
             fh.write("{}")
         assert ds.cached(tmp) is True
 
-        rows = datasets.check_all(tmp, probe=False, keys=["coolr"])
+        rows = datasets.check_all(tmp, probe=False, keys=["gorkha"])
         assert rows[0]["cached"] is True and rows[0]["reachable"] is None
         assert "CACHED" in datasets.format_report(rows)
 
@@ -1430,40 +1403,28 @@ def test_every_inventory_is_registered_and_fetchable():
     from h_sim.input import datasets, inventory as INV
 
     keys = {d.key for d in datasets.REGISTRY if d.group == datasets.INVENTORY}
-    for key in ("gorkha", "farwest", "sikkim"):
-        assert key in keys, key
+    assert keys == {"gorkha", "farwest", "sikkim"}, keys
+    for key in keys:
         assert key in INV.INVENTORY_FETCHERS, key
     for key, (fn, label) in INV.INVENTORY_FETCHERS.items():
         assert callable(fn) and label, key
-    # every registered inventory must be fetchable or explicitly manual
+        assert "polygon" in label.lower(), (key, label)
+
+
+def test_no_point_catalogue_is_shipped():
+    """Only mapped polygon inventories. See the module docstring for why.
+
+    A position known to a kilometre cannot be tested against a 90 m pixel, and
+    a media-derived catalogue reports landslides where people are rather than
+    where slopes fail - measured at Spearman -0.74 against susceptibility.
+    """
+    from h_sim.input import datasets, inventory as INV
+
+    for gone in ("load_glc_csv", "download_glc_csv", "download_coolr_points",
+                 "download_nasa_glc", "_has_accuracy_column"):
+        assert not hasattr(INV, gone), gone
     for d in datasets.REGISTRY:
-        if d.group != datasets.INVENTORY:
-            continue
-        assert d.key in INV.INVENTORY_FETCHERS or d.key == "coolr", d.key
-
-
-def test_a_catalogue_that_publishes_accuracy_is_screened_by_it():
-    """A 90 m pixel cannot be tested against a point geocoded to a district."""
-    from h_sim.input import inventory as INV
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, "glc.csv")
-        with open(path, "w") as fh:
-            fh.write("latitude,longitude,location_accuracy,country_name\n")
-            fh.write("28.0,84.0,exact,Nepal\n")
-            fh.write("28.1,84.1,1km,Nepal\n")
-            fh.write("28.2,84.2,25km,Nepal\n")
-            fh.write("28.3,84.3,,Nepal\n")
-        pts = INV.load_inventory(path)
-        assert len(pts) == 2, "only exact and 1km survive"
-        assert INV.DEFAULT_MAX_ACCURACY == "1km"
-
-    # a CSV with no accuracy column is untouched
-    with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, "plain.csv")
-        with open(path, "w") as fh:
-            fh.write("latitude,longitude\n28.0,84.0\n28.1,84.1\n")
-        assert len(INV.load_inventory(path)) == 2
+        assert d.key not in ("glc", "coolr"), d.key
 
 
 def test_climate_scenario_round_trips_through_a_dict():

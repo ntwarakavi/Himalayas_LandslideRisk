@@ -706,10 +706,9 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
     Far-Western Nepal and Sikkim. Pakistan, Afghanistan, Ladakh, Uttarakhand,
     Himachal, Bhutan and Myanmar have none, so parameters there are
     extrapolated with no way to check them. Three further open inventories were
-    found, tested and rejected, and the NASA catalogue is 85 % too coarsely
-    located to use — what exists, what does not and why is in
-    [docs/RESULTS.md §12–13](docs/RESULTS.md). This is the single biggest limit
-    on what the regional product can claim.
+    found, tested and rejected — what exists, what does not and why is in
+    [docs/RESULTS.md §12](docs/RESULTS.md). This is the single biggest limit on
+    what the regional product can claim.
 
 ---
 
@@ -739,7 +738,7 @@ h_sim/
     ├── grid.py            Reference grid, warping, tiled processing
     └── demo.py            Synthetic inputs for offline testing
 
-analysis/                  Eight experiments behind docs/RESULTS.md
+analysis/                  Seven experiments behind docs/RESULTS.md
 configs/                   Five configurations; 02 is the regional product
 docs/                      Operating guide and measured results
 scripts/run_demo.sh        Offline walk through the whole sequence
@@ -755,7 +754,7 @@ tests/                     66 tests, no network required
 | Recharge, future | WorldClim CMIP6 downscaled | 4.6 km | Automatic |
 | Calibration regions (optional) | GLiM, 1.2 M polygons | Vector | Automatic, 1.1 GB once |
 | Calibration regions (optional) | ESA WorldCover 2021 | 10 m | Automatic |
-| Inventories | Gorkha, Far-West Nepal, Sikkim (+ NASA GLC, reconnaissance only) | Points, polygons | Automatic |
+| Inventories | Gorkha, Far-West Nepal, Sikkim | Mapped polygons | Automatic |
 | Earthquake PGA | GEM seismic hazard map | — | Manual, or scenario value |
 | States and provinces | Natural Earth 1:10m admin-1 | ~1:10 M | Automatic, 15 MB once |
 
@@ -768,37 +767,18 @@ used**. Nothing else is fitted or validated against.
 |---|---|---|---|---|
 | Roback 2018, Gorkha, Nepal | 24,795 | Satellite, **source areas**, earthquake-triggered | Public domain (USGS) | **(step 3 — the calibration fit.** `configs/01_calibrate.json`. The one parameter set every province then reads.**)** |
 | Far-Western Nepal, multi-temporal | 26,350 | Satellite, monsoon-triggered, with a mapped-extent polygon | CC BY 4.0 | **(step 4 — transfer validation, and `analysis/02`–`06` for the domain-of-validity and resolution experiments)** |
-| Southern Sikkim, India | 255 polygons + 185 points, with a mapped-extent polygon | Satellite | CC BY 4.0 | **(step 4 — transfer validation, `--survey-extent`; and `analysis/02_transfer.py`)** |
-| NASA Global Landslide Catalog | 11,033 global; 2,469 in the HKH | Media reports, with `location_accuracy` | Open | **(nothing. Not fitted, not validated against. A method to use it exists but the evidence is too thin to quote — see below.)** |
+| Southern Sikkim, India | 255 polygons, with a mapped-extent polygon | Satellite | CC BY 4.0 | **(step 4 — transfer validation, `--survey-extent`; and `analysis/02_transfer.py`)** |
 
-**The GLC is screened automatically** wherever it is loaded as an inventory: it
-publishes a `location_accuracy` field, 85 % of its HKH records are placed worse
-than 1 km, and a 90 m pixel cannot be tested against a position known to a
-district. Any CSV carrying that field is screened to 1 km on load — 2,469
-records become 367.
 
-**Could the rest be used at a coarser scale? A method exists; the evidence does
-not yet support quoting it.** `analysis/08_point_validation.py` scores each
-record through a disc the size of its own stated accuracy, blurs background
-identically, and tests landslide density over cells coarser than the error.
-Two findings, one solid and one cautionary:
-
-- **Reporting bias is real and large.** Against uniform background in
-  west-central Nepal the AUC is 0.346 and the areal correlation is **ρ = −0.74**.
-  Landslides are *reported* where susceptibility is low, because media reports
-  come from roads and settlements on valley floors.
-- **Correcting it is not clean.** Target-group background drawn from settlements
-  raises Gorkha's AUC from 0.585 to 0.633 — but that background also sits on
-  ground 6 % less susceptible, so part of the gain is the background becoming
-  easier to beat rather than the bias being removed. With 37 usable records the
-  95 % interval is **0.528–0.738**, barely excluding chance, against 0.664–0.740
-  for the Sikkim polygons.
-
-So the catalogue is used for **nothing** in the workflow. The machinery is kept
-because the arithmetic says when it becomes real — about 1,455 records survive
-the 10 km screen region-wide, tightening the standard error from 0.054 to
-roughly 0.01 — so re-run it after the regional sweep, and do not quote it
-before. [docs/RESULTS.md §14](docs/RESULTS.md).
+**Polygon inventories only.** Point catalogues — the NASA Global Landslide
+Catalog and COOLR — are not used and not shipped. Two reasons, both measured
+rather than assumed. Their positions are mostly known to a kilometre or worse,
+which cannot be tested against a 90 m pixel. And being compiled from media
+reports they carry a bias towards roads and settlements strong enough to invert
+the answer: scored against a susceptibility map in west-central Nepal they give
+AUC 0.346 and a Spearman correlation of **−0.74** between landslide count and
+predicted susceptibility, because reports come from valley floors where people
+are, not from the slopes that fail.
 
 **Source areas matter.** The model predicts initiation, so an inventory mapping
 whole-landslide polygons is sampled downslope of what the model describes.
@@ -812,7 +792,7 @@ and rejected — Nepal monsoon (redundant with Far-West and without a mapped
 extent), Shimla (anthropogenic road-cut failures, which the model has no term
 for), and Eastern Himalaya large landslides (wrong failure mechanism, points not
 source areas). What was searched for, what does not exist, and why, is in
-[docs/RESULTS.md §12–13](docs/RESULTS.md).
+[docs/RESULTS.md §12](docs/RESULTS.md).
 
 ## Licence
 

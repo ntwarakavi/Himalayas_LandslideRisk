@@ -31,10 +31,9 @@ from typing import Dict, List, Optional, Tuple
 # (west, south, east, north) in EPSG:4326 degrees.
 HKH_BBOX: Tuple[float, float, float, float] = (60.0, 16.0, 105.0, 39.0)
 
-# The eight HKH member countries (as they appear in the NASA COOLR/GLC
-# "country_name" field). The bounding box plus this list restricts a global
-# inventory to the region; neighbouring lowland countries (e.g. Vietnam, Laos)
-# are excluded even though they fall inside the box.
+# The eight HKH member countries. The bounding box plus this list restricts a
+# global dataset to the region; neighbouring lowland countries (e.g. Vietnam,
+# Laos) are excluded even though they fall inside the box.
 HKH_COUNTRIES = (
     "Afghanistan", "Pakistan", "India", "Nepal", "Bhutan", "Bangladesh",
     "China", "Myanmar",

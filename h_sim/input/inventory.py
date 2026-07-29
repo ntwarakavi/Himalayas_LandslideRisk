@@ -23,14 +23,6 @@ of them improved or usefully checked the model. What they measured, and why
 they were rejected, is recorded in docs/RESULTS.md section 12 with their DOIs,
 so nobody repeats the search.
   * ICIMOD Regional Database System (rds.icimod.org) - HKH-wide, free account.
-  * NASA Global Landslide Catalog / COOLR (Kirschbaum et al. 2010; Juang et al.
-    2019) - downloaded automatically, but note it is compiled from media
-    reports. Beyond the reporting bias towards roads and settlements, many
-    records are geocoded to an administrative region rather than to the
-    landslide: all 176 Indian records share the location description
-    "Uttarakhand and Himachal Pradesh, India", an area of ~100,000 km2. Use it
-    to see where landslides get reported; do NOT use it to fit parameters
-    or to validate a hillslope-scale map. See docs/RUNNING_LOCALLY.md.
 
 Any of these can be passed via ``inventory_path`` as CSV, GeoJSON or shapefile.
 """
@@ -43,34 +35,6 @@ import os
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
-
-# NASA Global Landslide Catalog, authoritative CSV export. This is the file to
-# use: it carries the location_accuracy field, without which the catalogue
-# cannot be screened for positional precision, and it has far better HKH
-# coverage than the FeatureServer below (Nepal 481, Pakistan 142, Afghanistan 15
-# against zero for each). NASA moved it under /docs/legacy/; the older Socrata
-# ids (dd9e-wu2v) now 404.
-GLC_CSV_URL = ("https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog_"
-               "Export/Global_Landslide_Catalog_Export_rows.csv")
-
-# NASA COOLR (Cooperative Open Online Landslide Repository) point catalogue,
-# served as an ArcGIS FeatureServer that supports GeoJSON queries + pagination.
-# NOTE: this serves a *partial* subset and omits location_accuracy - prefer
-# GLC_CSV_URL above.
-COOLR_POINTS_URL = (
-    "https://gis.earthdata.nasa.gov/gis05/rest/services/Landslides/"
-    "COOLR_Events_Points/FeatureServer/0/query"
-)
-NASA_GLC_INFO = (
-    "NASA Global Landslide Catalog / COOLR: browse https://landslides.nasa.gov"
-    "/viewer and export the point catalogue as CSV/GeoJSON, or download it "
-    "directly from the ArcGIS FeatureServer:\n  " + COOLR_POINTS_URL +
-    "?where=1=1&outFields=*&f=geojson\nThen pass it via config.inventory_path."
-)
-
-#: Positional accuracy a record must beat to be used, when the source says.
-#: A 90 m pixel cannot be tested against a landslide placed to 5 km.
-DEFAULT_MAX_ACCURACY = "1km"
 
 _LAT_KEYS = ("latitude", "lat", "y", "ycoord", "y_coord")
 _LON_KEYS = ("longitude", "lon", "long", "lng", "x", "xcoord", "x_coord")
@@ -95,14 +59,6 @@ def load_inventory(path: str,
         pts = _load_geojson(path)
     elif ext in (".shp", ".gdb", ".gpkg", ".kml", ".kmz"):
         pts = _load_vector(path)
-    elif _has_accuracy_column(path):
-        # A catalogue that publishes its positional accuracy is screened by it
-        # by default. The NASA GLC records how precisely each landslide was
-        # placed, and in this region 85% of them are placed worse than 1 km -
-        # 2,469 records become 367. Returning all of them would let somebody
-        # test a 90 m pixel against a point geocoded to a district.
-        return load_glc_csv(path, bbox=bbox, countries=countries,
-                            max_accuracy=DEFAULT_MAX_ACCURACY)
     else:
         pts = _load_csv(path, countries)
     pts = np.asarray(pts, dtype="float64").reshape(-1, 2)
@@ -113,17 +69,6 @@ def load_inventory(path: str,
             (pts[:, 1] >= s) & (pts[:, 1] <= n)
         pts = pts[m]
     return pts
-
-
-def _has_accuracy_column(path: str) -> bool:
-    """Does this CSV publish a positional-accuracy field?"""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace",
-                  newline="") as fh:
-            header = next(csv.reader(fh), [])
-    except Exception:                                    # noqa: BLE001
-        return False
-    return "location_accuracy" in {h.strip().lower() for h in header}
 
 
 def _load_csv(path: str, countries: Optional[Sequence[str]]) -> List[Tuple[float, float]]:
@@ -228,54 +173,6 @@ def _load_geojson(path: str) -> List[Tuple[float, float]]:
 # Downloading
 # ---------------------------------------------------------------------------
 
-def download_coolr_points(data_dir: str,
-                          bbox: Optional[Sequence[float]] = None,
-                          page: int = 1000, max_records: int = 100000
-                          ) -> Optional[str]:
-    """Download NASA COOLR landslide points as GeoJSON via the FeatureServer.
-
-    Only records intersecting ``bbox`` are requested (server-side), and results
-    are paginated. Returns the written GeoJSON path, or None on failure.
-    """
-    import requests
-
-    params = {"where": "1=1", "outFields": "latitude,longitude,country_name,"
-              "event_date,landslide_category,landslide_trigger",
-              "outSR": "4326", "f": "geojson"}
-    if bbox is not None:
-        w, s, e, n = bbox
-        params.update(geometry=f"{w},{s},{e},{n}",
-                      geometryType="esriGeometryEnvelope", inSR="4326",
-                      spatialRel="esriSpatialRelIntersects")
-
-    features: List[dict] = []
-    offset = 0
-    try:
-        while offset < max_records:
-            q = dict(params, resultOffset=offset, resultRecordCount=page)
-            r = requests.get(COOLR_POINTS_URL, params=q, timeout=120)
-            r.raise_for_status()
-            batch = r.json().get("features", [])
-            if not batch:
-                break
-            features.extend(batch)
-            if len(batch) < page:
-                break
-            offset += page
-    except Exception as exc:  # noqa: BLE001
-        print(f"  COOLR fetch failed: {exc}")
-        return None
-
-    if not features:
-        return None
-    os.makedirs(os.path.join(data_dir, "inventory"), exist_ok=True)
-    dest = os.path.join(data_dir, "inventory", "coolr_points.geojson")
-    with open(dest, "w", encoding="utf-8") as fh:
-        json.dump({"type": "FeatureCollection", "features": features}, fh)
-    print(f"  COOLR: {len(features)} landslide points -> {dest}")
-    return dest
-
-
 def _cached_download(url: str, dest: str, timeout: int = 900) -> Optional[str]:
     """Download only if ``dest`` is missing. Returns the path or None."""
     if os.path.exists(dest) and os.path.getsize(dest) > 0:
@@ -366,67 +263,13 @@ def download_sikkim(data_dir: str) -> Optional[str]:
     return shp if os.path.exists(shp) else None
 
 
-def download_glc_csv(data_dir: str) -> Optional[str]:
-    """Download the authoritative NASA Global Landslide Catalog CSV.
-
-    11,033 records, 1997-2016, with ``location_accuracy`` - the field that makes
-    the catalogue screenable. Only about a third of records are placed to 1 km
-    or better, so filter before using it against a hillslope-scale map; see
-    :func:`load_glc_csv`.
-    """
-    dest = os.path.join(data_dir, "inventory", "glc_export.csv")
-    return _cached_download(GLC_CSV_URL, dest)
-
-
-#: Positional accuracy classes, best first. Anything beyond "1km" is too coarse
-#: to test a 90 m pixel.
-GLC_ACCURACY_ORDER = ["exact", "1km", "5km", "10km", "25km", "50km", "100km",
-                      "250km"]
-
-
-def load_glc_csv(path: str, bbox: Optional[Sequence[float]] = None,
-                 countries: Optional[Sequence[str]] = None,
-                 max_accuracy: str = "1km",
-                 triggers: Optional[Sequence[str]] = None) -> np.ndarray:
-    """Load GLC records, screened by positional accuracy.
-
-    ``max_accuracy`` keeps only records placed at least that precisely
-    (default "1km"). Records with unknown or blank accuracy are dropped, since
-    an unquantified position cannot be trusted against a 90 m grid.
-
-    ``triggers`` optionally restricts to matching landslide_trigger values,
-    e.g. ("downpour", "rain", "continuous_rain") for rainfall-triggered only.
-    """
-    keep = set(GLC_ACCURACY_ORDER[:GLC_ACCURACY_ORDER.index(max_accuracy) + 1])
-    trig = {t.lower() for t in triggers} if triggers else None
-    cset = {c.lower() for c in countries} if countries else None
-
-    out: List[Tuple[float, float]] = []
-    with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
-        for row in csv.DictReader(fh):
-            if (row.get("location_accuracy") or "").strip() not in keep:
-                continue
-            if cset and (row.get("country_name") or "").strip().lower() not in cset:
-                continue
-            if trig and (row.get("landslide_trigger") or "").strip().lower() not in trig:
-                continue
-            try:
-                out.append((float(row["longitude"]), float(row["latitude"])))
-            except (TypeError, ValueError, KeyError):
-                continue
-
-    pts = np.asarray(out, dtype="float64").reshape(-1, 2)
-    if bbox is not None and len(pts):
-        w, s, e, n = bbox
-        pts = pts[(pts[:, 0] >= w) & (pts[:, 0] <= e) &
-                  (pts[:, 1] >= s) & (pts[:, 1] <= n)]
-    return pts
-
-
 #: Inventory key -> (downloader, human label). Used by the CLI and pipeline.
+#: Every entry is a **polygon** inventory of mapped landslides. Point
+#: catalogues are deliberately absent: a position known to a kilometre or a
+#: district cannot be tested against a 90 m pixel, and the media-derived ones
+#: carry a reporting bias towards roads and settlements strong enough to
+#: invert the answer.
 INVENTORY_FETCHERS = {
-    "glc": (download_glc_csv,
-            "NASA Global Landslide Catalog CSV (11,033 records, screenable)"),
     "gorkha": (download_gorkha,
                "Roback 2018 Gorkha, Nepal (earthquake, 24,795 polygons)"),
     "farwest": (download_farwest_nepal,
@@ -435,23 +278,6 @@ INVENTORY_FETCHERS = {
                "Southern Sikkim, India (255 polygons)"),
 }
 
-
-def download_nasa_glc(data_dir: str,
-                      bbox: Optional[Sequence[float]] = None) -> Optional[str]:
-    """Obtain the NASA COOLR landslide inventory for ``bbox``.
-
-    Returns a path to the downloaded GeoJSON, or None (with a pointer printed).
-    """
-    got = download_coolr_points(data_dir, bbox=bbox)
-    if got:
-        return got
-    print("  " + NASA_GLC_INFO)
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Synthetic inventory (offline demo / tests)
-# ---------------------------------------------------------------------------
 
 def make_synthetic_inventory(factor_paths: Sequence[str], n: int,
                              true_weights: Sequence[float],

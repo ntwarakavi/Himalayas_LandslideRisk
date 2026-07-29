@@ -68,22 +68,3 @@ Every cross-validated number follows the same rules:
 - AUC is Mann-Whitney with tie correction. Capture is the share of landslides
   falling above the background distribution's (1−f) quantile, which stands in
   for map area.
-
-### 08_point_validation.py — can the point catalogue be used?
-
-The NASA GLC holds 2,469 records in the region against roughly 51,000 polygons
-in the three mapped inventories, but 85 % of them are placed worse than 1 km.
-This tests whether they can be used at a coarser scale: neighbourhood sampling
-through a disc the size of each record's own accuracy, with background blurred
-identically, and an areal density test over cells coarser than the error.
-
-The finding is that reporting bias dominates and inverts the result - uniform
-background gives AUC 0.346 and Spearman -0.74, because media reports come from
-roads and settlements on gentle ground. Target-group background raises Gorkha
-from 0.585 to 0.633, but that background is also 6% less susceptible, so part
-of the gain is an easier baseline rather than bias removal; and with 37 records
-the 95% interval is 0.528-0.738, barely excluding chance.
-
-Inconclusive at catchment scale, and currently used for nothing. Re-run after
-the regional sweep, where about 1,455 records would cut the standard error from
-0.054 to roughly 0.01. See RESULTS section 14.

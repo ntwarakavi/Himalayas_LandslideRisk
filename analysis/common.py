@@ -247,38 +247,3 @@ def table(rows: List[dict], cols: Sequence[Tuple[str, str, str]]) -> str:
                          f"{format(v, fmt):>{w}}")
         lines.append("  " + "  ".join(cells))
     return "\n".join(lines)
-
-
-def point_test_targets():
-    """(label, susceptibility path, bbox) for the point-validation script.
-
-    Any real map already on disk is a candidate. The imprecise-point tests are
-    coarse by construction, so they want the largest maps available rather than
-    the sharpest: a 25 km positional error is no worse over a province than
-    over a catchment, and a province holds far more records.
-    """
-    import glob
-    import rasterio
-
-    out = []
-    seen = set()
-    for path in sorted(glob.glob(os.path.join("outputs",
-                                              "*_susceptibility_prob.tif"))):
-        base = os.path.basename(path)
-        if base.startswith("demo") or base.startswith("ab_"):
-            continue
-        try:
-            with rasterio.open(path) as src:
-                b = src.bounds
-                cells = src.width * src.height
-        except Exception:                                # noqa: BLE001
-            continue
-        if cells < 1_000_000:
-            continue
-        key = (round(b.left, 2), round(b.bottom, 2))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append((base.replace("_susceptibility_prob.tif", ""), path,
-                    (b.left, b.bottom, b.right, b.top)))
-    return out

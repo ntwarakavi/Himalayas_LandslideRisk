@@ -12,7 +12,7 @@ Datasets are grouped by role in the model:
   TERRAIN    elevation, and optionally lithology and land cover -> slope and
                                               catchment area; calibration regions
   CLIMATE    present and future rainfall   -> the recharge field
-  INVENTORY  historical landslides         -> fits the soil parameters
+  INVENTORY  mapped landslide polygons     -> fits the soil parameters
   TRIGGER    earthquake shaking            -> the seismic coefficient
 """
 
@@ -100,23 +100,6 @@ REGISTRY: List[Dataset] = [
     ),
 
     # ---- INVENTORY -------------------------------------------------------
-    Dataset(
-        key="coolr", name="NASA Global Landslide Catalog / COOLR",
-        group=INVENTORY, licence="open", approx_mb=6.0, required=False,
-        rel_path="inventory/coolr_points.geojson",
-        probe_url=("https://gis.earthdata.nasa.gov/gis05/rest/services/"
-                   "Landslides/COOLR_Events_Points/FeatureServer/0?f=json"),
-        note="global, but media-report derived: biased towards roads/towns",
-    ),
-    Dataset(
-        key="glc", name="NASA Global Landslide Catalog (authoritative CSV)",
-        group=INVENTORY, licence="open", approx_mb=8.5, required=False,
-        rel_path="inventory/glc_export.csv",
-        probe_url=("https://data.nasa.gov/docs/legacy/Global_Landslide_Catalog"
-                   "_Export/Global_Landslide_Catalog_Export_rows.csv"),
-        note="11,033 records with location_accuracy; only ~1/3 are placed to "
-             "1 km or better - screen before use",
-    ),
     Dataset(
         key="gorkha", name="Roback 2018 Gorkha earthquake inventory (Nepal)",
         group=INVENTORY, licence="public domain (USGS)", approx_mb=129.0,

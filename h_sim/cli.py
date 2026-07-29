@@ -229,10 +229,8 @@ def _step_download(args) -> int:
                 print(f"    {'OK   ' if p else 'FAIL '} {key:14s} {label}")
             except Exception as exc:                     # noqa: BLE001
                 print(f"    FAIL  {key:14s} {type(exc).__name__}: {exc}")
-        inv = inventory.download_nasa_glc(cfg.data_dir, bbox=cfg.region_bbox)
-        print(f"    {'OK   ' if inv else 'FAIL '} coolr          NASA GLC/COOLR")
 
-    print("\nNext:  python -m h_sim.cli step3-fit --inventory <path>")
+    print("\nNext:  python -m h_sim.cli step3-calibrate --inventory <path>")
     return 0
 
 

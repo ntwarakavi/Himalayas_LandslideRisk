@@ -171,7 +171,6 @@ python -m h_sim.cli step3-calibrate --name farwest \
 | Roback Gorkha | 24,795 | Earthquake |
 | Far-Western Nepal | 26,350 | Monsoon, multi-temporal |
 | Southern Sikkim | 255 | Mixed — too small to fit, use for validation |
-| NASA GLC | 11,033 global | Media reports; screen by `location_accuracy` |
 
 The physical model has no trigger-specific parameters, so an earthquake
 inventory can fit a model you then apply to rainfall. But the wetness the

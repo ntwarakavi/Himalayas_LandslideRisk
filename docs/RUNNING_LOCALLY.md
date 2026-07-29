@@ -324,6 +324,26 @@ would confound two effects in one map.
 
 ## 8b. Regional production, one province at a time
 
+```bash
+python -m h_sim.cli step9-region --dry-run --config configs/08_hkh_region.json
+python -m h_sim.cli step9-region --config configs/08_hkh_region.json --everything
+```
+
+**Provinces are chosen on relief, not on the region's bounding box.** That box
+spans 60-105 E and 16-39 N and contains the Gangetic plain and most of
+peninsular India; selecting on it alone returns 137 units including Odisha,
+Madhya Pradesh and Telangana. A cell counts as mountain when it is above
+1,000 m *and* has 500 m of local elevation range within about 27 km - both,
+because a high plain has no hillslopes to fail on. A unit is kept when 10% of
+it is mountain, or when it holds 1,000 km2 of mountain with a 1,400 m peak;
+the second clause is what keeps West Bengal, whose 1.9% is Darjeeling.
+
+That leaves **95 units** across seven countries. Bangladesh drops out - the
+Chittagong Hill Tracts reach 597 m here - and two mountainous units outside the
+HKH arc are excluded by name in `admin.NOT_HKH`. Adjust with
+`admin_mountain_elevation_m`, `admin_min_mountain_fraction`, `admin_exclude`,
+or set `admin_elevation_res` to null to skip the test entirely.
+
 The whole region cannot be a single run: 4,400 × 2,500 km at 30 m is thirteen
 billion cells and flow routing is not tiled. `step9-region` sweeps
 administrative units instead.

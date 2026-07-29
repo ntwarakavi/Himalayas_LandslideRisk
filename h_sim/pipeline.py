@@ -1290,10 +1290,35 @@ def run_region(cfg: C.Config, mode: str = "download",
         raise RuntimeError("no administrative boundaries available; "
                            + admin.ADMIN_SOURCE_INFO)
 
-    units = admin.load_units(shp, cfg.region_bbox,
-                             countries=countries or cfg.admin_countries,
-                             names=names)
-    _log("region", f"{len(units)} units inside the study region")
+    elev = None
+    if cfg.admin_elevation_res:
+        elev = sources.download_worldclim_elevation(cfg.data_dir,
+                                                    cfg.admin_elevation_res)
+        if not elev:
+            _log("region", "no elevation grid; selecting on the region box "
+                           "alone, which will include plains provinces")
+
+    units = admin.load_units(
+        shp, cfg.region_bbox,
+        countries=countries or cfg.admin_countries or list(C.HKH_COUNTRIES),
+        names=names,
+        elevation_path=elev,
+        min_mountain_fraction=cfg.admin_min_mountain_fraction,
+        mountain_elevation_m=cfg.admin_mountain_elevation_m,
+        local_relief_m=cfg.admin_local_relief_m,
+        min_mountain_area_km2=cfg.admin_min_mountain_area_km2,
+        min_mountain_peak_m=cfg.admin_min_mountain_peak_m,
+        exclude=(admin.NOT_HKH if cfg.admin_exclude is None
+                 else cfg.admin_exclude))
+    if elev:
+        _log("region", f"{len(units)} mountain units (mountain = above "
+                       f"{cfg.admin_mountain_elevation_m:.0f} m with "
+                       f"{cfg.admin_local_relief_m:.0f} m local relief; a unit "
+                       f"needs {cfg.admin_min_mountain_fraction:.0%} of it, or "
+                       f"{cfg.admin_min_mountain_area_km2:,.0f} km2 and a "
+                       f"{cfg.admin_min_mountain_peak_m:.0f} m peak)")
+    else:
+        _log("region", f"{len(units)} units inside the study region")
 
     rows = admin.summarise(units, cfg.resolution_deg, cfg.admin_buffer_deg)
     too_big = [r for r in rows if r["cells"] > cfg.admin_max_cells]

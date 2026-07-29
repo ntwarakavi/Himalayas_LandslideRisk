@@ -251,6 +251,26 @@ class Config:
     admin_path: Optional[str] = None
     #: Countries to sweep. None means every HKH member country.
     admin_countries: Optional[List[str]] = None
+    #: Provinces are selected on relief, not on the region's bounding box. That
+    #: box spans 60-105 E and 16-39 N, which contains the whole Gangetic plain
+    #: and most of peninsular India; selecting on it alone returns Odisha,
+    #: Madhya Pradesh and Telangana, none of which have a Himalayan hillslope.
+    #: A unit is kept when it is mostly mountain, or when it carries a large
+    #: and genuinely high massif - the second clause is what keeps West Bengal,
+    #: whose 1.9% is Darjeeling, while still dropping Odisha, whose comparable
+    #: area tops out at 1,110 m. Set admin_elevation_res to None to skip the
+    #: test and take everything in the box.
+    admin_elevation_res: Optional[str] = "5m"   # global elevation grid, 4.8 MB
+    admin_mountain_elevation_m: float = 1000.0  # a cell this high is mountain
+    admin_min_mountain_fraction: float = 0.10   # mostly mountain, or...
+    admin_min_mountain_area_km2: float = 1000.0  # ...this much mountain...
+    admin_min_mountain_peak_m: float = 1400.0   # ...and this high somewhere
+    admin_local_relief_m: float = 500.0         # rugged, not a high plain
+    #: State or province names to drop regardless of relief. None uses
+    #: admin.NOT_HKH: units that are genuinely mountainous but on ranges
+    #: outside the arc. Pass [] to keep everything the relief test admits.
+    admin_exclude: Optional[List[str]] = None
+
     #: How far outside a unit to route flow before clipping the map back to it.
     #: A provincial border cuts catchments, so a cell just inside one is handed
     #: too little upslope area if the DEM stops at the border.

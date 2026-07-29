@@ -203,6 +203,28 @@ def download_worldclim_precip(data_dir: str, res: str = "10m") -> List[str]:
     return tifs
 
 
+def download_worldclim_elevation(data_dir: str, res: str = "5m"
+                                 ) -> Optional[str]:
+    """Global elevation on the WorldClim grid. One small file, cached.
+
+    Used only to decide which states and provinces are mountainous enough to
+    be worth running - see :func:`h_sim.input.admin.relief_stats`. At 5 arc
+    minutes it is far too coarse for the stability model, and is never used
+    for one: about 9 km per cell, 4.8 MB for the world.
+    """
+    out_dir = os.path.join(data_dir, "worldclim")
+    tif = os.path.join(out_dir, f"wc2.1_{res}_elev.tif")
+    if os.path.exists(tif):
+        return tif
+    dest = os.path.join(out_dir, f"wc2.1_{res}_elev.zip")
+    got = download_file(f"{WORLDCLIM}/wc2.1_{res}_elev.zip", dest, timeout=300)
+    if not got:
+        return None
+    with zipfile.ZipFile(got) as zf:
+        zf.extractall(out_dir)
+    return tif if os.path.exists(tif) else None
+
+
 def download_worldclim_future(data_dir: str, ssp: str,
                               period: str = "2041-2060",
                               model: str = "IPSL-CM6A-LR",

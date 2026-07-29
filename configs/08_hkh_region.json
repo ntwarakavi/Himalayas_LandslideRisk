@@ -1,0 +1,28 @@
+{
+  "_comment": "HKH-WIDE PRODUCTION - every mountain state and province across the eight member countries, one at a time. Fit once with 02 first; this config never refits. 90 m is the practical regional grid: 30 m is better (0.816 against 0.806 held out) but costs nine times the cells, and eight units already exceed the memory ceiling at 90 m.",
+  "name": "hkh",
+  "resolution_deg": 0.00083333,
+  "dem_source": "copernicus30",
+  "region_bbox": [60.0, 16.0, 105.0, 39.0],
+  "fitted_params": "outputs/gorkha_fitted_params.json",
+  "trigger": "rainfall",
+  "output": "both",
+  "spatial_recharge": true,
+  "climate": "current",
+  "climate_suite": ["current", "ssp245:2041-2060", "ssp585:2041-2060"],
+  "return_periods_yr": [10, 100, 1000],
+  "pga_scenarios_g": [0.15, 0.35],
+  "risk_climate": [
+    "current",
+    "ssp245:2021-2040", "ssp585:2021-2040",
+    "ssp245:2041-2060", "ssp585:2041-2060"
+  ],
+  "admin_buffer_deg": 0.05,
+  "admin_max_cells": 40000000,
+  "admin_elevation_res": "5m",
+  "admin_mountain_elevation_m": 1000.0,
+  "admin_local_relief_m": 500.0,
+  "admin_min_mountain_fraction": 0.10,
+  "admin_min_mountain_area_km2": 1000.0,
+  "admin_min_mountain_peak_m": 1400.0
+}

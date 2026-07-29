@@ -9,7 +9,18 @@ hydrology — computed over D-infinity flow routing, extended with a pseudo-stat
 term for seismic loading, and fitted to mapped landslide inventories. It runs
 under present-day climate and under CMIP6 futures.
 
-There is one model in this repository. Everything below describes it.
+There is one model in this repository, and one product: **failure probability,
+exposed settlements and exposed road segments for every mountain province in
+the region, present day and to 2060.** Everything below is either that model or
+the route to that product.
+
+```bash
+python -m h_sim.cli step9-region --config configs/08_hkh_region.json --everything
+```
+
+95 states and provinces across seven of the eight member countries. Start at
+[All eight countries](#all-eight-countries); the steps before it exist to make
+that run defensible.
 
 **Contents** — [The model](#the-model) · [Install](#install) ·
 [Run it](#run-it) · [All eight countries](#all-eight-countries) ·
@@ -468,72 +479,136 @@ web server. Only the basemap tiles want a network.
 
 ## All eight countries
 
+This is what the repository is for. Everything above is the machinery; this is
+the product.
+
 The region is 4,400 × 2,500 km. At 30 m that is thirteen billion cells and flow
-routing is not tiled, so a regional product is a **sweep over administrative
-units**, not one run. Fit once, then sweep.
+routing is not tiled, so a regional run is a **sweep over states and provinces**,
+one at a time. Fit once, then sweep.
 
 ```bash
-# 1. what would run, and what it would cost — nothing is computed
-python -m h_sim.cli step9-region --dry-run --res 0.00083333
+# 1. plan: what would run, and what it would cost. Nothing is computed.
+python -m h_sim.cli step9-region --dry-run --config configs/08_hkh_region.json
 
-# 2. the whole region, every country, with exposure and a page per province
-python -m h_sim.cli step9-region --name hkh --res 0.00083333 \
-    --fitted-params outputs/gorkha_fitted_params.json --everything
+# 2. run it: every mountain province, with exposure and a page for each
+python -m h_sim.cli step9-region --config configs/08_hkh_region.json --everything
+
+# 3. the manifest
+python -m h_sim.cli step8-package --name hkh
 ```
 
-That covers **165 provinces across Afghanistan, Pakistan, India, Nepal, Bhutan,
-Bangladesh, China and Myanmar** — every admin-1 unit intersecting the region.
-Narrow it with `--countries Nepal Bhutan` or `--units Bagmati Gandaki`.
+### Which provinces, and why those
+
+**95 states and provinces** across Afghanistan, Pakistan, India, Nepal, Bhutan,
+China and Myanmar.
+
+| Country | Units | |
+|---|---|---|
+| Afghanistan | 31 | all |
+| Bhutan | 20 | all |
+| Nepal | 14 | all |
+| India | 11 | Arunachal Pradesh, Himachal Pradesh, Jammu and Kashmir, Ladakh, Manipur, Meghalaya, Mizoram, Nagaland, Sikkim, Uttarakhand, West Bengal |
+| Myanmar | 7 | Chin, Kachin, Kayah, Kayin, Mandalay, Sagaing, Shan |
+| Pakistan | 6 | Azad Kashmir, Baluchistan, F.A.T.A., K.P., Northern Areas, Punjab |
+| China | 6 | Gansu, Qinghai, Sichuan, Xinjiang, Xizang, Yunnan |
+| Bangladesh | 0 | no mountain terrain — see below |
+
+**A bounding box is not a mountain range.** The HKH box spans 60–105° E and
+16–39° N, which contains the whole Gangetic plain and most of peninsular India.
+Selecting on it alone returns 137 units including Odisha, Madhya Pradesh,
+Telangana, Andhra Pradesh and Gujarat, none of which have a Himalayan hillslope
+in them.
+
+Units are therefore selected on **relief**, from a 4.8 MB global elevation grid:
+
+- A cell is mountain if it is **above 1,000 m** *and* has **500 m of local
+  elevation range** within about 27 km. Both conditions are needed. Elevation
+  alone cannot tell a mountain range from a high plain, and a high plain has no
+  hillslopes to fail on: Inner Mongolia's Alashan plateau sits above 1,000 m
+  with 60 m of local relief, against 1,512 m for Nepal's Bagmati. This is the
+  standard definition of mountain terrain (Kapos et al. 2000).
+- A unit is kept if **10 % of it is mountain**, *or* if it has **1,000 km² of
+  mountain with a 1,400 m peak**. The second clause exists for West Bengal,
+  which is 1.9 % mountain — and that 1.9 % is Darjeeling and Kalimpong, among
+  the most landslide-prone ground in India. The altitude condition stops that
+  clause readmitting the Eastern Ghats: Odisha clears the same area but tops out
+  at 1,110 m.
+
+Two honest caveats on that rule:
+
+- **Relief finds mountains, not *these* mountains.** Inner Mongolia's Helan Shan
+  and the Yunnan–Guizhou plateau pass every test and are not in the HKH arc.
+  They are excluded by name in `admin.NOT_HKH` rather than by tuning a threshold
+  until they vanish, which would take half the Himalaya with them. Override with
+  `admin_exclude`.
+- **Bangladesh drops out entirely**, though it is an HKH member country. The
+  Chittagong Hill Tracts reach 597 m on this grid with 49 m of local relief:
+  hills, not mountains, and outside what an infinite-slope model fitted in Nepal
+  can speak to. Lower `admin_mountain_elevation_m` to include them, and treat
+  the result with corresponding caution.
+
+Narrow the sweep with `--countries Nepal Bhutan` or `--units Bagmati Gandaki`.
+
+### What you get
 
 `--everything` is shorthand for `--with-hazard --with-climate --with-risk
---with-map`. Drop the ones you do not need; each multiplies the run.
+--with-map`. Drop what you do not need; each multiplies the run.
 
-**What you get, ready to discuss.** `outputs/hkh_region/index.html` is a single
-ranked page over the whole sweep: every province sorted by unstable area,
-sortable by any column, filterable by name, with settlements exposed and road
-kilometres exposed beside each, and a link into that province's own map. That
-page is the deliverable — fifty province folders are an archive, a ranked table
-with a link per province is something a meeting can work from.
+**`outputs/hkh_region/index.html` is the deliverable.** One ranked page over the
+whole sweep: every province sorted by unstable area, sortable by any column,
+filterable by name, settlements and road kilometres exposed beside each, and a
+link into that province's own map. Fifty province folders are an archive; a
+ranked table with a link per province is something a meeting can work from.
 
-Alongside it, per province: `<name>_<province>_susceptibility_prob.tif`, the
-hazard and climate rasters if asked for, `<name>_<province>_risk_settlements.json`
-and `_risk_roads.json`, and `<name>_<province>_webmap/index.html`.
+Per province, on disk:
 
-**Practical points.**
+```
+outputs/hkh_<country>_<province>_susceptibility_prob.tif    failure probability
+outputs/hkh_<country>_<province>_hazard_*_prob.tif          trigger scenarios
+outputs/hkh_<country>_<province>_risk_settlements.json      every settlement
+outputs/hkh_<country>_<province>_risk_roads.json            every 500 m segment
+outputs/hkh_<country>_<province>_webmap/index.html          browsable page
+outputs/hkh_region_summary.json                             machine-readable
+outputs/hkh_manifest.json                                   provenance
+```
+
+### Before you present it
+
+- **Provinces are comparable only because they share one parameter set.** It was
+  fitted on soil-mantled crystalline terrain in Nepal. Across Pakistan,
+  Afghanistan, Uttarakhand, Himachal, Bhutan and Myanmar there is no inventory,
+  so skill there is **unknown rather than measured**. Measured transfer within
+  the region ranges from 0.780 to 0.656.
+- **The values are relative.** Differences between pixels and between provinces
+  are meaningful; the number is not an annual probability of failure.
+- **Exposure is screening, not risk.** No runout model, no vulnerability, no
+  damage function.
+
+### Practical points
 
 - **The sweep is resumable.** A province whose output exists is skipped. A full
-  regional pass is measured in days and something will interrupt it.
-- **Oversize units are reported and skipped**, not attempted — above
-  `admin_max_cells` (40 M by default), because the alternative is an
-  out-of-memory kill part-way through. Xinjiang and Tibet need a coarser grid or
-  a basin-level split. The index page names them.
+  pass at 90 m is measured in days and something will interrupt it.
+- **Eight units exceed the memory ceiling and are skipped**, not attempted —
+  above `admin_max_cells` (40 M), because the alternative is an out-of-memory
+  kill part-way through. Xizang, Xinjiang, Qinghai, Gansu, Sichuan, Yunnan and
+  Baluchistan need a coarser grid or a basin-level split. The index page names
+  them.
 - **A sweep routes roughly twice the cells it keeps.** Provinces are irregular
   and runs are over bounding boxes: measured on Nepal's Bagmati and Bhojpur,
-  only 51 % and 54 % of the box fell inside the province. That is the price of
-  rectangular tiling and it is not optimised away.
-- **Provinces are comparable only because they share one parameter set.** That
-  set was fitted on soil-mantled crystalline terrain in Nepal. Where no
-  inventory exists — Pakistan, Afghanistan, Uttarakhand, Himachal, Bhutan,
-  Myanmar — it is extrapolated, and skill there is unknown rather than
-  measured. Say so when the map is shown.
-
-**Borders cut catchments, so each province is routed wide and clipped late.**
-The run covers the unit's bounding box grown by `admin_buffer_deg`, and the
-outputs are masked back afterwards. Without that, a cell just inside a border
-gets its catchment truncated and comes out too stable. The size of the error was
-measured, not assumed (`analysis/07_boundary_buffer.py`):
+  only 51 % and 54 % of the box fell inside the province.
+- **Borders cut catchments, so each province is routed wide and clipped late.**
+  The run covers the unit's box grown by `admin_buffer_deg` and is masked back
+  afterwards. Without it, a cell just inside a border loses its upslope area and
+  comes out too stable. Measured (`analysis/07_boundary_buffer.py`):
 
 | Buffer | Cells losing >½ their catchment | Cells shifting P by >0.05 |
 |---|---|---|
 | none | 1.00 % (3.8 % in the outer ring) | 0.45 % |
 | 0.028° (3 km) | **0.00 %** | **0.00 %** |
 
-Smaller than it sounds, because hillslope contributing areas are hundreds of
-metres, and cells with genuinely long flow paths are valley floors already
-saturated at `w = 1` where more water changes nothing. The default is 0.05°
-(5.5 km) — about twice what was needed, as margin for flatter ground.
-
----
+  Smaller than it sounds: hillslope contributing areas are hundreds of metres,
+  and cells with long flow paths are valley floors already saturated at `w = 1`.
+  The default 0.05° is about twice what was needed, as margin.
 
 ## Package the deliverables
 
@@ -730,7 +805,7 @@ h_sim/
     └── demo.py            Synthetic inputs for offline testing
 
 analysis/                  Seven experiments behind docs/RESULTS.md
-configs/                   Seven run configurations, one per workflow shape
+configs/                   Eight run configurations; 08 is the regional product
 docs/                      Operating guide and measured results
 scripts/run_demo.sh        Offline walk through the whole sequence
 tests/                     66 tests, no network required

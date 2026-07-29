@@ -691,6 +691,8 @@ def test_regional_sweep_clips_each_unit_and_is_resumable():
             "West": (84.0, 28.0, 84.1, 28.2),
             "East": (84.1, 28.0, 84.2, 28.2),
         })
+        cfg.admin_elevation_res = None      # no download in a unit test
+        cfg.admin_countries = ["Testland"]
 
         report = pipeline.run_region(cfg, mode="demo")
         assert report["n_units_runnable"] == 2
@@ -722,6 +724,8 @@ def test_regional_dry_run_costs_without_running():
             "Huge": (60.0, 16.0, 100.0, 38.0),
         })
         cfg.admin_max_cells = 1_000_000
+        cfg.admin_elevation_res = None      # no download in a unit test
+        cfg.admin_countries = ["Testland"]
 
         report = pipeline.run_region(cfg, mode="demo", dry_run=True)
         assert report["n_units_found"] == 2
@@ -1320,6 +1324,73 @@ def test_region_index_ranks_and_reports_what_was_skipped():
         assert "barScale" in html
         # a province with no page must not fabricate a link
         assert '"map": null' in html or "'map': None" not in html
+
+
+def test_only_mountain_provinces_are_swept():
+    """A bounding box is not a mountain range.
+
+    The HKH box contains the Gangetic plain and most of peninsular India.
+    Selecting on it alone returns Odisha and Madhya Pradesh, which have no
+    Himalayan hillslope in them.
+    """
+    from h_sim.input import admin
+
+    plain = {"mountain_fraction": 0.008, "mountain_area_km2": 1214.0,
+             "max_elevation_m": 1110.0, "median_local_relief_m": 90.0}
+    corner = {"mountain_fraction": 0.019, "mountain_area_km2": 1598.0,
+              "max_elevation_m": 2938.0, "median_local_relief_m": 1351.0}
+    core = {"mountain_fraction": 0.61, "mountain_area_km2": 227561.0,
+            "max_elevation_m": 4915.0, "median_local_relief_m": 626.0}
+
+    assert not admin.is_mountainous(plain), "Odisha-like unit must be dropped"
+    assert admin.is_mountainous(corner), "Darjeeling salient must be kept"
+    assert admin.is_mountainous(core)
+    assert admin.NOT_HKH, "high ground outside the arc is named, not tuned away"
+
+
+def test_mountain_needs_relief_not_just_altitude():
+    """A high plain has no hillslopes to fail on."""
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_origin
+
+    from h_sim.input import admin
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "elev.tif")
+        tr = from_origin(84.0, 29.0, 0.0833, 0.0833)
+        z = np.full((24, 24), 1600.0, "float32")      # a plateau, uniformly high
+        z[:, 12:] += (np.arange(12) * 300).astype("float32")   # a range beside it
+        prof = dict(driver="GTiff", height=24, width=24, count=1, dtype="float32",
+                    crs="EPSG:4326", transform=tr, nodata=-32768.0)
+        with rasterio.open(path, "w", **prof) as dst:
+            dst.write(z, 1)
+
+        def unit(w, e):
+            geom = {"type": "Polygon", "coordinates": [[
+                [w, 27.2], [e, 27.2], [e, 28.8], [w, 28.8], [w, 27.2]]]}
+            return admin.AdminUnit("u", "Testland", (w, 27.2, e, 28.8), geom)
+
+        flat = admin.relief_stats(unit(84.1, 84.9), path)
+        steep = admin.relief_stats(unit(85.1, 85.9), path)
+        assert flat["mountain_fraction"] == 0.0, flat
+        assert steep["mountain_fraction"] > 0.5, steep
+
+
+def test_a_layer_without_countries_is_not_silently_emptied():
+    """Somebody's own province shapefile may carry no country attribute."""
+    from h_sim.input import admin
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "a.geojson")
+        with open(path, "w") as fh:
+            json.dump({"type": "FeatureCollection", "features": [
+                {"type": "Feature", "properties": {"name": "Mine"},
+                 "geometry": {"type": "Polygon", "coordinates": [[
+                     [84.0, 28.0], [84.5, 28.0], [84.5, 28.5],
+                     [84.0, 28.5], [84.0, 28.0]]]}}]}, fh)
+        units = admin.load_units(path, C.HKH_BBOX, countries=["Nepal"])
+        assert len(units) == 1
 
 
 def test_climate_scenario_round_trips_through_a_dict():

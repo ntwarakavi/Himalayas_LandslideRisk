@@ -211,7 +211,29 @@ cd Himalayas_LandslideRisk
 source .venv/bin/activate
 ```
 
-`setup.sh` installs the package editable, so both of these work from any
+`setup.sh` creates `.venv`, installs the dependencies and installs the package
+editable. It changes to its own directory first, so it works from anywhere.
+
+To do it by hand instead, **from the repository root** — `requirements.txt`
+lives there, and `pip install -r requirements.txt` fails with
+`No such file or directory` if you are anywhere else:
+
+```bash
+cd /path/to/Himalayas_LandslideRisk    # the directory containing setup.sh
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+```
+
+Or skip `requirements.txt` altogether — `pyproject.toml` declares the same
+dependencies, so this is equivalent and works from any directory that contains
+the project:
+
+```bash
+pip install -e ".[viz,dev]"
+```
+
+Either way the package is installed editable, so both of these work from any
 directory:
 
 ```bash
@@ -230,7 +252,7 @@ conda activate hkh
 Verify, with no network:
 
 ```bash
-python -m pytest tests/ -q     # 48 tests, seconds
+python -m pytest tests/ -q     # 77 tests, seconds
 ./scripts/run_demo.sh          # the whole sequence on synthetic data, ~2 minutes
 ```
 

@@ -1300,7 +1300,10 @@ def test_regional_sweep_can_produce_exposure_and_pages():
 
     for fn in (pipeline.run_admin_unit, pipeline.run_region):
         params = inspect.signature(fn).parameters
-        assert "risk" in params and "webmap" in params, fn.__name__
+        assert "stages" in params, fn.__name__
+    for stage in ("susceptibility", "climate", "settlements", "roads",
+                  "webmap"):
+        assert stage in pipeline.REGION_STAGES
     assert hasattr(pipeline, "run_region_index")
     assert hasattr(webmap, "build_region_index")
 
@@ -1420,6 +1423,19 @@ def test_run_all_sweeps_the_region_by_default():
     assert params["region"].default is False   # the API default
     src = inspect.getsource(pipeline.run)
     assert "run_region" in src
+
+
+def test_every_inventory_is_registered_and_fetchable():
+    """A dataset nobody can find is a dataset nobody uses."""
+    from h_sim.input import datasets, inventory as INV
+
+    keys = {d.key for d in datasets.REGISTRY if d.group == datasets.INVENTORY}
+    for key in ("gorkha", "farwest", "sikkim", "nepal_monsoon", "shimla",
+                "eastern_himalaya"):
+        assert key in keys, key
+        assert key in INV.INVENTORY_FETCHERS or key in ("glc", "coolr"), key
+    for key, (fn, label) in INV.INVENTORY_FETCHERS.items():
+        assert callable(fn) and label, key
 
 
 def test_climate_scenario_round_trips_through_a_dict():

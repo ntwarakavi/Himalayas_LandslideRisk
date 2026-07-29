@@ -946,8 +946,15 @@ def scenario_susceptibility(cfg: C.Config, mode: str,
 
 def run_risk(cfg: C.Config, mode: str = "download",
              susceptibility: Optional[str] = None,
-             climate: Optional[Sequence[str]] = None) -> Dict[str, object]:
-    """STEP 10 - score settlements and road segments by reaching susceptibility.
+             climate: Optional[Sequence[str]] = None,
+             assets: Sequence[str] = ("settlements", "roads")
+             ) -> Dict[str, object]:
+    """Score settlements and road segments by reaching susceptibility.
+
+    ``assets`` selects which layers to do. They are separable because they are
+    separate questions with separate audiences - who lives under an unstable
+    slope, and which stretches of road are cut when it fails - and because the
+    road pass over a province is much the more expensive of the two.
 
     Not by the susceptibility under them. Towns sit on flat ground, so sampling
     the map at a town's coordinates reports "safe" for precisely the
@@ -992,8 +999,13 @@ def run_risk(cfg: C.Config, mode: str = "download",
     _log("risk", f"{len(scens)} climate scenarios: "
                  + ", ".join(s.key for s in scens))
 
+    want = set(assets)
     if mode == "demo":
         towns, roads = demo.make_demo_exposure(grid, dem)
+        if "settlements" not in want:
+            towns = []
+        if "roads" not in want:
+            roads = []
         _log("exposure", f"synthetic: {len(towns)} settlements, "
                          f"{len(roads)} ways")
     else:
@@ -1020,7 +1032,9 @@ def run_risk(cfg: C.Config, mode: str = "download",
     summary["susceptibility"] = prob_paths
 
     out = {}
-    for name, rows in (("settlements", scored_towns), ("roads", scored_roads)):
+    pairs = [(n, r) for n, r in (("settlements", scored_towns),
+                                 ("roads", scored_roads)) if n in want]
+    for name, rows in pairs:
         path = _out(cfg, f"risk_{name}.json")
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(rows, fh)
@@ -1173,9 +1187,17 @@ def _clip_to_unit(path: str, mask, grid: Grid, out_path: str) -> str:
     return out_path
 
 
+#: What a regional pass can do to one province, in the order the workflow
+#: runs them. Each is a separate command, because each is a separate question
+#: and a regional pass over any one of them takes hours to days: being able to
+#: finish susceptibility everywhere before starting roads anywhere is the
+#: difference between a workflow and a single long gamble.
+REGION_STAGES = ("susceptibility", "climate", "hazard",
+                 "settlements", "roads", "webmap")
+
+
 def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
-                   hazard: bool = False, climate: bool = False,
-                   risk: bool = False, webmap: bool = False
+                   stages: Sequence[str] = ("susceptibility",)
                    ) -> Dict[str, object]:
     """Produce maps for one state or province.
 
@@ -1210,11 +1232,15 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
     _log("unit", f"{unit.country} / {unit.name}  "
                  f"({sub.cell_count():,} cells incl. buffer)")
 
-    out: Dict[str, object] = {"unit": unit.as_dict()}
+    want = set(stages)
+    out: Dict[str, object] = {"unit": unit.as_dict(), "stages": list(stages)}
+    # Susceptibility underpins everything else, so it is computed whenever it
+    # is missing rather than only when asked for. It is cached, so a later
+    # stage costs nothing extra when an earlier one already ran.
     base = run_susceptibility(sub, mode=mode)
-    if hazard:
+    if "hazard" in want:
         out["hazard"] = run_hazard_suite(sub, mode=mode)
-    if climate:
+    if "climate" in want:
         out["climate"] = run_climate(sub, mode=mode)
 
     # Clip every raster the unit produced back to the province outline.
@@ -1244,14 +1270,15 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
     # Exposure and the browsable page come last, because both read the rasters
     # this unit has just finished writing - including the clip, so a settlement
     # is never scored against a neighbouring province's ground.
-    if risk:
+    assets = tuple(a for a in ("settlements", "roads") if a in want)
+    if assets:
         try:
-            r = run_risk(sub, mode=mode)
+            r = run_risk(sub, mode=mode, assets=assets)
             out["risk"] = {k: v for k, v in r.items() if isinstance(v, str)}
             out["exposure"] = r["stats"]
         except Exception as exc:                          # noqa: BLE001
             _log("unit", f"{unit.name}: exposure skipped ({exc})")
-    if webmap:
+    if "webmap" in want:
         try:
             out["webmap"] = run_webmap(sub)["webmap"]
         except Exception as exc:                          # noqa: BLE001
@@ -1267,11 +1294,10 @@ def _safe(fn, arr) -> float:
 def run_region(cfg: C.Config, mode: str = "download",
                countries: Optional[Sequence[str]] = None,
                names: Optional[Sequence[str]] = None,
-               hazard: bool = False, climate: bool = False,
-               risk: bool = False, webmap: bool = False,
+               stages: Sequence[str] = ("susceptibility",),
                dry_run: bool = False, resume: bool = True
                ) -> Dict[str, object]:
-    """STEP 9 - sweep the region one administrative unit at a time.
+    """Sweep the region one administrative unit at a time, for one stage.
 
     Units are run independently and their outputs written per unit, so the
     sweep is restartable: a unit whose summary already exists is skipped unless
@@ -1335,6 +1361,7 @@ def run_region(cfg: C.Config, mode: str = "download",
                    "cells in total")
 
     report: Dict[str, object] = {
+        "stages": list(stages),
         "resolution_deg": cfg.resolution_deg,
         "buffer_deg": cfg.admin_buffer_deg,
         "n_units_found": len(units),
@@ -1353,8 +1380,9 @@ def run_region(cfg: C.Config, mode: str = "download",
 
     done, failed = 0, []
     for i, unit in enumerate(runnable, start=1):
+        tag = "_".join(sorted(stages))
         marker = os.path.join(cfg.out_dir,
-                              f"{cfg.name}_{unit.slug}_unit.json")
+                              f"{cfg.name}_{unit.slug}_{tag}.json")
         if resume and os.path.exists(marker):
             with open(marker, encoding="utf-8") as fh:
                 report["units"].append(json.load(fh))
@@ -1362,8 +1390,7 @@ def run_region(cfg: C.Config, mode: str = "download",
             continue
         _log("region", f"[{i}/{len(runnable)}] {unit.country} / {unit.name}")
         try:
-            res = run_admin_unit(cfg, unit, mode=mode, hazard=hazard,
-                                 climate=climate, risk=risk, webmap=webmap)
+            res = run_admin_unit(cfg, unit, mode=mode, stages=stages)
         except Exception as exc:                          # noqa: BLE001
             _log("FAILED", f"{unit.name}: {type(exc).__name__}: {exc}")
             failed.append({"unit": unit.as_dict(), "error": str(exc)})
@@ -1375,7 +1402,7 @@ def run_region(cfg: C.Config, mode: str = "download",
 
     report["n_completed"] = done
     report["failed"] = failed
-    path = _out(cfg, "region_summary.json")
+    path = _out(cfg, f"region_{'_'.join(sorted(stages))}_summary.json")
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, default=str)
     report["summary"] = path
@@ -1385,12 +1412,55 @@ def run_region(cfg: C.Config, mode: str = "download",
     # from, which is the point of running the region rather than a catchment.
     if report["units"]:
         try:
-            report["index"] = run_region_index(cfg, report)
+            report["index"] = run_region_index(cfg, _merge_stage_reports(cfg,
+                                                                        report))
         except Exception as exc:                          # noqa: BLE001
             _log("region", f"index skipped ({exc})")
 
     _log("done", f"{done} units produced, {len(failed)} failed -> {path}")
     return report
+
+
+def _merge_stage_reports(cfg: C.Config,
+                         report: Dict[str, object]) -> Dict[str, object]:
+    """Fold every stage that has run into one view of each province.
+
+    The stages are separate commands writing separate summaries, but the index
+    has to show them together: unstable area from step 5 beside settlements
+    from step 7 and roads from step 8. Each province's per-stage marker files
+    are re-read and merged, so the index is complete after whichever stages
+    have actually been run and grows as more of them finish.
+    """
+    merged: Dict[str, dict] = {}
+    prefix = f"{cfg.name}_"
+    stage_suffixes = tuple(f"_{s}.json" for s in REGION_STAGES)
+    for fname in sorted(os.listdir(cfg.out_dir)):
+        if not (fname.startswith(prefix) and fname.endswith(stage_suffixes)):
+            continue
+        try:
+            with open(os.path.join(cfg.out_dir, fname), encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except Exception:                                # noqa: BLE001
+            continue
+        # risk_settlements.json and risk_roads.json share those suffixes and
+        # are lists of scored assets, not province markers.
+        if not isinstance(rec, dict):
+            continue
+        unit = rec.get("unit") or {}
+        slug = unit.get("slug")
+        if not slug:
+            continue
+        cur = merged.setdefault(slug, {"unit": unit})
+        for key in ("stats", "exposure", "webmap", "maps", "risk"):
+            if rec.get(key):
+                if key in ("stats", "exposure") and isinstance(cur.get(key), dict):
+                    cur[key].update(rec[key])
+                else:
+                    cur[key] = rec[key]
+
+    out = dict(report)
+    out["units"] = list(merged.values()) or report.get("units", [])
+    return out
 
 
 def run_region_index(cfg: C.Config, report: Dict[str, object]) -> str:
@@ -1601,9 +1671,18 @@ def run(cfg: C.Config, mode: str = "demo",
         out["fitted_params"] = fit["path"]
 
     if region:
-        out["region"] = run_region(cfg, mode=mode, hazard=True,
-                                   climate=climate_suite, risk=True,
-                                   webmap=True)
+        # One stage at a time, in workflow order: finish susceptibility
+        # everywhere before starting roads anywhere, so an interrupted run
+        # leaves a complete product rather than a fragment of every product.
+        stages = ["susceptibility"]
+        if climate_suite:
+            stages.append("climate")
+        stages += ["settlements", "roads", "webmap"]
+        out["region"] = {}
+        for stage in stages:
+            _log("workflow", f"region-wide: {stage}")
+            out["region"][stage] = run_region(cfg, mode=mode,
+                                              stages=(stage,))
         out.update(run_package(cfg))
         return out
 

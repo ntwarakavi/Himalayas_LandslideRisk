@@ -313,6 +313,23 @@ def _inventory_extent(paths, pad_deg: float = 0.02):
             float(pts[:, 0].max()) + pad_deg, float(pts[:, 1].max()) + pad_deg)
 
 
+def _fraction_inside(paths, bbox) -> float:
+    """Share of the inventory's landslides that fall inside ``bbox``."""
+    from .input import inventory
+
+    total = hit = 0
+    for src in paths:
+        try:
+            pts = inventory.load_inventory(src)
+        except Exception:                                # noqa: BLE001
+            continue
+        if not len(pts):
+            continue
+        total += len(pts)
+        hit += int(len(inventory.load_inventory(src, bbox=bbox)))
+    return (hit / total) if total else 0.0
+
+
 def _build_for_validation(args, bbox) -> Optional[str]:
     """Compute a susceptibility map over ``bbox`` from an existing fit.
 
@@ -376,8 +393,15 @@ def _step_validate(args) -> int:
         import rasterio
         with rasterio.open(susc) as src:
             b = src.bounds
-        elsewhere = not (b.left < extent[2] and b.right > extent[0]
-                         and b.bottom < extent[3] and b.top > extent[1])
+        # Overlapping is not the same as covering. A map that catches a corner
+        # of the inventory scores a handful of landslides and reports a number
+        # that looks like a result: the Gorkha map overlaps west-central Nepal
+        # by a sliver and caught 10 of 499. Require most of the inventory.
+        inside = _fraction_inside(paths, (b.left, b.bottom, b.right, b.top))
+        elsewhere = inside < 0.9
+        if elsewhere and inside > 0.0:
+            print(f"  {os.path.basename(susc)} covers only "
+                  f"{inside * 100:.0f}% of the inventory.")
         if elsewhere:
             print(f"  {os.path.basename(susc)} covers "
                   f"{b.left:.2f}, {b.bottom:.2f} to {b.right:.2f}, {b.top:.2f}")
@@ -572,27 +596,36 @@ def _step_package(args) -> int:
     return 0
 
 
-def _step_region(args) -> int:
+#: The nine numbered steps, and what each does to the region.
+STEP_TITLES = {
+    "susceptibility": ("5", "Present-day susceptibility, region-wide"),
+    "climate": ("6", "Susceptibility under climate scenarios, region-wide"),
+    "settlements": ("7", "Settlements and villages: exposure, now and later"),
+    "roads": ("8", "Roads and infrastructure: exposure, now and later"),
+    "webmap": ("9", "Web apps for everything above"),
+}
+
+
+def _region_stage(args, stage: str) -> int:
+    """Run one stage of the workflow across every province in the region."""
     cfg = _build_config(args)
-    print("STEP 9  Regional sweep, one state or province at a time\n")
+    num, title = STEP_TITLES[stage]
+    print(f"STEP {num}  {title}\n")
+
     if _needs_fit(cfg) and not args.dry_run:
-        print("  note: no fitted parameters found, so every unit uses SINMAP's "
-              "generic\n        ranges. Calibrate once for the region "
-              "(step3-fit) before a real sweep.\n")
+        print("  note: no fitted parameters found, so every province uses "
+              "SINMAP's generic\n        ranges. Run step3-calibrate first; "
+              "one fit serves the whole region.\n")
+
     report = pipeline.run_region(
         cfg, mode=args.mode, countries=args.countries, names=args.units,
-        hazard=args.with_hazard or args.everything,
-        climate=args.with_climate or args.everything,
-        risk=args.with_risk or args.everything,
-        webmap=args.with_map or args.everything,
-        dry_run=args.dry_run,
-        resume=not args.no_resume)
+        stages=(stage,), dry_run=args.dry_run, resume=not args.no_resume)
 
     if args.dry_run:
-        print(f"\n  {report['n_units_found']} units, "
+        print(f"\n  {report['n_units_found']} provinces, "
               f"{report['n_units_runnable']} runnable at "
               f"{report['resolution_deg']} deg\n")
-        print("  cells (M)  country / unit")
+        print("  cells (M)  country / province")
         print("  " + "-" * 56)
         for r in report["plan"][:25]:
             flag = "  SKIP" if r["cells"] > cfg.admin_max_cells else ""
@@ -603,29 +636,79 @@ def _step_region(args) -> int:
         print(f"\n  Plan -> {report['summary']}")
         return 0
 
-    rows = sorted((u for u in report["units"] if u.get("stats")),
-                  key=lambda u: -u["stats"]["unstable_area_pct"])
-    if rows:
-        print("\n  unstable %   mean P   unit")
-        print("  " + "-" * 56)
-        for u in rows[:20]:
-            s = u["stats"]
-            print(f"  {s['unstable_area_pct']:>9.2f}   {s['mean_probability']:>6.4f}   "
-                  f"{u['unit']['country']} / {u['unit']['name']}")
-        if len(rows) > 20:
-            print(f"  ... and {len(rows) - 20} more")
+    _report_region(report, stage, cfg)
+    return 0
+
+
+def _report_region(report, stage: str, cfg) -> None:
+    units = report.get("units", [])
+    if stage in ("susceptibility", "climate", "hazard"):
+        rows = sorted((u for u in units if u.get("stats")),
+                      key=lambda u: -u["stats"]["unstable_area_pct"])
+        if rows:
+            print("\n  unstable %   mean P   province")
+            print("  " + "-" * 56)
+            for u in rows[:20]:
+                st = u["stats"]
+                print(f"  {st['unstable_area_pct']:>9.2f}   "
+                      f"{st['mean_probability']:>6.4f}   "
+                      f"{u['unit']['country']} / {u['unit']['name']}")
+            if len(rows) > 20:
+                print(f"  ... and {len(rows) - 20} more")
+    else:
+        rows = [u for u in units if u.get("exposure")]
+        if rows:
+            key = ("n_settlements_exposed" if stage == "settlements"
+                   else "road_km_exposed")
+            label = "settlements" if stage == "settlements" else "road km"
+            rows.sort(key=lambda u: -(u["exposure"].get(key) or 0))
+            total = sum((u["exposure"].get(key) or 0) for u in rows)
+            print(f"\n  {label:>10}   province")
+            print("  " + "-" * 56)
+            for u in rows[:20]:
+                print(f"  {u['exposure'].get(key) or 0:>10,.0f}   "
+                      f"{u['unit']['country']} / {u['unit']['name']}")
+            if len(rows) > 20:
+                print(f"  ... and {len(rows) - 20} more")
+            print(f"\n  {total:,.0f} {label} exposed across "
+                  f"{len(rows)} provinces")
+            print("  Exposure is screening by angle of reach: no runout "
+                  "model, no\n  vulnerability, no damage function.")
+
     if report.get("failed"):
-        print(f"\n  {len(report['failed'])} unit(s) failed:")
+        print(f"\n  {len(report['failed'])} province(s) failed:")
         for f in report["failed"][:5]:
             print(f"    {f['unit']['name']}: {f['error'][:70]}")
     print(f"\n  Summary -> {report['summary']}")
     if report.get("index"):
         print(f"  Index   -> {report['index']}")
         print(f"  Open it :  file://{os.path.abspath(report['index'])}")
-    print("\n  Each unit was routed over its bounding box plus a "
-          f"{cfg.admin_buffer_deg} deg buffer\n  and clipped back afterwards, "
-          "so catchments are not truncated at borders.")
-    return 0
+    if report.get("skipped_too_large"):
+        print(f"\n  {len(report['skipped_too_large'])} province(s) exceed "
+              f"{cfg.admin_max_cells:,} cells and were skipped:")
+        print("    " + ", ".join(r["name"]
+                                 for r in report["skipped_too_large"][:10]))
+        print("    Run these with configs/03_hkh_recon.json.")
+
+
+def _step_susceptibility_region(args) -> int:
+    return _region_stage(args, "susceptibility")
+
+
+def _step_climate_region(args) -> int:
+    return _region_stage(args, "climate")
+
+
+def _step_settlements(args) -> int:
+    return _region_stage(args, "settlements")
+
+
+def _step_roads(args) -> int:
+    return _region_stage(args, "roads")
+
+
+def _step_webapp(args) -> int:
+    return _region_stage(args, "webmap")
 
 
 def _step_risk(args) -> int:
@@ -721,20 +804,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         epilog=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("step1-check", aliases=["check"],
-                       help="which datasets are present or reachable")
+    p = sub.add_parser("step1-check", aliases=["check", "setup"],
+                       help="STEP 1: environment and dataset availability")
     p.add_argument("--offline", action="store_true",
                    help="only report the cache, do not probe the network")
     _add_common(p)
 
     p = sub.add_parser("step2-download", aliases=["download"],
-                       help="fetch datasets (skips whatever is cached)")
+                       help="STEP 2: fetch datasets (skips whatever is cached)")
     p.add_argument("--no-inventories", action="store_true",
                    help="skip the landslide inventories")
     _add_common(p)
 
-    p = sub.add_parser("step3-fit", aliases=["fit"],
-                       help="fit soil parameters to a landslide inventory")
+    p = sub.add_parser("step3-calibrate", aliases=["calibrate", "fit"],
+                       help="STEP 3: fit soil parameters to landslide "
+                            "inventories, once, for the whole region")
     p.add_argument("--no-cv", action="store_true",
                    help="skip cross-validation (faster, but then only the "
                         "optimistic in-sample score is available)")
@@ -744,7 +828,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     _mode(p); _add_common(p)
 
     p = sub.add_parser("step4-validate", aliases=["validate"],
-                       help="test a map against a held-out inventory")
+                       help="STEP 4: test the fit against a held-out inventory")
     p.add_argument("--susceptibility",
                    help="stability GeoTIFF (default: from --name)")
     p.add_argument("--inventory", required=True, nargs="+",
@@ -778,79 +862,93 @@ def main(argv: Optional[List[str]] = None) -> int:
                    choices=["copernicus90", "copernicus30"])
     p.add_argument("--block", type=int)
 
+    def _region_opts(p):
+        p.add_argument("--dry-run", action="store_true",
+                       help="list the provinces and their cost, run nothing")
+        p.add_argument("--countries", nargs="+",
+                       help="restrict to these countries (default: all HKH)")
+        p.add_argument("--units", nargs="+",
+                       help="restrict to these state/province names")
+        p.add_argument("--no-resume", action="store_true",
+                       help="redo provinces that already have outputs")
+        _mode(p); _add_common(p)
+
     p = sub.add_parser("step5-susceptibility",
-                       aliases=["susceptibility", "stability"],
-                       help="present-day failure probability")
-    _mode(p); _add_common(p)
+                       aliases=["susceptibility", "step5"],
+                       help="STEP 5: present-day susceptibility for every "
+                            "province in the region")
+    _region_opts(p)
 
-    p = sub.add_parser("step6-hazard", aliases=["hazard"],
-                       help="failure probability under trigger scenarios")
-    p.add_argument("--all", action="store_true",
-                   help="every return period and PGA in the config, rather "
-                        "than the single scenario named on the command line")
-    _mode(p); _add_common(p)
-
-    p = sub.add_parser("step7-climate", aliases=["climate"],
-                       help="present and CMIP6 future climates, and the change")
+    p = sub.add_parser("step6-climate", aliases=["climate", "step6"],
+                       help="STEP 6: susceptibility under CMIP6 scenarios for "
+                            "every province")
     p.add_argument("--scenarios", nargs="+", metavar="SPEC",
-                   help="e.g. current ssp245:2041-2060 ssp585:2081-2100 "
-                        "(default: config climate_suite)")
-    _mode(p); _add_common(p)
+                   help="e.g. current ssp245:2041-2060 (default: config "
+                        "climate_suite)")
+    _region_opts(p)
 
-    p = sub.add_parser("step9-region", aliases=["region"],
-                       help="sweep the region one state or province at a time")
-    p.add_argument("--dry-run", action="store_true",
-                   help="list the units and their cost, run nothing")
-    p.add_argument("--countries", nargs="+",
-                   help="restrict to these countries (default: all HKH)")
-    p.add_argument("--units", nargs="+",
-                   help="restrict to these state/province names")
-    p.add_argument("--with-hazard", dest="with_hazard", action="store_true",
-                   help="also run every trigger scenario per unit")
-    p.add_argument("--with-climate", dest="with_climate", action="store_true",
-                   help="also run the climate sweep per unit")
-    p.add_argument("--with-risk", dest="with_risk", action="store_true",
-                   help="also score settlements and roads per unit, under "
-                        "every climate in risk_climate")
-    p.add_argument("--with-map", dest="with_map", action="store_true",
-                   help="also build a browsable page per unit. The ranked "
-                        "index over all units is written either way")
-    p.add_argument("--everything", action="store_true",
-                   help="shorthand for --with-hazard --with-climate "
-                        "--with-risk --with-map")
-    p.add_argument("--no-resume", action="store_true",
-                   help="redo units that already have outputs")
-    _mode(p); _add_common(p)
-
-    p = sub.add_parser("step10-risk", aliases=["risk"],
-                       help="score settlements and roads by the "
-                            "susceptibility that can reach them")
-    p.add_argument("--susceptibility",
-                   help="present-day susceptibility GeoTIFF "
-                        "(default: from --name)")
+    p = sub.add_parser("step7-settlements",
+                       aliases=["settlements", "step7"],
+                       help="STEP 7: settlements and villages, scored under "
+                            "present and future climates, province by province")
     p.add_argument("--risk-climate", nargs="+", metavar="SPEC",
-                   help="climates to score assets under, e.g. current "
-                        "ssp245:2021-2040 ssp585:2041-2060. The present day "
-                        "is always included. Default: config.risk_climate")
+                   help="climates to score under. The present day is always "
+                        "included. Default: config.risk_climate")
+    _region_opts(p)
+
+    p = sub.add_parser("step8-roads", aliases=["roads", "step8"],
+                       help="STEP 8: roads and infrastructure, scored per "
+                            "500 m segment, province by province")
+    p.add_argument("--risk-climate", nargs="+", metavar="SPEC",
+                   help="climates to score under. The present day is always "
+                        "included. Default: config.risk_climate")
+    _region_opts(p)
+
+    p = sub.add_parser("step9-webapp", aliases=["webapp", "step9", "map"],
+                       help="STEP 9: browsable web apps for steps 5-8, one "
+                            "per province plus a ranked regional index")
+    p.add_argument("--open", action="store_true",
+                   help="open the regional index when it is written")
+    _region_opts(p)
+
+    # ---- single-area commands: for debugging one province, not deliverables
+    p = sub.add_parser("area-susceptibility", aliases=["stability"],
+                       help="one area of interest only (debugging)")
     _mode(p); _add_common(p)
 
-    p = sub.add_parser("step11-map", aliases=["map", "webmap"],
-                       help="build a browsable Leaflet page for a run")
+    p = sub.add_parser("area-hazard", aliases=["hazard"],
+                       help="trigger scenarios over one area (debugging)")
+    p.add_argument("--all", action="store_true",
+                   help="every return period and PGA in the config")
+    _mode(p); _add_common(p)
+
+    p = sub.add_parser("area-climate",
+                       help="climate sweep over one area (debugging)")
+    p.add_argument("--scenarios", nargs="+", metavar="SPEC")
+    _mode(p); _add_common(p)
+
+    p = sub.add_parser("area-risk", aliases=["risk"],
+                       help="exposure over one area (debugging)")
     p.add_argument("--susceptibility",
-                   help="susceptibility GeoTIFF (default: from --name)")
-    p.add_argument("--open", action="store_true",
-                   help="open the page in a browser when it is written")
+                   help="present-day susceptibility GeoTIFF")
+    p.add_argument("--risk-climate", nargs="+", metavar="SPEC")
+    _mode(p); _add_common(p)
+
+    p = sub.add_parser("area-map", aliases=["webmap"],
+                       help="one browsable page for one area (debugging)")
+    p.add_argument("--susceptibility", help="susceptibility GeoTIFF")
+    p.add_argument("--open", action="store_true")
     _add_common(p)
 
-    p = sub.add_parser("step8-package", aliases=["package"],
-                       help="write the manifest of products and provenance")
+    p = sub.add_parser("package", aliases=["step10-package"],
+                       help="manifest: every product and its provenance")
     _add_common(p)
 
     p = sub.add_parser("run-all", aliases=["run"],
-                       help="every phase in sequence")
+                       help="steps 1-9 in sequence")
     p.add_argument("--no-inventories", action="store_true")
     p.add_argument("--no-climate", action="store_true",
-                   help="skip the climate sweep")
+                   help="skip step 6")
     p.add_argument("--single-area", dest="single_area", action="store_true",
                    help="produce for the config's bbox instead of sweeping "
                         "the region. For debugging, not for deliverables")
@@ -870,19 +968,33 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     handlers = {
-        "step1-check": _step_check, "check": _step_check,
+        # the nine steps
+        "step1-check": _step_check, "check": _step_check, "step1": _step_check,
         "step2-download": _step_download, "download": _step_download,
-        "step3-fit": _step_fit, "fit": _step_fit,
+        "step2": _step_download,
+        "step3-calibrate": _step_fit, "calibrate": _step_fit,
+        "fit": _step_fit, "step3": _step_fit,
         "step4-validate": _step_validate, "validate": _step_validate,
-        "step5-susceptibility": _step_susceptibility,
-        "susceptibility": _step_susceptibility,
+        "step4": _step_validate,
+        "step5-susceptibility": _step_susceptibility_region,
+        "susceptibility": _step_susceptibility_region,
+        "step5": _step_susceptibility_region,
+        "step6-climate": _step_climate_region, "climate": _step_climate_region,
+        "step6": _step_climate_region,
+        "step7-settlements": _step_settlements,
+        "settlements": _step_settlements, "step7": _step_settlements,
+        "step8-roads": _step_roads, "roads": _step_roads,
+        "step8": _step_roads,
+        "step9-webapp": _step_webapp, "webapp": _step_webapp,
+        "step9": _step_webapp, "map": _step_webapp,
+        # single-area, for debugging one province
+        "area-susceptibility": _step_susceptibility,
         "stability": _step_susceptibility,
-        "step6-hazard": _step_hazard, "hazard": _step_hazard,
-        "step7-climate": _step_climate, "climate": _step_climate,
-        "step8-package": _step_package, "package": _step_package,
-        "step9-region": _step_region, "region": _step_region,
-        "step10-risk": _step_risk, "risk": _step_risk,
-        "step11-map": _step_map, "map": _step_map, "webmap": _step_map,
+        "area-hazard": _step_hazard, "hazard": _step_hazard,
+        "area-climate": _step_climate,
+        "area-risk": _step_risk, "risk": _step_risk,
+        "area-map": _step_map, "webmap": _step_map,
+        "package": _step_package, "step10-package": _step_package,
         "run-all": _run_all, "run": _run_all,
     }
     return handlers[cmd](args)

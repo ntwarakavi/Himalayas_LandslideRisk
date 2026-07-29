@@ -659,34 +659,46 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
    arrives. Step 10 screens what could arrive at a town or a road with an
    angle-of-reach criterion, which is a geometric bound, not a runout model:
    no volume, no channel geometry, no entrainment, no rheology.
-2. **Domain of validity.** Skill is 0.816 on soil-mantled crystalline terrain
-   and 0.656 in the weak sedimentary hill country of Far-Western Nepal, and
-   refitting locally does not recover the difference — the limit is the
-   predictors, not the parameters. Nothing in a fitted parameter set warns which
-   case an area is; only a local inventory does.
-3. **Relative, not absolute.** The probability's level depends on background
+2. **Domain of validity, and it is narrower than it looks.** Skill is 0.816 on
+   the soil-mantled crystalline terrain it was fitted on. Carried elsewhere and
+   measured against five independent inventories it spans **0.472 to 0.780**:
+   0.702 in Sikkim, 0.656 in Far-Western Nepal, 0.543 against rainfall-triggered
+   landslides in west-central Nepal, and **0.472 — worse than random — against
+   the anthropogenic landslides around Shimla in Himachal Pradesh**. Refitting
+   locally does not recover the difference; the limit is the predictors, not the
+   parameters. Nothing in a fitted parameter set warns which case an area is.
+   See [docs/RESULTS.md §12](docs/RESULTS.md).
+3. **No term for human undercutting.** Road cuts, benches and construction on
+   hillslopes are a large share of what fails around hill towns, and the model
+   has nothing to say about them — measurably so: on the Shimla inventory the
+   frequency ratio is *inverted*. Do not use these maps to reason about
+   road-cut failures.
+4. **Relative, not absolute.** The probability's level depends on background
    sampling. Pixel-to-pixel differences are meaningful; the value is not an
    annual failure frequency.
-4. **Soil depth is not mapped**, so cohesion cannot be separated from depth.
-5. **Two trigger conventions are not fitted.** The rainfall `cv` is inert; the
+5. **Soil depth is not mapped**, so cohesion cannot be separated from depth.
+6. **Two trigger conventions are not fitted.** The rainfall `cv` is inert; the
    PGA fraction is not.
-6. **Flow routing is not tiled.** Contributing area is a property of the whole
+7. **Flow routing is not tiled.** Contributing area is a property of the whole
    drainage network, so the area of interest is held in memory. The CLI warns
    above 40 million cells. `step9-region` works around this by sweeping
    administrative units, but units above that threshold — Xinjiang, Tibet —
    still need a coarser grid or a basin-level split that is not implemented.
-7. **Calibration regions do not work as implemented** (−0.0004 AUC held out,
+8. **Calibration regions do not work as implemented** (−0.0004 AUC held out,
    including where geology is varied). Off by default.
-8. **Exposure is screened; risk is not computed.** Risk is
+9. **Exposure is screened; risk is not computed.** Risk is
    `hazard × exposure × vulnerability` and step 10 supplies the first two.
    There is no damage function, so nothing converts to expected loss or
    casualties, and population is carried for ranking only. Settlement and road
    coverage is whatever OpenStreetMap has, which is uneven across the region;
    where Overpass is unreachable the road layer falls back to Natural Earth
    trunk routes and is labelled as such.
-9. **Inventory coverage** is Nepal and Sikkim. Pakistan, Afghanistan,
-   Uttarakhand, Himachal, Bhutan and Myanmar have none, so parameters there are
-   extrapolated.
+10. **Inventory coverage is six areas, all clustered.** Nepal (Gorkha,
+    Far-West, west-central), Sikkim, Shimla and 420 points across the Eastern
+    Himalaya. Pakistan, Afghanistan, Ladakh, Uttarakhand, Bhutan and Myanmar
+    have none, so parameters there are extrapolated with no way to check them.
+    The gaps were searched for rather than assumed: what exists, what does not,
+    and why, is in [docs/RESULTS.md §12](docs/RESULTS.md).
 
 ---
 

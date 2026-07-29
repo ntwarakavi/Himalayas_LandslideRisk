@@ -590,3 +590,68 @@ fix the screening function existed and nothing called it.
 
 367 records over 4,400 km of mountain range is not a calibration set. Use the
 catalogue to see where landslides get *reported*; do not fit to it.
+
+## 14. Using the point catalogue after all
+
+Section 13 concluded that 367 GLC records are not a calibration set. That is
+still true, but it was the wrong test. The catalogue holds **2,469 records in
+the region, 2,099 of them rainfall-triggered** - far more than the three
+polygon inventories put together, and of exactly the trigger SINMAP describes.
+The problem is positional, not evidential, and positional error is a reason to
+test at a coarser scale rather than to discard data.
+
+Two methods do that (`analysis/08_point_validation.py`).
+
+**Neighbourhood sampling.** Score each record by the susceptibility within a
+disc of radius equal to its *own* stated accuracy, and score background through
+discs drawn from the same radius distribution. Both sides are blurred
+identically, so the comparison is fair; the question becomes "is the
+neighbourhood of a reported landslide more susceptible than the neighbourhood
+of a random place", which is answerable at the scale the data supports.
+Records worse than 10 km are excluded: beyond that the disc is so large that
+every statistic converges on the map average.
+
+**Areal density.** Ignore positions. Bin records to cells coarser than their
+error and test whether landslide count rises with mean predicted
+susceptibility. A 5 km error does not matter at 25 km support.
+
+### Reporting bias is the whole problem, and it is measurable
+
+| Map | Background | Records | AUC |
+|---|---|---|---|
+| Gorkha 30 m | uniform | 37 | 0.585 ± 0.024 |
+| Gorkha 30 m | **target-group** | 37 | **0.633 ± 0.019** |
+| W-central Nepal 90 m | uniform | 101 | **0.346 ± 0.011** |
+
+Spread is over 15 independent background draws; with a few dozen records a
+single draw moves the AUC by several points, so one number would have been
+noise reported as a result.
+
+The uncorrected west-central Nepal figure is not merely weak, it is
+**inverted** - and the areal test agrees, with Spearman **rho = -0.74** between
+landslide count and mean susceptibility over 0.25 degree cells. Landslides are
+*reported* where susceptibility is low. That is the media-derived bias stated
+in the catalogue's own documentation, now measured: reports come from roads and
+settlements, which sit on valley floors and gentle ground.
+
+Drawing background from the settlements the model already scores in step 7 -
+the standard target-group correction for presence-only data - recovers
+**+0.048 AUC on Gorkha**, comfortably outside the draw-to-draw spread. The
+correction works because it matches the two samples for the thing that
+generated the bias.
+
+### What this earns, and what it does not
+
+- **Not calibration.** 0.63 with correction is far below the 0.816 the polygon
+  inventories give. Fitting to the catalogue would degrade the model.
+- **Yes, coarse validation - where nothing else exists.** This is the only
+  landslide data in Pakistan, Afghanistan and Bhutan. A coarse, bias-corrected
+  check is worth a great deal more than an unchecked extrapolation, which is
+  what those provinces get today.
+- **Only with target-group background.** Uniform background against a
+  media-derived catalogue measures reporting, not stability, and will return an
+  inverted result. Never quote the uncorrected figure.
+- **Not yet conclusive.** 37 to 101 usable records per catchment is thin. The
+  method becomes a real test once the regional sweep exists: roughly 1,455
+  records survive the 10 km screen region-wide, against a target group of every
+  settlement in 95 provinces.

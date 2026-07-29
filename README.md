@@ -15,7 +15,7 @@ the region, present day and to 2060.** Everything below is either that model or
 the route to that product.
 
 ```bash
-python -m h_sim.cli step9-region --config configs/02_hkh_region.json --everything
+python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json
 ```
 
 95 states and provinces across seven of the eight member countries. Start at
@@ -248,11 +248,15 @@ fit and check the parameters that the regional sweep then applies everywhere.
 ```bash
 python -m h_sim.cli step1-check                                            # 1
 python -m h_sim.cli step2-download --config configs/01_calibrate.json      # 2
-python -m h_sim.cli step3-fit      --config configs/01_calibrate.json      # 3
+python -m h_sim.cli step3-calibrate      --config configs/01_calibrate.json      # 3
 python -m h_sim.cli step4-validate --build --name gorkha \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
-python -m h_sim.cli step9-region   --config configs/02_hkh_region.json --everything
-python -m h_sim.cli step8-package  --name hkh
+python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json  # 5
+python -m h_sim.cli step6-climate        --config configs/02_hkh_region.json  # 6
+python -m h_sim.cli step7-settlements    --config configs/02_hkh_region.json  # 7
+python -m h_sim.cli step8-roads          --config configs/02_hkh_region.json  # 8
+python -m h_sim.cli step9-webapp         --config configs/02_hkh_region.json  # 9
+python -m h_sim.cli package              --name hkh
 ```
 
 `run-all --config configs/01_calibrate.json` does the same in one command.
@@ -261,15 +265,20 @@ python -m h_sim.cli step8-package  --name hkh
 |---|---|---|---|
 | 1 | `step1-check` | — | What is cached, what is reachable, what it will cost |
 | 2 | `step2-download` | — | The source data |
-| 3 | `step3-fit` | one calibration area | Soil parameters, cross-validated |
+| 3 | `step3-calibrate` | one calibration area | Soil parameters, cross-validated |
 | 4 | `step4-validate` | one held-out area | Skill on landslides the fit never saw |
-| 5 | `step9-region` | **the whole region** | Every mountain province: susceptibility, hazard, climate, exposure, a page each, and one ranked index |
-| 6 | `step8-package` | — | Manifest: every product and its provenance |
+| 5 | `step5-susceptibility` | **the whole region** | Present-day failure probability, every province |
+| 6 | `step6-climate` | **the whole region** | The same under CMIP6 scenarios |
+| 7 | `step7-settlements` | **the whole region** | Settlements and villages, now and later |
+| 8 | `step8-roads` | **the whole region** | Roads per 500 m segment, now and later |
+| 9 | `step9-webapp` | **the whole region** | A page per province, plus one ranked index |
+| | `package` | — | Manifest: every product and its provenance |
 
-Steps 5–7, 10 and 11 (`step5-susceptibility`, `step6-hazard`, `step7-climate`,
-`step10-risk`, `step11-map`) run one area of interest at a time. `step9-region`
-calls all of them per province, so you rarely invoke them directly — reach for
-them to debug a single province, not to make a deliverable.
+Steps 5–9 are stages of one regional sweep, each resumable on its own, so an
+interrupted pass leaves a complete product rather than a fragment of every
+product. The `area-*` commands (`area-susceptibility`, `area-hazard`,
+`area-climate`, `area-risk`, `area-map`) do the same work over a single area of
+interest — for debugging one province, not for making a deliverable.
 
 The number inside a command name is part of the name, not its position: the
 commands were numbered as they were added and never renumbered.
@@ -292,7 +301,7 @@ to bring down what the calibration needs plus the global layers.
 ### 3. Fit the soil parameters — once, for the whole region
 
 ```bash
-python -m h_sim.cli step3-fit --config configs/01_calibrate.json
+python -m h_sim.cli step3-calibrate --config configs/01_calibrate.json
 ```
 
 **This is the only step that is deliberately not region-wide.** Fitting needs a
@@ -383,8 +392,8 @@ rest of this page.
 For a single province, pass `--units`:
 
 ```bash
-python -m h_sim.cli step9-region --config configs/02_hkh_region.json \
-    --units Sikkim --everything
+python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json \
+    --units Sikkim
 ```
 
 ---
@@ -400,13 +409,13 @@ one at a time. Fit once, then sweep.
 
 ```bash
 # 1. plan: what would run, and what it would cost. Nothing is computed.
-python -m h_sim.cli step9-region --dry-run --config configs/02_hkh_region.json
+python -m h_sim.cli step5-susceptibility --dry-run --config configs/02_hkh_region.json
 
 # 2. run it: every mountain province, with exposure and a page for each
-python -m h_sim.cli step9-region --config configs/02_hkh_region.json --everything
+python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json
 
 # 3. the manifest
-python -m h_sim.cli step8-package --name hkh
+python -m h_sim.cli package --name hkh
 ```
 
 ### Which provinces, and why those
@@ -463,8 +472,8 @@ Narrow the sweep with `--countries Nepal Bhutan` or `--units Bagmati Gandaki`.
 
 ### What you get
 
-`--everything` is shorthand for `--with-hazard --with-climate --with-risk
---with-map`. Drop what you do not need; each multiplies the run.
+Each stage resumes independently: a province whose output exists is skipped,
+so an interrupted pass picks up where it stopped.
 
 **`outputs/hkh_region/index.html` is the deliverable.** One ranked page over the
 whole sweep: every province sorted by unstable area, sortable by any column,
@@ -525,7 +534,7 @@ outputs/hkh_manifest.json                                   provenance
 ## Package the deliverables
 
 ```bash
-python -m h_sim.cli step8-package --name hkh
+python -m h_sim.cli package --name hkh
 ```
 
 Writes `<name>_manifest.json`: every product, the fitted parameters, the
@@ -681,7 +690,7 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
    PGA fraction is not.
 7. **Flow routing is not tiled.** Contributing area is a property of the whole
    drainage network, so the area of interest is held in memory. The CLI warns
-   above 40 million cells. `step9-region` works around this by sweeping
+   above 40 million cells. The regional sweep works around this by taking
    administrative units, but units above that threshold — Xinjiang, Tibet —
    still need a coarser grid or a basin-level split that is not implemented.
 8. **Calibration regions do not work as implemented** (−0.0004 AUC held out,
@@ -693,12 +702,14 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
    coverage is whatever OpenStreetMap has, which is uneven across the region;
    where Overpass is unreachable the road layer falls back to Natural Earth
    trunk routes and is labelled as such.
-10. **Inventory coverage is six areas, all clustered.** Nepal (Gorkha,
-    Far-West, west-central), Sikkim, Shimla and 420 points across the Eastern
-    Himalaya. Pakistan, Afghanistan, Ladakh, Uttarakhand, Bhutan and Myanmar
-    have none, so parameters there are extrapolated with no way to check them.
-    The gaps were searched for rather than assumed: what exists, what does not,
-    and why, is in [docs/RESULTS.md §12](docs/RESULTS.md).
+10. **Inventory coverage is three areas, all in the eastern half.** Gorkha,
+    Far-Western Nepal and Sikkim. Pakistan, Afghanistan, Ladakh, Uttarakhand,
+    Himachal, Bhutan and Myanmar have none, so parameters there are
+    extrapolated with no way to check them. Three further open inventories were
+    found, tested and rejected, and the NASA catalogue is 85 % too coarsely
+    located to use — what exists, what does not and why is in
+    [docs/RESULTS.md §12–13](docs/RESULTS.md). This is the single biggest limit
+    on what the regional product can claim.
 
 ---
 
@@ -744,21 +755,42 @@ tests/                     66 tests, no network required
 | Recharge, future | WorldClim CMIP6 downscaled | 4.6 km | Automatic |
 | Calibration regions (optional) | GLiM, 1.2 M polygons | Vector | Automatic, 1.1 GB once |
 | Calibration regions (optional) | ESA WorldCover 2021 | 10 m | Automatic |
-| Inventories | Gorkha, Far-West Nepal, Sikkim, NASA GLC | Points, polygons | Automatic |
+| Inventories | Gorkha, Far-West Nepal, Sikkim (+ NASA GLC, reconnaissance only) | Points, polygons | Automatic |
 | Earthquake PGA | GEM seismic hazard map | — | Manual, or scenario value |
 | States and provinces | Natural Earth 1:10m admin-1 | ~1:10 M | Automatic, 15 MB once |
 
-| Inventory | Records | Mapping | Use |
-|---|---|---|---|
-| Roback Gorkha, Nepal | 24,795 | Satellite, **source areas** | The reference fit |
-| Far-Western Nepal | 26,350 | Satellite, multi-temporal | Monsoon-driven terrain |
-| Southern Sikkim, India | 255 | Satellite | Validation |
-| NASA GLC | 11,033 global | Media reports | Screen by `location_accuracy` |
+### Landslide inventories
 
-Source areas matter: the model predicts initiation, so an inventory mapping
+Every inventory the model uses, what it is, and **where in the workflow it is
+used**. Nothing else is fitted or validated against.
+
+| Inventory | Records | Mapping | Licence | Used in |
+|---|---|---|---|---|
+| Roback 2018, Gorkha, Nepal | 24,795 | Satellite, **source areas**, earthquake-triggered | Public domain (USGS) | **(step 3 — the calibration fit.** `configs/01_calibrate.json`. The one parameter set every province then reads.**)** |
+| Far-Western Nepal, multi-temporal | 26,350 | Satellite, monsoon-triggered, with a mapped-extent polygon | CC BY 4.0 | **(step 4 — transfer validation, and `analysis/02`–`06` for the domain-of-validity and resolution experiments)** |
+| Southern Sikkim, India | 255 polygons + 185 points, with a mapped-extent polygon | Satellite | CC BY 4.0 | **(step 4 — transfer validation, `--survey-extent`; and `analysis/02_transfer.py`)** |
+| NASA Global Landslide Catalog | 11,033 global, **367 usable in the HKH** | Media reports, screened by `location_accuracy` | Open | **(not fitted or validated against. Reconnaissance only — where landslides get *reported*.)** |
+
+**The GLC is screened automatically.** It publishes a `location_accuracy` field
+and 85 % of its HKH records are placed worse than 1 km, many to a district or a
+state. Any CSV carrying that field is screened to 1 km on load, so the export
+yields 367 records rather than 2,469 mostly-unusable ones. 367 points over
+4,400 km of mountain range is not a calibration set — use it to see where
+landslides are reported, not to fit.
+
+**Source areas matter.** The model predicts initiation, so an inventory mapping
 whole-landslide polygons is sampled downslope of what the model describes.
 Measured at +0.017 AUC for crown sampling on such an inventory, and −0.006 where
 polygons are already source areas.
+
+**Three areas, all in the eastern half of the region.** That is the whole
+calibration and validation base, and it is the biggest limit on what the
+regional product can claim. Three further open inventories were found, wired in
+and rejected — Nepal monsoon (redundant with Far-West and without a mapped
+extent), Shimla (anthropogenic road-cut failures, which the model has no term
+for), and Eastern Himalaya large landslides (wrong failure mechanism, points not
+source areas). What was searched for, what does not exist, and why, is in
+[docs/RESULTS.md §12–13](docs/RESULTS.md).
 
 ## Licence
 

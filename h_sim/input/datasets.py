@@ -139,30 +139,6 @@ REGISTRY: List[Dataset] = [
         probe_url="https://zenodo.org/api/records/8169506",
         note="255 polygons + 185 points, eastern Indian Himalaya",
     ),
-    Dataset(
-        key="nepal_monsoon", name="Nepal monsoon landslides, Sentinel-1 timed",
-        group=INVENTORY, licence="CC BY 4.0", approx_mb=0.3, required=False,
-        rel_path="inventory/nepal_monsoon",
-        probe_url="https://zenodo.org/api/records/7970874",
-        note="499 polygons over four monsoons, each dated to a satellite pass",
-    ),
-    Dataset(
-        key="shimla", name="Shimla district inventory (Himachal Pradesh)",
-        group=INVENTORY, licence="CC BY 4.0", approx_mb=0.6, required=False,
-        rel_path="inventory/shimla",
-        probe_url="https://zenodo.org/api/records/10492992",
-        note="3,176 landslides; the only inventory in the Western Indian "
-             "Himalaya",
-    ),
-    Dataset(
-        key="eastern_himalaya", name="Large landslides of the Eastern Himalaya",
-        group=INVENTORY, licence="CC BY 4.0", approx_mb=0.3, required=False,
-        rel_path="inventory/eastern_himalaya",
-        probe_url="https://zenodo.org/api/records/18931430",
-        note="420 points across Bhutan, Arunachal and southern Tibet. LARGE "
-             "landslides and points, not source areas: a coverage check, not "
-             "a calibration set",
-    ),
     # ---- TRIGGER ---------------------------------------------------------
     Dataset(
         key="pga", name="GEM Global Seismic Hazard Map (PGA, 475-yr)",

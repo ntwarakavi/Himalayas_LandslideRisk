@@ -1430,12 +1430,40 @@ def test_every_inventory_is_registered_and_fetchable():
     from h_sim.input import datasets, inventory as INV
 
     keys = {d.key for d in datasets.REGISTRY if d.group == datasets.INVENTORY}
-    for key in ("gorkha", "farwest", "sikkim", "nepal_monsoon", "shimla",
-                "eastern_himalaya"):
+    for key in ("gorkha", "farwest", "sikkim"):
         assert key in keys, key
-        assert key in INV.INVENTORY_FETCHERS or key in ("glc", "coolr"), key
+        assert key in INV.INVENTORY_FETCHERS, key
     for key, (fn, label) in INV.INVENTORY_FETCHERS.items():
         assert callable(fn) and label, key
+    # every registered inventory must be fetchable or explicitly manual
+    for d in datasets.REGISTRY:
+        if d.group != datasets.INVENTORY:
+            continue
+        assert d.key in INV.INVENTORY_FETCHERS or d.key == "coolr", d.key
+
+
+def test_a_catalogue_that_publishes_accuracy_is_screened_by_it():
+    """A 90 m pixel cannot be tested against a point geocoded to a district."""
+    from h_sim.input import inventory as INV
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "glc.csv")
+        with open(path, "w") as fh:
+            fh.write("latitude,longitude,location_accuracy,country_name\n")
+            fh.write("28.0,84.0,exact,Nepal\n")
+            fh.write("28.1,84.1,1km,Nepal\n")
+            fh.write("28.2,84.2,25km,Nepal\n")
+            fh.write("28.3,84.3,,Nepal\n")
+        pts = INV.load_inventory(path)
+        assert len(pts) == 2, "only exact and 1km survive"
+        assert INV.DEFAULT_MAX_ACCURACY == "1km"
+
+    # a CSV with no accuracy column is untouched
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "plain.csv")
+        with open(path, "w") as fh:
+            fh.write("latitude,longitude\n28.0,84.0\n28.1,84.1\n")
+        assert len(INV.load_inventory(path)) == 2
 
 
 def test_climate_scenario_round_trips_through_a_dict():

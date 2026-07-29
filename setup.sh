@@ -63,15 +63,16 @@ Next steps:
     ./scripts/run_demo.sh                                          # offline
 
     # what the region-wide run would cost, before committing to it
-    python -m h_sim.cli step9-region --dry-run --config configs/02_hkh_region.json
+    python -m h_sim.cli step5-susceptibility --dry-run --config configs/02_hkh_region.json
 
     # fit the soil parameters once, then check they travel
     python -m h_sim.cli step2-download --config configs/01_calibrate.json
-    python -m h_sim.cli step3-fit      --config configs/01_calibrate.json
+    python -m h_sim.cli step3-calibrate      --config configs/01_calibrate.json
     python -m h_sim.cli step4-validate --build --name gorkha --inventory <path>
 
     # the product: every mountain province in the Hindu Kush Himalaya
-    python -m h_sim.cli step9-region --config configs/02_hkh_region.json --everything
+    python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json
+    #   ...then step6-climate, step7-settlements, step8-roads, step9-webapp
 
 See docs/RUNNING_LOCALLY.md for the full walkthrough.
 EOF

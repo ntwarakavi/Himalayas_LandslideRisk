@@ -64,7 +64,7 @@ Two commands. The first fetches data, the second builds a map.
 
 ```bash
 python -m h_sim.cli step2-download --config configs/01_calibrate.json
-python -m h_sim.cli step9-region --config configs/03_hkh_recon.json --units Sikkim
+python -m h_sim.cli step5-susceptibility --config configs/03_hkh_recon.json --units Sikkim
 ```
 
 About 120 MB and a few minutes. This uses SINMAP's generic parameter ranges
@@ -119,7 +119,7 @@ This is the step that turns a plausible map into a defensible one.
 
 ```bash
 python -m h_sim.cli step2-download --config configs/01_calibrate.json
-python -m h_sim.cli step3-fit --config configs/01_calibrate.json
+python -m h_sim.cli step3-calibrate --config configs/01_calibrate.json
 ```
 
 The fit searches 48 parameter sets and cross-validates twice. On the Gorkha
@@ -161,7 +161,7 @@ automatically when `--name` matches, or point at it explicitly with
 ### Choosing an inventory
 
 ```bash
-python -m h_sim.cli step3-fit --name farwest \
+python -m h_sim.cli step3-calibrate --name farwest \
     --bbox 80.558 28.913 81.592 29.856 --res 0.00083333 \
     --inventory data/raw/inventory/farwest/<file>.shp
 ```
@@ -306,7 +306,7 @@ Scenario specifications are `current`, or `<pathway>:<period>`:
 
 Everything defaults to **2041-2060**, a twenty to thirty year planning horizon.
 That is the window a road alignment or a settlement plan is decided over, and it
-is what `step10-risk` scores assets against. Later windows show a bigger signal
+is what steps 7 and 8 score assets against. Later windows show a bigger signal
 and are one flag away, but a map of 2090 is not a decision anyone can act on,
 and the further out the window the more of its spread is the choice of GCM
 rather than the pathway. Name later windows with `--scenarios` when the
@@ -324,8 +324,12 @@ would confound two effects in one map.
 ## 8b. Regional production, one province at a time
 
 ```bash
-python -m h_sim.cli step9-region --dry-run --config configs/02_hkh_region.json
-python -m h_sim.cli step9-region --config configs/02_hkh_region.json --everything
+python -m h_sim.cli step5-susceptibility --dry-run --config configs/02_hkh_region.json
+python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json
+python -m h_sim.cli step6-climate        --config configs/02_hkh_region.json
+python -m h_sim.cli step7-settlements    --config configs/02_hkh_region.json
+python -m h_sim.cli step8-roads          --config configs/02_hkh_region.json
+python -m h_sim.cli step9-webapp         --config configs/02_hkh_region.json
 ```
 
 **Provinces are chosen on relief, not on the region's bounding box.** That box
@@ -344,13 +348,13 @@ HKH arc are excluded by name in `admin.NOT_HKH`. Adjust with
 or set `admin_elevation_res` to null to skip the test entirely.
 
 The whole region cannot be a single run: 4,400 × 2,500 km at 30 m is thirteen
-billion cells and flow routing is not tiled. `step9-region` sweeps
+billion cells and flow routing is not tiled. `step5-susceptibility` sweeps
 administrative units instead.
 
 Always cost it first — nothing is computed:
 
 ```bash
-python -m h_sim.cli step9-region --dry-run --res 0.00083333 \
+python -m h_sim.cli step5-susceptibility --dry-run --res 0.00083333 \
     --countries Nepal Bhutan
 ```
 
@@ -365,7 +369,7 @@ python -m h_sim.cli step9-region --dry-run --res 0.00083333 \
 Then run it, pointing at the parameters fitted once for the region:
 
 ```bash
-python -m h_sim.cli step9-region --name hkh --res 0.00083333 \
+python -m h_sim.cli step5-susceptibility --name hkh --res 0.00083333 \
     --fitted-params outputs/gorkha_fitted_params.json
 ```
 
@@ -413,9 +417,9 @@ Steps 10 and 11 turn a susceptibility raster into something a planner can act
 on, then into something they can open.
 
 ```bash
-python -m h_sim.cli step10-risk --name gorkha30 \
+python -m h_sim.cli step7-settlements --name gorkha30 \
     --bbox 84.5 27.6 85.3 28.2 --res 0.00027778
-python -m h_sim.cli step11-map  --name gorkha30
+python -m h_sim.cli step9-webapp  --name gorkha30
 ```
 
 Step 10 fetches settlements and roads for the area, then scores each one against
@@ -426,7 +430,7 @@ cannot find is computed on the spot, normalised by the present-day recharge
 reference. Override the list:
 
 ```bash
-python -m h_sim.cli step10-risk --name gorkha30 \
+python -m h_sim.cli step7-settlements --name gorkha30 \
     --risk-climate current ssp585:2041-2060
 ```
 
@@ -469,7 +473,7 @@ after deleting `data/raw/exposure/roads_<name>.json` to try Overpass again.
 ## 9. Packaging the deliverables
 
 ```bash
-python -m h_sim.cli step8-package --name gorkha
+python -m h_sim.cli package --name gorkha
 ```
 
 Nothing is recomputed and nothing is copied. This catalogues what exists and
@@ -485,7 +489,7 @@ not a deliverable.
 Fits separate soil parameters per rock type or land-cover class:
 
 ```bash
-python -m h_sim.cli step3-fit --name gorkha \
+python -m h_sim.cli step3-calibrate --name gorkha \
     --calibration-regions lithology --inventory <path>
 ```
 
@@ -569,7 +573,7 @@ single pass. Halve the extent or coarsen `--res`; see
 [Sizing a run](#4-sizing-a-run).
 
 **`no fit found -> SINMAP generic ranges`** — steps 4 and 5 could not find a
-fitted-parameters JSON. Run `step3-fit` first, or pass `--fitted-params`. The
+fitted-parameters JSON. Run `step3-calibrate` first, or pass `--fitted-params`. The
 map will still build, but its level is not calibrated.
 
 **`no stability map found for '<name>'`** — step 4 validates a map, and none

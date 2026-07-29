@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # H-SIM offline smoke test - synthetic data, no downloads, ~2 minutes.
-# Walks the whole sequence so you can see it before spending bandwidth.
+#
+# The real workflow (steps 5-9) sweeps every province in the region. This walks
+# the same stages over ONE synthetic catchment using the area-* commands, which
+# is what those commands are for: seeing the machinery work without spending
+# bandwidth or days. It proves the code runs, not the science.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 COMMON="--mode demo --name demo --bbox 83.0 27.5 83.2 27.7 --res 0.002"
@@ -9,32 +13,32 @@ echo "=============== 1-2  GET THE DATA ==============="
 python -m h_sim.cli step1-check --offline | tail -5
 
 echo
-echo "=============== 4-9  PRODUCE ==================="
-echo ">> step5  susceptibility: flow routing, then failure probability"
-python -m h_sim.cli step5-susceptibility $COMMON | tail -10
+echo "=============== 5-9  PRODUCE (one catchment) ===="
+echo ">> step 5  susceptibility: flow routing, then failure probability"
+python -m h_sim.cli area-susceptibility $COMMON | tail -10
 
 echo
-echo ">> step6  hazard: every rainfall and earthquake scenario"
-python -m h_sim.cli step6-hazard $COMMON --all | tail -10
+echo ">> trigger scenarios: every rainfall return period and PGA"
+python -m h_sim.cli area-hazard $COMMON --all | tail -10
 
 echo
-echo ">> step7  climate: present day against two futures"
-python -m h_sim.cli step7-climate $COMMON \
+echo ">> step 6  climate: present day against two futures"
+python -m h_sim.cli area-climate $COMMON \
     --scenarios current ssp245:2041-2060 ssp585:2041-2060 | tail -10
 
 echo
-echo ">> step10 risk: what the map means for towns and roads, now and later"
-python -m h_sim.cli step10-risk $COMMON \
+echo ">> steps 7-8  settlements and roads, now and later"
+python -m h_sim.cli area-risk $COMMON \
     --risk-climate current ssp245:2021-2040 ssp585:2041-2060 | tail -24
 
 echo
-echo ">> step11 map: one HTML page of the lot"
-python -m h_sim.cli step11-map --name demo \
+echo ">> step 9  the web app"
+python -m h_sim.cli area-map --name demo \
     --bbox 83.0 27.5 83.2 27.7 --res 0.002 | tail -6
 
 echo
-echo "=============== 11   PACKAGE ==================="
-python -m h_sim.cli step8-package --name demo | tail -12
+echo "=============== PACKAGE ========================="
+python -m h_sim.cli package --name demo | tail -12
 
 cat <<'EOF'
 
@@ -64,6 +68,6 @@ Steps 3 and 5 - the fit and the validation - are skipped here because both need
 a real landslide inventory. On real data they are not optional:
 
     python -m h_sim.cli step2-download --config configs/01_calibrate.json
-    python -m h_sim.cli step3-fit      --config configs/01_calibrate.json
+    python -m h_sim.cli step3-calibrate      --config configs/01_calibrate.json
     python -m h_sim.cli step4-validate --name gorkha --inventory <another inventory>
 EOF

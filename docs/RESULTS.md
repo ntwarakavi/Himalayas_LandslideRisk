@@ -514,74 +514,43 @@ fallback is still there and still labelled in each feature's `source` field, but
 a road layer of a few dozen segments across a district is the signature of it
 having fired.
 
-## 12. Three more inventories, and what they say
+## 12. Three more inventories, tested and rejected
 
-The model was calibrated on Gorkha and checked against Far-Western Nepal and
-Sikkim. Three further open inventories were found and wired in, chosen because
-each covers ground the first three do not.
+Three further open inventories were found, wired in, and scored. None of them
+improved or usefully checked the model, so none is shipped. They are recorded
+here with their DOIs so the search is not repeated.
 
-| Inventory | Where | What | Licence |
+| Inventory | Where | Size | Result |
 |---|---|---|---|
-| Nepal monsoon, Sentinel-1 timed | 83.0-84.7 E, west-central Nepal | 499 polygons over the 2015, 2017, 2018 and 2019 monsoons, each dated to a satellite pass | CC BY 4.0 |
-| Shimla district | 76.9-77.2 E, Himachal Pradesh | 3,176 landslides + 359 field-GPS points | CC BY 4.0 |
-| Eastern Himalaya, large landslides | 90.4-97.2 E, Bhutan / Arunachal / S Tibet | 420 point locations | CC BY 4.0 |
+| Nepal monsoon, Sentinel-1 timed (Zenodo 7970874) | west-central Nepal | 499 polygons | AUC **0.543**, not monotonic |
+| Shimla district (Zenodo 10492992) | Himachal Pradesh | 3,176 landslides | AUC **0.472**, ordering **inverted** |
+| Eastern Himalaya large landslides (Zenodo 18931430) | Bhutan / Arunachal / S Tibet | 420 points | not testable |
 
-Zenodo 7970874, 10492992 and 18931430 respectively. All three load with the
-existing reader and are registered, so `step1-check` and `step2-download`
-handle them like any other source.
+All three are CC BY 4.0 and load with the existing reader. Why each was
+dropped:
 
-### What they measured
+**Nepal monsoon — redundant and weaker.** It is monsoon-triggered in Nepal,
+which is what Far-Western Nepal already provides, at 499 polygons against
+26,348, and without the mapped-extent polygon that makes the Far-West set
+usable. Background over its bounding box therefore labels ground nobody
+examined as landslide-free, so 0.543 is a lower bound that cannot be corrected.
+It adds nothing the existing set does not do better.
 
-Both testable inventories were scored against the Gorkha-fitted parameters
-applied over their own ground at 90 m — transfer validation, `--build`.
+**Shimla — the right answer to a different question.** The dataset accompanies
+a paper on anthropogenic landslides, and its failures cluster along road cuts
+and construction benches below the town. SINMAP has no term for an undercut
+slope, so the inverted frequency ratio is what the mechanics predict rather
+than a defect in the data. It cannot calibrate the model and it cannot fairly
+validate it either, because it is not measuring what the model computes. The
+*finding* is kept in the limits - the model has nothing to say about road-cut
+failures around hill towns, and that is a large share of what kills people in
+Himachal - but the data is not a calibration or validation source.
 
-| Inventory | Landslides | Efficiency | AUC | Ordering |
-|---|---|---|---|---|
-| Sikkim (existing) | 255 | 2.00x | **0.702** | monotonic |
-| Nepal monsoon (new) | 499 | 1.39x | **0.543** | not monotonic |
-| Shimla (new) | 3,176 | 0.76x | **0.472** | **inverted** |
+**Eastern Himalaya — wrong mechanism, wrong geometry.** 420 *large* landslides
+as point locations. SINMAP describes shallow translational failure, and the
+fitting needs mapped source areas. Neither condition holds.
 
-These are worse than anything measured before, and the Shimla figure is worse
-than random. Two confounds are real and neither is a get-out:
-
-**Shimla's inventory is anthropogenic by design.** The dataset accompanies a
-paper on "anthropogenic activities and the two-fold surge in landslides", and
-its landslides cluster along road cuts and construction on the slopes below
-Shimla town. SINMAP describes natural slope stability under a hydrological
-loading; it has no term for an undercut road bench. An inverted frequency ratio
-is what you would expect when the failures are concentrated on ground the
-mechanical model calls stable. That is a statement about the model's scope, not
-a defect in the data - and it matters, because anthropogenic landslides around
-hill towns are a large share of what actually kills people in Himachal.
-
-**The Nepal monsoon set has no mapped extent.** It records landslides visible
-to Sentinel-1 in four specific monsoons over a "west extensions" area; most of
-the bounding box was never examined. Background drawn across the whole box
-therefore labels unmapped ground landslide-free, which is the same defect
-corrected for Far-West and Sikkim in section 7 and which cannot be corrected
-here because no extent polygon ships with the data. 0.543 is a lower bound.
-
-### What this means for the regional product
-
-The regional sweep applies one parameter set to 95 provinces. Measured transfer
-now spans **0.472 to 0.780** across five independent inventories, and the low
-end is in the Western Indian Himalaya, which is exactly the ground the fit is
-furthest from. The honest summary is not "the model transfers with a small
-penalty" - it is:
-
-- **Central Nepal and Sikkim**: 0.70-0.78, usable for screening.
-- **Far-Western Nepal**: 0.656, weaker, in different lithology.
-- **West-central Nepal, rainfall-triggered, unmasked background**: 0.543 as a
-  lower bound.
-- **Himachal Pradesh, anthropogenic landslides**: no skill at all. Do not use
-  the regional maps to reason about road-cut failures around hill towns.
-
-Nothing in a fitted parameter set warns which case an area is. Only a local
-inventory does, and for most of the region there still is not one.
-
-### Still missing
-
-The gaps that matter most, and what was checked:
+### Still missing, and checked
 
 - **Pakistan and Afghanistan.** The USGS earthquake-triggered ground-failure
   repository (Data Series 1064) catalogues three inventories for the 2005
@@ -591,8 +560,33 @@ The gaps that matter most, and what was checked:
 - **The Indian Himalaya at scale.** Chen et al. (2024) mapped 265,000
   landslides across Jammu and Kashmir, Himachal, Uttarakhand, Sikkim and
   Arunachal, 1992-2021, which would be transformative. The repository holds a
-  README only; the products are annual *density rasters* on Google Drive, not
-  an inventory of features, and are CC BY-NC.
+  README only; the products are annual *density rasters* on Google Drive under
+  CC BY-NC, not an inventory of features.
 - **Bhutan.** Nothing open was found beyond the 420 Eastern Himalaya points.
 - HR-GLDD and GDCLD are deep-learning image patches with binary masks, not
-  geolocated inventories, and cannot be used to fit or validate here.
+  geolocated inventories, and cannot fit or validate anything here.
+
+So the calibration and validation base is unchanged: Gorkha, Far-Western Nepal
+and Sikkim. That is three areas, all in the eastern half of the region, and it
+is the single biggest limit on what the regional product can claim.
+
+## 13. The NASA catalogue is mostly too coarse to use
+
+The NASA Global Landslide Catalog publishes a ``location_accuracy`` field, and
+in this region most of it fails a 90 m test:
+
+| Screen | Records in the HKH |
+|---|---|
+| none | 2,469 |
+| accuracy <= 1 km | **367** |
+| accuracy "exact" | 39 |
+| <= 1 km and rainfall-triggered | 295 |
+
+**85 % of the catalogue's HKH records are placed worse than 1 km**, many to a
+district or a state. The loader screens to 1 km automatically for any CSV that
+publishes an accuracy field, so passing the GLC export as an inventory now
+yields 367 usable records rather than 2,469 mostly-unusable ones. Before that
+fix the screening function existed and nothing called it.
+
+367 records over 4,400 km of mountain range is not a calibration set. Use the
+catalogue to see where landslides get *reported*; do not fit to it.

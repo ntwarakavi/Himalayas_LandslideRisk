@@ -17,16 +17,11 @@ Inventory sources for the HKH, in rough order of calibration quality:
     triggered. Zenodo doi:10.5281/zenodo.4290100.
   * Southern Sikkim multi-temporal inventory - 255 polygons + 185 points, and
     a mapped-extent polygon. Zenodo doi:10.5281/zenodo.8169506.
-  * Nepal monsoon landslides timed with Sentinel-1 - 499 polygons over the
-    2015, 2017, 2018 and 2019 monsoons, each dated to a satellite pass.
-    Zenodo doi:10.5281/zenodo.7970874.
-  * Shimla district, Himachal Pradesh - 3,176 landslides and 359 field-GPS
-    points. The only inventory in the Western Indian Himalaya.
-    Zenodo doi:10.5281/zenodo.10492992.
-  * Large landslides of the Eastern Himalaya - 420 points spanning Bhutan,
-    Arunachal Pradesh and southern Tibet. Large failures and points rather
-    than mapped source areas, so a coverage check rather than a calibration
-    set. Zenodo doi:10.5281/zenodo.18931430.
+
+Three further open inventories were tested and are NOT shipped, because none
+of them improved or usefully checked the model. What they measured, and why
+they were rejected, is recorded in docs/RESULTS.md section 12 with their DOIs,
+so nobody repeats the search.
   * ICIMOD Regional Database System (rds.icimod.org) - HKH-wide, free account.
   * NASA Global Landslide Catalog / COOLR (Kirschbaum et al. 2010; Juang et al.
     2019) - downloaded automatically, but note it is compiled from media
@@ -73,6 +68,10 @@ NASA_GLC_INFO = (
     "?where=1=1&outFields=*&f=geojson\nThen pass it via config.inventory_path."
 )
 
+#: Positional accuracy a record must beat to be used, when the source says.
+#: A 90 m pixel cannot be tested against a landslide placed to 5 km.
+DEFAULT_MAX_ACCURACY = "1km"
+
 _LAT_KEYS = ("latitude", "lat", "y", "ycoord", "y_coord")
 _LON_KEYS = ("longitude", "lon", "long", "lng", "x", "xcoord", "x_coord")
 
@@ -96,6 +95,14 @@ def load_inventory(path: str,
         pts = _load_geojson(path)
     elif ext in (".shp", ".gdb", ".gpkg", ".kml", ".kmz"):
         pts = _load_vector(path)
+    elif _has_accuracy_column(path):
+        # A catalogue that publishes its positional accuracy is screened by it
+        # by default. The NASA GLC records how precisely each landslide was
+        # placed, and in this region 85% of them are placed worse than 1 km -
+        # 2,469 records become 367. Returning all of them would let somebody
+        # test a 90 m pixel against a point geocoded to a district.
+        return load_glc_csv(path, bbox=bbox, countries=countries,
+                            max_accuracy=DEFAULT_MAX_ACCURACY)
     else:
         pts = _load_csv(path, countries)
     pts = np.asarray(pts, dtype="float64").reshape(-1, 2)
@@ -106,6 +113,17 @@ def load_inventory(path: str,
             (pts[:, 1] >= s) & (pts[:, 1] <= n)
         pts = pts[m]
     return pts
+
+
+def _has_accuracy_column(path: str) -> bool:
+    """Does this CSV publish a positional-accuracy field?"""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace",
+                  newline="") as fh:
+            header = next(csv.reader(fh), [])
+    except Exception:                                    # noqa: BLE001
+        return False
+    return "location_accuracy" in {h.strip().lower() for h in header}
 
 
 def _load_csv(path: str, countries: Optional[Sequence[str]]) -> List[Tuple[float, float]]:
@@ -348,94 +366,6 @@ def download_sikkim(data_dir: str) -> Optional[str]:
     return shp if os.path.exists(shp) else None
 
 
-def download_nepal_monsoon(data_dir: str) -> Optional[str]:
-    """Monsoon-triggered Nepal landslides, timed with Sentinel-1 -> shapefile.
-
-    499 polygons across four monsoons (2015, 2017, 2018, 2019) in west-central
-    Nepal, each dated to a Sentinel-1 pass. Two things make this worth having
-    even though it is small. It is **rainfall-triggered**, which is the
-    mechanism SINMAP describes - the Gorkha set is earthquake-triggered, and
-    scoring a static map against it caps what is explainable. And it is
-    **dated**, so a landslide can be matched to the storm that caused it
-    rather than to a decade.
-
-    Zenodo doi:10.5281/zenodo.7970874 (CC BY 4.0).
-    """
-    import zipfile
-
-    out_dir = os.path.join(data_dir, "inventory", "nepal_monsoon")
-    inner = os.path.join(out_dir,
-                         "Nepal_monsoon-polygons-west-extensions_15_17_18_19")
-    shp = os.path.join(inner, "LS_2018_w_2000.shp")
-    if os.path.exists(shp):
-        return shp
-    zip_path = os.path.join(data_dir, "inventory", "nepal_monsoon.zip")
-    got = _cached_download(
-        "https://zenodo.org/records/7970874/files/"
-        "Nepal_monsoon-polygons-west-extensions_15_17_18_19.zip?download=1",
-        zip_path)
-    if not got:
-        return None
-    os.makedirs(out_dir, exist_ok=True)
-    with zipfile.ZipFile(got) as z:
-        z.extractall(out_dir)
-    return shp if os.path.exists(shp) else None
-
-
-def download_shimla(data_dir: str) -> Optional[str]:
-    """Shimla district landslide inventory (Himachal Pradesh) -> shapefile.
-
-    3,176 mapped landslides plus 359 field-GPS locations around Shimla. This
-    is the first inventory the model has anywhere in the **Western Indian
-    Himalaya**: Himachal Pradesh and Uttarakhand were previously extrapolated
-    from parameters fitted 700 km away in Nepal, with no way to check them.
-
-    Zenodo doi:10.5281/zenodo.10492992 (CC BY 4.0).
-    """
-    import zipfile
-
-    out_dir = os.path.join(data_dir, "inventory", "shimla")
-    shp = os.path.join(out_dir, "landslides", "landslides_shimla.shp")
-    if os.path.exists(shp):
-        return shp
-    zip_path = os.path.join(data_dir, "inventory", "shimla.zip")
-    got = _cached_download(
-        "https://zenodo.org/records/10492992/files/landslides.zip?download=1",
-        zip_path)
-    if not got:
-        return None
-    os.makedirs(out_dir, exist_ok=True)
-    with zipfile.ZipFile(got) as z:
-        z.extractall(out_dir)
-    return shp if os.path.exists(shp) else None
-
-
-def download_eastern_himalaya(data_dir: str) -> Optional[str]:
-    """Large landslides of the Eastern Himalaya -> KML of locations.
-
-    420 large landslides spanning 90.4-97.2 E, which is Bhutan, Arunachal
-    Pradesh and southern Tibet - the eastern third of the region, where the
-    model previously had nothing at all.
-
-    Two caveats before using it to fit. These are **large** landslides, and
-    SINMAP describes shallow translational failure, so many of them are the
-    wrong failure mechanism. And they are point locations rather than mapped
-    source areas. Treat it as a coverage check in ground the model otherwise
-    cannot see, not as a calibration set.
-
-    Zenodo doi:10.5281/zenodo.18931430 (CC BY 4.0).
-    """
-    out_dir = os.path.join(data_dir, "inventory", "eastern_himalaya")
-    kml = os.path.join(out_dir, "eastern_himalaya_large_landslides.kml")
-    if os.path.exists(kml):
-        return kml
-    got = _cached_download(
-        "https://zenodo.org/records/18931430/files/"
-        "Large%20Landslide%20Location%20in%20Eastern%20Himalaya.kml"
-        "?download=1", kml)
-    return got
-
-
 def download_glc_csv(data_dir: str) -> Optional[str]:
     """Download the authoritative NASA Global Landslide Catalog CSV.
 
@@ -503,14 +433,6 @@ INVENTORY_FETCHERS = {
                 "Far-Western Nepal (monsoon, 26,350 polygons)"),
     "sikkim": (download_sikkim,
                "Southern Sikkim, India (255 polygons)"),
-    "nepal_monsoon": (download_nepal_monsoon,
-                      "Nepal monsoons 2015-2019, Sentinel-1 dated "
-                      "(499 polygons)"),
-    "shimla": (download_shimla,
-               "Shimla, Himachal Pradesh (3,176 landslides)"),
-    "eastern_himalaya": (download_eastern_himalaya,
-                         "Eastern Himalaya large landslides "
-                         "(420 points; coverage check only)"),
 }
 
 

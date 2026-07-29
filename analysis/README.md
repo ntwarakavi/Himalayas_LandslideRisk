@@ -79,6 +79,11 @@ identically, and an areal density test over cells coarser than the error.
 
 The finding is that reporting bias dominates and inverts the result - uniform
 background gives AUC 0.346 and Spearman -0.74, because media reports come from
-roads and settlements on gentle ground. Target-group background drawn from the
-settlements step 7 scores recovers +0.048 AUC. Usable as a coarse check where
-no mapped inventory exists; never as a calibration set. See RESULTS section 14.
+roads and settlements on gentle ground. Target-group background raises Gorkha
+from 0.585 to 0.633, but that background is also 6% less susceptible, so part
+of the gain is an easier baseline rather than bias removal; and with 37 records
+the 95% interval is 0.528-0.738, barely excluding chance.
+
+Inconclusive at catchment scale, and currently used for nothing. Re-run after
+the regional sweep, where about 1,455 records would cut the standard error from
+0.054 to roughly 0.01. See RESULTS section 14.

@@ -769,7 +769,7 @@ used**. Nothing else is fitted or validated against.
 | Roback 2018, Gorkha, Nepal | 24,795 | Satellite, **source areas**, earthquake-triggered | Public domain (USGS) | **(step 3 — the calibration fit.** `configs/01_calibrate.json`. The one parameter set every province then reads.**)** |
 | Far-Western Nepal, multi-temporal | 26,350 | Satellite, monsoon-triggered, with a mapped-extent polygon | CC BY 4.0 | **(step 4 — transfer validation, and `analysis/02`–`06` for the domain-of-validity and resolution experiments)** |
 | Southern Sikkim, India | 255 polygons + 185 points, with a mapped-extent polygon | Satellite | CC BY 4.0 | **(step 4 — transfer validation, `--survey-extent`; and `analysis/02_transfer.py`)** |
-| NASA Global Landslide Catalog | 11,033 global; 2,469 in the HKH, 2,099 rainfall-triggered | Media reports, with `location_accuracy` | Open | **(never fitted. Coarse validation only, via `analysis/08_point_validation.py`, and only with target-group background — see below.)** |
+| NASA Global Landslide Catalog | 11,033 global; 2,469 in the HKH | Media reports, with `location_accuracy` | Open | **(nothing. Not fitted, not validated against. A method to use it exists but the evidence is too thin to quote — see below.)** |
 
 **The GLC is screened automatically** wherever it is loaded as an inventory: it
 publishes a `location_accuracy` field, 85 % of its HKH records are placed worse
@@ -777,27 +777,28 @@ than 1 km, and a 90 m pixel cannot be tested against a position known to a
 district. Any CSV carrying that field is screened to 1 km on load — 2,469
 records become 367.
 
-**But positional error is a reason to test coarsely, not to discard data.** The
-catalogue holds 2,099 *rainfall-triggered* records in the region, more than the
-three polygon inventories combined and of exactly the trigger the model
-describes. `analysis/08_point_validation.py` uses them two ways: scoring each
-record through a disc the size of its own stated accuracy, with background
-blurred identically, and testing landslide density against mean susceptibility
-over cells coarser than the error.
+**Could the rest be used at a coarser scale? A method exists; the evidence does
+not yet support quoting it.** `analysis/08_point_validation.py` scores each
+record through a disc the size of its own stated accuracy, blurs background
+identically, and tests landslide density over cells coarser than the error.
+Two findings, one solid and one cautionary:
 
-The catch is reporting bias, and it is large enough to invert the answer.
-Against uniform background in west-central Nepal the AUC is **0.346** and the
-areal correlation is **ρ = −0.74**: landslides are *reported* where
-susceptibility is low, because media reports come from roads and settlements on
-valley floors. Drawing background from the settlements step 7 already scores —
-the standard target-group correction — recovers **+0.048 AUC**, giving
-0.633 ± 0.019 on Gorkha.
+- **Reporting bias is real and large.** Against uniform background in
+  west-central Nepal the AUC is 0.346 and the areal correlation is **ρ = −0.74**.
+  Landslides are *reported* where susceptibility is low, because media reports
+  come from roads and settlements on valley floors.
+- **Correcting it is not clean.** Target-group background drawn from settlements
+  raises Gorkha's AUC from 0.585 to 0.633 — but that background also sits on
+  ground 6 % less susceptible, so part of the gain is the background becoming
+  easier to beat rather than the bias being removed. With 37 usable records the
+  95 % interval is **0.528–0.738**, barely excluding chance, against 0.664–0.740
+  for the Sikkim polygons.
 
-So the catalogue earns a place as a **coarse validation check where nothing
-else exists** — Pakistan, Afghanistan and Bhutan have no other landslide data
-at all — and only with target-group background. It is never fitted to: 0.63 is
-far below the 0.816 the polygon inventories give. Full numbers in
-[docs/RESULTS.md §14](docs/RESULTS.md).
+So the catalogue is used for **nothing** in the workflow. The machinery is kept
+because the arithmetic says when it becomes real — about 1,455 records survive
+the 10 km screen region-wide, tightening the standard error from 0.054 to
+roughly 0.01 — so re-run it after the regional sweep, and do not quote it
+before. [docs/RESULTS.md §14](docs/RESULTS.md).
 
 **Source areas matter.** The model predicts initiation, so an inventory mapping
 whole-landslide polygons is sampled downslope of what the model describes.

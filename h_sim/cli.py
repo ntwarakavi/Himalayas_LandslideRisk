@@ -3,36 +3,38 @@
 Himalayan Slope Instability Model - SINMAP infinite-slope stability over
 D-infinity flow routing.
 
-The workflow runs in four phases. Each step writes files and prints what it
-produced, so you can stop after any step, inspect the output, and carry on.
-Nothing is ever re-downloaded and the expensive stage is cached.
+Eleven commands, in this order. Each writes files and prints what it produced,
+so you can stop after any one, inspect the output, and carry on. Nothing is
+re-downloaded and the expensive stage is cached.
 
-    SET UP
-      step1-check          which datasets do I have, and can I get the rest?
-      step2-download       fetch them
+The number inside a command name is part of the name, not its position in the
+sequence - they were numbered as they were added and never renumbered. Run them
+top to bottom as listed here, not in numerical order.
 
-    CALIBRATE AND VALIDATE          (needs a landslide inventory)
-      step3-fit            fit the soil parameters, cross-validated
-      step4-validate       score the map against an inventory it never saw
+     1  step1-check          what is cached, what is reachable, what it costs
+     2  step2-download       fetch it
+     3  step3-fit            fit the soil parameters to an inventory
+     4  step5-susceptibility present-day failure probability
+     5  step4-validate       score that map against a SECOND inventory.
+                             --build first makes a map over the held-out
+                             inventory's own ground, which is what transfer
+                             validation between catchments needs.
+     6  step6-hazard         rainfall and earthquake scenarios
+     7  step7-climate        CMIP6 futures, and the change from today
+     8  step10-risk          settlements and road segments, scored per climate
+     9  step11-map           a browsable page of the whole run
+    10  step9-region         all of the above, province by province, over the
+                             eight countries. --everything turns on hazard,
+                             climate, exposure and a page per province, and
+                             writes one ranked index over the sweep.
+    11  step8-package        manifest: every product and its provenance
 
-    PRODUCE                          (applies the validated parameters)
-      step5-susceptibility present-day failure probability
-      step6-hazard         rainfall and earthquake scenarios
-      step7-climate        CMIP6 futures, and the change from today
+    run-all                  1-9 in sequence
+    info                     dataset sources, licences and citations
 
-      step9-region         sweep the region, one state or province at a time
-      step10-risk          what it means for settlements and roads
-      step11-map           a browsable Leaflet page of the whole run
-
-    PACKAGE
-      step8-package        manifest: what was produced and what it means
-
-    run-all                every phase in sequence
-    info                   data sources, licences and citations
-
-Phase order matters. Do not produce a map from parameters that have not been
-through step4 on an independent inventory - the fit will always look good on
-the landslides it was fitted to.
+Order matters. Do not ship a map from parameters that have not been through
+step4 on an independent inventory - a fit always looks good on the landslides
+it was fitted to.
 """
 
 from __future__ import annotations
@@ -569,7 +571,10 @@ def _step_region(args) -> int:
               "(step3-fit) before a real sweep.\n")
     report = pipeline.run_region(
         cfg, mode=args.mode, countries=args.countries, names=args.units,
-        hazard=args.with_hazard, climate=args.with_climate,
+        hazard=args.with_hazard or args.everything,
+        climate=args.with_climate or args.everything,
+        risk=args.with_risk or args.everything,
+        webmap=args.with_map or args.everything,
         dry_run=args.dry_run,
         resume=not args.no_resume)
 
@@ -604,6 +609,9 @@ def _step_region(args) -> int:
         for f in report["failed"][:5]:
             print(f"    {f['unit']['name']}: {f['error'][:70]}")
     print(f"\n  Summary -> {report['summary']}")
+    if report.get("index"):
+        print(f"  Index   -> {report['index']}")
+        print(f"  Open it :  file://{os.path.abspath(report['index'])}")
     print("\n  Each unit was routed over its bounding box plus a "
           f"{cfg.admin_buffer_deg} deg buffer\n  and clipped back afterwards, "
           "so catchments are not truncated at borders.")
@@ -790,6 +798,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                    help="also run every trigger scenario per unit")
     p.add_argument("--with-climate", dest="with_climate", action="store_true",
                    help="also run the climate sweep per unit")
+    p.add_argument("--with-risk", dest="with_risk", action="store_true",
+                   help="also score settlements and roads per unit, under "
+                        "every climate in risk_climate")
+    p.add_argument("--with-map", dest="with_map", action="store_true",
+                   help="also build a browsable page per unit. The ranked "
+                        "index over all units is written either way")
+    p.add_argument("--everything", action="store_true",
+                   help="shorthand for --with-hazard --with-climate "
+                        "--with-risk --with-map")
     p.add_argument("--no-resume", action="store_true",
                    help="redo units that already have outputs")
     _mode(p); _add_common(p)

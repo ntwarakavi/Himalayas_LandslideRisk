@@ -52,10 +52,10 @@ up correctly.
 ./scripts/run_demo.sh
 ```
 
-Fabricates a synthetic mountain catchment and walks all four phases against it:
+Fabricates a synthetic mountain catchment and walks the whole sequence against it:
 susceptibility, every trigger scenario, a climate sweep and the manifest. About
 a minute. It proves the code runs, not the science — the terrain is noise with
-valleys in it, and phase 2 is skipped because calibration needs a real
+valleys in it, and the fit is skipped because calibration needs a real
 inventory.
 
 ## 3. Your first real run

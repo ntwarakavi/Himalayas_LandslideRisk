@@ -12,9 +12,9 @@ under present-day climate and under CMIP6 futures.
 There is one model in this repository. Everything below describes it.
 
 **Contents** — [The model](#the-model) · [Install](#install) ·
-[How to run](#how-to-run) · [Climate](#climate-current-and-future) ·
-[Outputs](#outputs) · [Measured performance](#measured-performance) ·
-[Limits](#limits)
+[Run it](#run-it) · [All eight countries](#all-eight-countries) ·
+[Climate](#climate-current-and-future) · [Outputs](#outputs) ·
+[Measured performance](#measured-performance) · [Limits](#limits)
 
 ---
 
@@ -161,7 +161,7 @@ What that can and cannot recover:
   a frequency of failure per year.
 
 Cross-validation is run in two schemes, and the spatial one is the one to quote —
-see [How to run, phase 2](#phase-2--calibrate-and-validate).
+see [Run it, step 3](#3-fit-the-soil-parameters).
 
 ### 8. Triggering
 
@@ -220,7 +220,7 @@ Verify, with no network:
 
 ```bash
 python -m pytest tests/ -q     # 48 tests, seconds
-./scripts/run_demo.sh          # all four phases on synthetic data, ~1 minute
+./scripts/run_demo.sh          # the whole sequence on synthetic data, ~2 minutes
 ```
 
 The tests check the mechanics against exact analytic answers — `FS = 1` at the
@@ -229,43 +229,36 @@ and that applying the critical acceleration drives `FS` to exactly 1.
 
 ---
 
-## How to run
+## Run it
 
-Four phases, run in order. Inside the table, **read top to bottom** — that is the
-order to run things in. The number inside a command name is part of its name, not
-its position in the sequence: `step8-package` runs last and `step9-region` runs
-before it, because the commands were numbered as they were added rather than
-renumbered every time.
+Eleven commands, in this order. Each writes files and prints what it produced,
+so you can stop after any one, look at the output, and carry on. Nothing is
+re-downloaded and the expensive stage is cached.
 
-| # | Phase | Command | Needs | Produces |
-|---|---|---|---|---|
-| 1 | **Set up** | `step1-check` | — | Dataset availability report |
-| 2 | | `step2-download` | — | Cached source data |
-| 3 | **Calibrate** | `step3-fit` | an inventory | Soil parameters, cross-validated |
-| 4 | **Produce** | `step5-susceptibility` | step 3 | Present-day failure probability |
-| 5 | **Validate** | `step4-validate` | step 4 + a *second* inventory | Score against a held-out inventory |
-| 6 | **Produce** | `step6-hazard` | step 3 | Rainfall and earthquake scenarios |
-| 7 | | `step7-climate` | step 3 | CMIP6 futures and the change from today |
-| 8 | | `step9-region` | step 3 | The above, one state or province at a time |
-| 9 | | `step10-risk` | step 4 | Settlements and road segments, scored per climate |
-| 10 | | `step11-map` | step 9 | A browsable Leaflet page of the whole run |
-| 11 | **Package** | `step8-package` | anything above | Manifest: products and provenance |
+The number inside a command name is part of the name, not its position in the
+sequence — the commands were numbered as they were added and never renumbered.
+**Run them top to bottom as listed here**, not in numerical order.
 
-`run-all` executes the whole sequence.
+| | Command | Needs | Produces |
+|---|---|---|---|
+| 1 | `step1-check` | — | What is cached, what is reachable, what it will cost |
+| 2 | `step2-download` | — | The source data |
+| 3 | `step3-fit` | an inventory | Soil parameters, cross-validated |
+| 4 | `step5-susceptibility` | 3 | Present-day failure probability |
+| 5 | `step4-validate` | 4 + a **second** inventory | Skill against landslides the fit never saw |
+| 6 | `step6-hazard` | 3 | Rainfall and earthquake scenarios |
+| 7 | `step7-climate` | 3 | CMIP6 futures, and the change from today |
+| 8 | `step10-risk` | 4 | Settlements and road segments scored, per climate |
+| 9 | `step11-map` | 8 | A browsable page of the whole run |
+| 10 | `step9-region` | 3 | All of the above, province by province, region-wide |
+| 11 | `step8-package` | anything | Manifest: every product and its provenance |
 
-**`step4-validate` runs after `step5-susceptibility`, not before it.** This is the
-one place the naming misleads, and it is worth being explicit about: validation
-scores a *map*, so a map has to exist first. If the held-out inventory sits in a
-different catchment from the map — which is the normal case here, since the
-region's inventories are geographically disjoint — pass `--build` and step 4 will
-compute a map over that inventory's own extent using the parameters you are
-testing. That is transfer validation, and it is the honest test.
+`run-all` executes 1–9 in sequence. For the whole region, jump to
+[All eight countries](#all-eight-countries) — step 10 wraps the others.
 
-**Do not skip phase 2.** A fit always looks good on the landslides it was fitted
-to. Nothing in a parameter set tells you whether it travels; only a second
-inventory does.
+---
 
-### Phase 1 — set up
+### 1–2. Get the data
 
 ```bash
 python -m h_sim.cli step1-check
@@ -273,12 +266,9 @@ python -m h_sim.cli step2-download --config configs/02_calibrate_gorkha.json
 ```
 
 `step1-check` reports each dataset as cached, reachable, blocked or manual-only,
-and totals the outstanding download; `--offline` restricts it to the local cache.
-`step2-download` skips anything already present. Only the DEM and the
-precipitation climatology are fetched by default — land cover and the 1.1 GB
-GLiM geodatabase come down only if a run asks for calibration regions.
+and totals the outstanding download. `--offline` restricts it to the local cache.
 
-### Phase 2 — calibrate
+### 3. Fit the soil parameters
 
 ```bash
 python -m h_sim.cli step3-fit --config configs/02_calibrate_gorkha.json
@@ -296,21 +286,26 @@ python -m h_sim.cli step3-fit --config configs/02_calibrate_gorkha.json
   spatial  CV AUC     0.816 +/- 0.020  <- quote this
 ```
 
-**Reading those numbers.**
+**Quote the spatial figure.** A random split scatters test points among training
+points on the same hillsides, so it measures interpolation as much as skill; a
+spatial-block split withholds whole 0.25° blocks. **The gap between them is the
+diagnostic** — 0.006 here, small enough that the relationship is mechanical
+rather than spatial. A gap above 0.03 triggers a warning. **The fold spread
+matters as much as the mean**: ±0.020 is the range to expect somewhere new.
 
-- **Quote the spatial figure.** A random split scatters test points among
-  training points on the same hillsides, so it measures interpolation as much as
-  skill. A spatial-block split withholds whole 0.25° blocks.
-- **The gap between them is the diagnostic.** Here 0.006, small enough that the
-  relationship is mechanical rather than spatial. A gap above 0.03 triggers a
-  warning.
-- **The fold spread matters as much as the mean.** ±0.020 across five blocks is
-  the range to expect when applying the map somewhere new.
+Fit once per region, not per province. Step 10 reuses this file everywhere.
 
-Validation comes next, but it needs a map, so **run `step5-susceptibility`
-first** — see the phase 3 block below, then come back.
+### 4. Build the present-day map
 
-### Phase 2b — validate (after the first map exists)
+```bash
+python -m h_sim.cli step5-susceptibility --config configs/03_production_gorkha.json
+```
+
+The continuous failure probability is the product. A six-class map is written
+alongside it, but classes 1–3 all have probability zero by definition and are
+ordered only by margin of stability, so landslide density cannot rank them.
+
+### 5. Validate against landslides the fit never saw
 
 ```bash
 # same catchment: score the map you just built
@@ -322,12 +317,12 @@ python -m h_sim.cli step4-validate --build --name gorkha --res 0.00083333 \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
 ```
 
-The second form is the one you usually want here. The region's inventories do
-not overlap — Gorkha spans 84.5–85.3° E and Sikkim 88.1–88.9° E — so a Gorkha map
+The second form is usually the one you want. This region's inventories do not
+overlap — Gorkha spans 84.5–85.3° E and Sikkim 88.1–88.9° E — so a Gorkha map
 cannot be scored against Sikkim landslides at all. `--build` applies the fitted
-parameters over the held-out inventory's own extent and scores there, which is
-transfer validation and the honest test of whether a fit travels. Without it,
-step 4 stops and prints the commands to run.
+parameters over the held-out inventory's own extent and scores there. That is
+transfer validation, and it is the honest test of whether a fit travels. Without
+it, step 5 stops and prints the commands to run.
 
 ```
   landslides in classes 4-5 : 60.8%  (those classes cover 30.4% of the map)
@@ -337,15 +332,14 @@ step 4 stops and prints the commands to run.
   VERDICT: fair - ordering holds but discrimination is modest
 ```
 
-Read the report in this order: **monotonic ordering** first (frequency ratio must
-rise with class, or nothing else matters), then **efficiency** (below ~1.5 the map
-is not selective enough to act on), then **AUC**.
+Read it in this order: **monotonic ordering** first (the frequency ratio must
+rise with class, or nothing else matters), then **efficiency** (below ~1.5 the
+map is not selective enough to act on), then **AUC**.
 
-Two traps worth avoiding. **Never fit and validate on the same inventory.** And
-**check the inventory's mapped extent** — background points drawn outside the
-ground its authors surveyed mean "nobody looked", not "no landslide". Far-West
-Nepal and Sikkim survey only about 60 % of their own bounding boxes, so pass the
-polygon:
+Two traps. **Never fit and validate on the same inventory.** And **check the
+inventory's mapped extent** — background drawn outside the ground its authors
+surveyed means "nobody looked", not "no landslide". Far-West Nepal and Sikkim
+survey only about 60 % of their own bounding boxes, so pass the polygon:
 
 ```bash
 python -m h_sim.cli step4-validate --name gorkha_on_target \
@@ -353,28 +347,24 @@ python -m h_sim.cli step4-validate --name gorkha_on_target \
     --survey-extent data/raw/inventory/sikkim/Google_Earth_mapped_extent_21Dec2021.shp
 ```
 
-Masking does not reliably *raise* the score, and it is not meant to. On this run
-it moved AUC from 0.702 to 0.690, because the unsurveyed ground here is mostly
-low-susceptibility terrain that was supplying easy true negatives. What it does
-is make the negatives mean what they claim to mean, which is the point.
+Masking does not reliably *raise* the score and is not meant to. On this run it
+moved AUC from 0.702 to 0.690, because the unsurveyed ground there was supplying
+easy true negatives. What it does is make the negatives mean what they claim to.
 
-Do not compare these numbers with the 0.780 transfer figure in
-[docs/RESULTS.md §3](docs/RESULTS.md). That is a different protocol — 30 m rather
-than 90 m, the surveyed polygon's own bounds rather than the inventory's, and
-target-group background rather than uniform. Both are honest; they answer
-slightly different questions, and only figures produced the same way should be
-put side by side.
+Do not compare either figure with the 0.780 transfer result in
+[docs/RESULTS.md §3](docs/RESULTS.md) — that is 30 m rather than 90 m, the
+surveyed polygon's own bounds rather than the inventory's, and target-group
+rather than uniform background. Only figures produced the same way belong side
+by side.
 
-### Phase 3 — produce
+### 6. Trigger scenarios
 
 ```bash
-python -m h_sim.cli step5-susceptibility --config configs/03_production_gorkha.json
-python -m h_sim.cli step6-hazard        --config configs/03_production_gorkha.json --all
-python -m h_sim.cli step7-climate       --config configs/03_production_gorkha.json
+python -m h_sim.cli step6-hazard --config configs/03_production_gorkha.json --all
 ```
 
-`step6 --all` runs every return period and PGA in the config, each producing its
-own map — they are different questions and a user needs to know which one a map
+`--all` runs every return period and PGA in the config, each producing its own
+map — they are different questions and a reader needs to know which one a map
 answers. A single scenario instead:
 
 ```bash
@@ -382,78 +372,26 @@ python -m h_sim.cli step6-hazard --name gorkha --return-period 100
 python -m h_sim.cli step6-hazard --name gorkha --trigger earthquake --pga 0.35
 ```
 
-### Phase 3 at regional scale — one province at a time
-
-The region is 4,400 × 2,500 km; at 30 m that is thirteen billion cells, and
-flow routing is not tiled. A regional product is therefore a **sweep over
-administrative units**, not a single run.
+### 7. Climate futures
 
 ```bash
-# what would run, and what it would cost — nothing is computed
-python -m h_sim.cli step9-region --dry-run --res 0.00083333 --countries Nepal Bhutan
-
-# then run it
-python -m h_sim.cli step9-region --name hkh --res 0.00083333 \
-    --fitted-params outputs/gorkha_fitted_params.json
+python -m h_sim.cli step7-climate --config configs/03_production_gorkha.json
 ```
 
-States and provinces come from Natural Earth admin-1 (public domain, one 15 MB
-download). 165 units fall inside the region across the eight countries. Restrict
-with `--countries` or `--units`; add `--with-hazard` or `--with-climate` to run
-those per unit too.
+Covered in full under [Climate](#climate-current-and-future). The default window
+is 2041-2060, a twenty to thirty year planning horizon.
 
-**Calibration is regional, production is per unit.** Fit once (phase 2), then
-sweep. Each unit reads the same fitted parameters; nothing is refitted per
-province.
-
-**Borders cut catchments, so each unit is routed wide and clipped late.** The
-run covers the unit's bounding box grown by `admin_buffer_deg`, and the outputs
-are masked back to the province afterwards. Without that, a cell just inside a
-border gets its catchment truncated at the border and comes out too stable.
-
-The size of that error was measured rather than assumed
-(`analysis/07_boundary_buffer.py`):
-
-| Buffer | Cells losing >½ their catchment | Cells shifting P by >0.05 |
-|---|---|---|
-| none | 1.00 % (3.8 % in the outer ring) | 0.45 % |
-| 0.028° (3 km) | **0.00 %** | **0.00 %** |
-
-Smaller than it sounds, because hillslope contributing areas are hundreds of
-metres, and cells with genuinely long flow paths are valley floors already
-saturated at `w = 1` where more water changes nothing. The default is 0.05°
-(5.5 km) — about twice what was needed on steep crystalline terrain, as margin
-for flatter ground with longer flow paths.
-
-Two practical points:
-
-- **The sweep is resumable.** A unit whose output exists is skipped. A full
-  regional pass is measured in days and something will interrupt it.
-- **Oversize units are reported and skipped**, not attempted — above
-  `admin_max_cells` (40 M by default), since the alternative is an
-  out-of-memory kill part-way through. Xinjiang and Tibet need a coarser grid
-  or a basin-level split.
-- **A sweep routes roughly twice the cells it keeps.** Provinces are irregular
-  and the run is over their bounding boxes: measured on Nepal's Bagmati and
-  Bhojpur, only 51 % and 54 % of the box fell inside the province. That is the
-  price of rectangular tiling, and it is not currently optimised away.
-
-### Phase 3 — what it means for towns and roads
-
-A susceptibility map says which ground is unstable. It does not say who is under
-it. Steps 10 and 11 close that gap.
+### 8. What it means for settlements and roads
 
 ```bash
 python -m h_sim.cli step10-risk --config configs/03_production_gorkha.json
-python -m h_sim.cli step11-map  --name gorkha30
 ```
 
 **Do not sample the map at a town's coordinates.** Towns sit on flat ground —
-valley floors, terraces, the insides of meanders — where the factor of safety is
-high and failure probability is near zero. The model is right about that: the
-ground under the town is not going to slide. What destroys mountain towns is
-material arriving *from above*. Sampling at the point answers "safe" for exactly
-the settlements most at risk.
+valley floors, terraces, the insides of meanders — where failure probability is
+near zero. The model is right about that: the ground under the town is not going
+to slide. What destroys mountain towns is material arriving *from above*.
+Sampling at the point answers "safe" for exactly the settlements most at risk.
 
 **Angle of reach.** Debris from a source can reach a target if the line between
 them is steeper than a limiting travel angle α — the Fahrböschung, or Heim
@@ -470,81 +408,144 @@ towards the conservative end because this is a screening product.
 
 **The score is a weighted mean, not a maximum.** An earlier version scored an
 asset by the highest failure probability among the cells that could reach it.
-That number saturates. In Himalayan relief a 2 km radius puts a few thousand
-cells above a valley settlement, and if 7 % of the landscape exceeds P = 0.6 —
-which is what the Gorkha 30 m fit gives — then the chance that *none* of several
-thousand upslope cells does is negligible. Scored that way, **56 % of
-settlements in the Gorkha box landed in the top band**, which is not a finding
-about the Himalaya, it is an artefact of taking a maximum over a large sample.
+That saturates: a 2 km radius at 30 m puts a few thousand cells above a valley
+settlement, and with 7 % of the Gorkha landscape above P = 0.6, the chance that
+*none* of them clears the bar is negligible. Scored that way, **56 % of
+settlements landed in the top band** — an artefact of taking a maximum over a
+large sample, not a finding about the Himalaya.
 
 The score is instead the **proximity-weighted mean failure probability over the
-ground positioned to reach the asset**: of the terrain that could deliver
-material here, what fraction does the model call unstable. Weights come from one
-geometric argument — a debris path widens roughly in proportion to how far it
-has travelled, so a fixed-width target occupies a share of the possible fan that
-falls about as 1/d. Nothing else is tuned. `reaching_max` is still reported as a
-diagnostic, and is deliberately not banded.
+ground positioned to reach the asset**. Weights come from one geometric
+argument: a debris path widens roughly in proportion to how far it has
+travelled, so a fixed-width target occupies a share of the fan falling about as
+1/d. Nothing else is tuned. `reaching_max` is still reported as a diagnostic and
+is deliberately not banded.
 
-Roads are cut into 500 m segments before scoring, because a way can be fifty
-kilometres long and one number for all of it tells a maintainer nothing about
-where to go.
+Measured on Gorkha at 30 m — 639 settlements, 18,109 road segments, 6,994 km —
+the reaching term averages **0.106** against **0.024** for the ground the
+settlement stands on, and exceeds it for **67 %** of settlements.
 
-On Gorkha at 30 m — 639 settlements, 18,109 road segments, 6,994 km — the
-reaching term averages **0.106** against **0.024** for the ground the settlement
-stands on, and exceeds it for **67 %** of settlements. Sampling the map at the
-point would have called two-thirds of them safe. Full numbers in
-[docs/RESULTS.md §11](docs/RESULTS.md).
+Roads are cut into 500 m segments first, because a way can be fifty kilometres
+long and one number for all of it tells a maintainer nothing about where to go.
 
-**Every asset is scored under several climates.** The default is the present day
-plus the two CMIP6 windows inside a 20–30 year planning horizon, under an
-intermediate and a very high pathway:
+**Every asset is scored under several climates** — by default the present day
+plus both CMIP6 windows inside a 20–30 year horizon, under an intermediate and a
+very high pathway:
 
 ```
-current   ssp245:2021-2040   ssp585:2021-2040   ssp245:2041-2060   ssp585:2041-2060
+current  ssp245:2021-2040  ssp585:2021-2040  ssp245:2041-2060  ssp585:2041-2060
 ```
 
-Change against the present day is the only comparison that means anything: a
-future recharge field is normalised by the present-day reference, so its
-absolute value is interpretable only relative to today. Override with
+On Gorkha that change is small: 321 settlements exposed today against 323 by
+2041-2060, and 4,873 km of road against 4,908 km — a mean-score shift of 0.0017,
+well inside the ±0.020 on the model's own held-out AUC. Override with
 `--risk-climate`; the present day is always included.
 
-Measured on Gorkha, that change is **small**: 321 settlements exposed today
-against 323 by 2041-2060, and 4,873 km of road against 4,908 km, on a mean score
-that moves by 0.0017 — well inside the ±0.020 spread on the model's own held-out
-AUC. Note also that SSP2-4.5 comes out slightly *wetter* than SSP5-8.5 over this
-box in the 2041-2060 window. That is a property of one GCM over one catchment,
-not a result: quote the spread across pathways, not their order.
-
-**Exposure data.** Settlements are OpenStreetMap `place=city|town|village|hamlet`
-nodes via Overpass, with GeoNames as a fallback; roads are OSM `highway=*` ways
-with geometry, falling back to Natural Earth (trunk routes only, ~1:10 M, and
-labelled as such). Both are cached after the first fetch. Overpass rejects
-anonymous clients — a missing User-Agent returns 406 from one mirror and a
-misleading 429 from another — so the model sends one.
+**Settlements and roads** come from OpenStreetMap via Overpass, falling back to
+GeoNames and Natural Earth respectively. Overpass rejects anonymous clients — a
+missing User-Agent returns 406 from one mirror and a misleading 429 from another
+— so the model sends one.
 
 **This is screening, not risk.** Risk is `hazard × exposure × vulnerability` and
-only the first two are here. There is no runout model, no damage function, and
-nothing converts to expected loss or casualties. Population is carried for
-ranking and never multiplied into anything.
+only the first two are here. No runout model, no damage function, nothing
+converts to expected loss or casualties. Population is carried for ranking and
+never multiplied into anything.
 
-`step11-map` assembles a single HTML page: the susceptibility raster per
-scenario, the scored settlements and road segments, the training inventory and
-its background points, a climate selector that switches every model-dependent
-layer, and the summary tables. Leaflet is vendored next to the page and the
-vector layers ship as `<script src>` rather than `fetch`, so the page works when
-opened straight from disk and without a network — only the basemap tiles need
-one.
-
-### Phase 4 — package
+### 9. The browsable page
 
 ```bash
-python -m h_sim.cli step8-package --name gorkha
+python -m h_sim.cli step11-map --name gorkha
 ```
 
-Writes `<name>_manifest.json`: every product, plus the fitted parameters, the
+One HTML file plus assets: the susceptibility raster per scenario, the scored
+settlements and road segments, the training inventory and its background points,
+a climate selector that switches every model-dependent layer at once, and the
+summary tables. Leaflet is vendored next to the page and the vector layers ship
+as `<script src>` rather than `fetch`, so it opens straight from disk with no
+web server. Only the basemap tiles want a network.
+
+---
+
+## All eight countries
+
+The region is 4,400 × 2,500 km. At 30 m that is thirteen billion cells and flow
+routing is not tiled, so a regional product is a **sweep over administrative
+units**, not one run. Fit once, then sweep.
+
+```bash
+# 1. what would run, and what it would cost — nothing is computed
+python -m h_sim.cli step9-region --dry-run --res 0.00083333
+
+# 2. the whole region, every country, with exposure and a page per province
+python -m h_sim.cli step9-region --name hkh --res 0.00083333 \
+    --fitted-params outputs/gorkha_fitted_params.json --everything
+```
+
+That covers **165 provinces across Afghanistan, Pakistan, India, Nepal, Bhutan,
+Bangladesh, China and Myanmar** — every admin-1 unit intersecting the region.
+Narrow it with `--countries Nepal Bhutan` or `--units Bagmati Gandaki`.
+
+`--everything` is shorthand for `--with-hazard --with-climate --with-risk
+--with-map`. Drop the ones you do not need; each multiplies the run.
+
+**What you get, ready to discuss.** `outputs/hkh_region/index.html` is a single
+ranked page over the whole sweep: every province sorted by unstable area,
+sortable by any column, filterable by name, with settlements exposed and road
+kilometres exposed beside each, and a link into that province's own map. That
+page is the deliverable — fifty province folders are an archive, a ranked table
+with a link per province is something a meeting can work from.
+
+Alongside it, per province: `<name>_<province>_susceptibility_prob.tif`, the
+hazard and climate rasters if asked for, `<name>_<province>_risk_settlements.json`
+and `_risk_roads.json`, and `<name>_<province>_webmap/index.html`.
+
+**Practical points.**
+
+- **The sweep is resumable.** A province whose output exists is skipped. A full
+  regional pass is measured in days and something will interrupt it.
+- **Oversize units are reported and skipped**, not attempted — above
+  `admin_max_cells` (40 M by default), because the alternative is an
+  out-of-memory kill part-way through. Xinjiang and Tibet need a coarser grid or
+  a basin-level split. The index page names them.
+- **A sweep routes roughly twice the cells it keeps.** Provinces are irregular
+  and runs are over bounding boxes: measured on Nepal's Bagmati and Bhojpur,
+  only 51 % and 54 % of the box fell inside the province. That is the price of
+  rectangular tiling and it is not optimised away.
+- **Provinces are comparable only because they share one parameter set.** That
+  set was fitted on soil-mantled crystalline terrain in Nepal. Where no
+  inventory exists — Pakistan, Afghanistan, Uttarakhand, Himachal, Bhutan,
+  Myanmar — it is extrapolated, and skill there is unknown rather than
+  measured. Say so when the map is shown.
+
+**Borders cut catchments, so each province is routed wide and clipped late.**
+The run covers the unit's bounding box grown by `admin_buffer_deg`, and the
+outputs are masked back afterwards. Without that, a cell just inside a border
+gets its catchment truncated and comes out too stable. The size of the error was
+measured, not assumed (`analysis/07_boundary_buffer.py`):
+
+| Buffer | Cells losing >½ their catchment | Cells shifting P by >0.05 |
+|---|---|---|
+| none | 1.00 % (3.8 % in the outer ring) | 0.45 % |
+| 0.028° (3 km) | **0.00 %** | **0.00 %** |
+
+Smaller than it sounds, because hillslope contributing areas are hundreds of
+metres, and cells with genuinely long flow paths are valley floors already
+saturated at `w = 1` where more water changes nothing. The default is 0.05°
+(5.5 km) — about twice what was needed, as margin for flatter ground.
+
+---
+
+## Package the deliverables
+
+```bash
+python -m h_sim.cli step8-package --name hkh
+```
+
+Writes `<name>_manifest.json`: every product, the fitted parameters, the
 held-out score, the grid read from the rasters themselves, the data sources, the
-two trigger conventions, and the interpretation notes that must travel with the
-maps. A map without this file is a picture, not a deliverable.
+two trigger conventions, which climates the exposure was scored under, and the
+interpretation notes that must travel with the maps. Run it last and ship it
+with them. A map without this file is a picture, not a deliverable.
 
 ---
 
@@ -707,7 +708,7 @@ lithology and land cover scored 0.974 at home and 0.592 away. Full table in
 ```
 h_sim/
 ├── config.py              Run configuration, region and scenario defaults
-├── pipeline.py            Stage orchestration, the four phases
+├── pipeline.py            Stage orchestration, one function per step
 ├── cli.py                 Command-line workflow
 ├── input/
 │   ├── datasets.py        Dataset registry, cache and availability checks
@@ -731,7 +732,7 @@ h_sim/
 analysis/                  Seven experiments behind docs/RESULTS.md
 configs/                   Seven run configurations, one per workflow shape
 docs/                      Operating guide and measured results
-scripts/run_demo.sh        Offline walk through all four phases
+scripts/run_demo.sh        Offline walk through the whole sequence
 tests/                     66 tests, no network required
 ```
 

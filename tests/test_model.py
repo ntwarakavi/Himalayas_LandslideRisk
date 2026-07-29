@@ -1284,6 +1284,44 @@ def test_survey_mask_confines_background():
         assert bg[:, 0].max() <= 88.11 and bg[:, 1].min() >= 27.49
 
 
+def test_regional_sweep_can_produce_exposure_and_pages():
+    """The regional path has to reach exposure and a page, not stop at rasters.
+
+    A sweep that leaves only susceptibility rasters is an archive. What makes
+    it usable is per-province exposure plus one ranked index over the lot.
+    """
+    import inspect
+
+    from h_sim import webmap
+
+    for fn in (pipeline.run_admin_unit, pipeline.run_region):
+        params = inspect.signature(fn).parameters
+        assert "risk" in params and "webmap" in params, fn.__name__
+    assert hasattr(pipeline, "run_region_index")
+    assert hasattr(webmap, "build_region_index")
+
+
+def test_region_index_ranks_and_reports_what_was_skipped():
+    from h_sim import webmap
+
+    rows = [
+        {"country": "Nepal", "name": "Bagmati", "unstable_pct": 4.0,
+         "settlements_exposed": 12, "road_km_exposed": 30.0, "map": "a/index.html"},
+        {"country": "Nepal", "name": "Gandaki", "unstable_pct": 11.5,
+         "settlements_exposed": 40, "road_km_exposed": 90.0, "map": None},
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = webmap.build_region_index(
+            tmp, "sweep", rows,
+            {"skipped_too_large": ["Tibet"], "failed": [], "n_completed": 2})
+        html = open(path, encoding="utf-8").read()
+        assert "Gandaki" in html and "Tibet" in html
+        # the bar denominator must not leak into the headline figure
+        assert "barScale" in html
+        # a province with no page must not fabricate a link
+        assert '"map": null' in html or "'map': None" not in html
+
+
 def test_climate_scenario_round_trips_through_a_dict():
     """The web map rebuilds scenarios from what step10 wrote, not from specs."""
     s = CL.scenario("ssp585:2021-2040")

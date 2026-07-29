@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# H-SIM offline smoke test - synthetic data, no downloads, ~1 minute.
-# Walks all four phases so you can see the sequence before spending bandwidth.
+# H-SIM offline smoke test - synthetic data, no downloads, ~2 minutes.
+# Walks the whole sequence so you can see it before spending bandwidth.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 COMMON="--mode demo --name demo --bbox 83.0 27.5 83.2 27.7 --res 0.002"
 
-echo "=============== PHASE 1  SET UP ==============="
+echo "=============== 1-2  GET THE DATA ==============="
 python -m h_sim.cli step1-check --offline | tail -5
 
 echo
-echo "=============== PHASE 3  PRODUCE =============="
+echo "=============== 4-9  PRODUCE ==================="
 echo ">> step5  susceptibility: flow routing, then failure probability"
 python -m h_sim.cli step5-susceptibility $COMMON | tail -10
 
@@ -33,7 +33,7 @@ python -m h_sim.cli step11-map --name demo \
     --bbox 83.0 27.5 83.2 27.7 --res 0.002 | tail -6
 
 echo
-echo "=============== PHASE 4  PACKAGE =============="
+echo "=============== 11   PACKAGE ==================="
 python -m h_sim.cli step8-package --name demo | tail -12
 
 cat <<'EOF'
@@ -60,8 +60,8 @@ Products:
   outputs/demo_webmap/index.html            open it; no web server needed
   outputs/demo_manifest.json                what everything is, and its provenance
 
-Phase 2 (calibration and validation) is skipped here because it needs a real
-landslide inventory. On real data it is not optional:
+Steps 3 and 5 - the fit and the validation - are skipped here because both need
+a real landslide inventory. On real data they are not optional:
 
     python -m h_sim.cli step2-download --config configs/02_calibrate_gorkha.json
     python -m h_sim.cli step3-fit      --config configs/02_calibrate_gorkha.json

@@ -763,3 +763,183 @@ document.getElementById('caveat').innerHTML =
 </body>
 </html>
 """
+
+
+# ---------------------------------------------------------------------------
+# the regional index
+# ---------------------------------------------------------------------------
+
+def build_region_index(out_dir: str, title: str, rows: Sequence[dict],
+                       meta: Optional[dict] = None) -> str:
+    """One ranked page over every province a regional sweep produced.
+
+    A sweep leaves one folder per province, which is an archive rather than a
+    result. What a discussion needs is the provinces in order, the numbers that
+    order them, and a way into any one of them - so this writes a sortable
+    table with a link per province, and says plainly which units were skipped
+    and why.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    html = _INDEX.replace("__TITLE__", title)
+    html = html.replace("__ROWS__", json.dumps(list(rows)))
+    html = html.replace("__META__", json.dumps(meta or {}))
+    path = os.path.join(out_dir, "index.html")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(html)
+    return path
+
+
+_INDEX = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root { --bg:#fff; --fg:#16191d; --muted:#5b6470; --line:#dfe3e8;
+          --panel:#f7f8fa; --accent:#a50026; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171a; --fg:#e8eaed; --muted:#9aa4b2; --line:#2b3038;
+            --panel:#1c2025; --accent:#ff6b57; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:28px 24px 60px; background:var(--bg); color:var(--fg);
+         font:14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+              Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; letter-spacing:-0.01em; }
+  p.sub { color:var(--muted); margin:0 0 22px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.07em;
+       color:var(--muted); margin:26px 0 8px; font-weight:600; }
+  .cards { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:6px;
+          padding:12px 14px; }
+  .card .n { font-size:22px; font-variant-numeric:tabular-nums; }
+  .card .k { color:var(--muted); font-size:12px; }
+  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:6px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line);
+           white-space:nowrap; }
+  th { background:var(--panel); color:var(--muted); font-size:11px; font-weight:600;
+       text-transform:uppercase; letter-spacing:.05em; cursor:pointer;
+       position:sticky; top:0; }
+  th:hover { color:var(--fg); }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr:last-child td { border-bottom:none; }
+  a { color:inherit; }
+  .bar { height:7px; border-radius:4px; background:var(--accent); display:inline-block;
+         vertical-align:middle; margin-right:7px; min-width:2px; }
+  .note { font-size:12px; color:var(--muted); border-left:3px solid var(--line);
+          padding:9px 12px; margin-top:20px; background:var(--panel); }
+  input { padding:7px 10px; font:inherit; font-size:13px; width:260px;
+          color:var(--fg); background:var(--bg); border:1px solid var(--line);
+          border-radius:4px; margin-bottom:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>__TITLE__</h1>
+  <p class="sub" id="sub"></p>
+  <div class="cards" id="cards"></div>
+
+  <h2>Provinces, most unstable first</h2>
+  <input id="q" placeholder="filter by province or country">
+  <div class="tablewrap"><table id="t">
+    <thead><tr>
+      <th data-k="country">Country</th>
+      <th data-k="name">Province</th>
+      <th class="num" data-k="unstable_pct">Unstable %</th>
+      <th class="num" data-k="mean_probability">Mean P</th>
+      <th class="num" data-k="p90_probability">P90</th>
+      <th class="num" data-k="settlements_exposed">Settlements exposed</th>
+      <th class="num" data-k="road_km_exposed">Road km exposed</th>
+      <th>Map</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table></div>
+
+  <div class="note" id="caveat"></div>
+</div>
+<script>
+const ROWS = __ROWS__;
+const META = __META__;
+let sortKey = 'unstable_pct', desc = true;
+
+const num = (v, d) => (v === null || v === undefined)
+  ? '<span style="color:var(--muted)">—</span>'
+  : v.toLocaleString(undefined, {minimumFractionDigits: d ?? 0,
+                                 maximumFractionDigits: d ?? 0});
+
+document.getElementById('sub').textContent =
+  [`${META.n_completed ?? ROWS.length} of ${META.n_found ?? META.n_units_found ?? ROWS.length} provinces`,
+   META.resolution_deg ? `${META.resolution_deg} deg grid` : null,
+   META.buffer_deg ? `${META.buffer_deg} deg routing buffer` : null
+  ].filter(Boolean).join(' · ');
+
+const worst = Math.max(...ROWS.map(r => r.unstable_pct || 0), 0);
+// Bars need a non-zero denominator; the headline figure must not borrow it.
+const barScale = worst || 1;
+const sum = (k) => ROWS.reduce((a, r) => a + (r[k] || 0), 0);
+
+document.getElementById('cards').innerHTML = [
+  ['Provinces mapped', num(ROWS.length)],
+  ['Most unstable', ROWS.length ? `${num(worst, 1)}%` : '—'],
+  ['Settlements exposed', num(sum('settlements_exposed'))],
+  ['Road km exposed', num(sum('road_km_exposed'))],
+].map(([k, v]) => `<div class="card"><div class="n">${v}</div>
+   <div class="k">${k}</div></div>`).join('');
+
+function draw() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const rows = ROWS
+    .filter(r => !q || (r.name + ' ' + r.country).toLowerCase().includes(q))
+    .slice()
+    .sort((a, b) => {
+      const x = a[sortKey], y = b[sortKey];
+      if (typeof x === 'string' || typeof y === 'string')
+        return (desc ? -1 : 1) * String(x).localeCompare(String(y));
+      // Missing values sink to the bottom whichever way the column is sorted.
+      const xv = x ?? -Infinity, yv = y ?? -Infinity;
+      return desc ? yv - xv : xv - yv;
+    });
+  document.querySelector('#t tbody').innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.country}</td>
+      <td>${r.name}</td>
+      <td class="num"><span class="bar" style="width:${
+        Math.round(46 * (r.unstable_pct || 0) / barScale)}px"></span>${
+        num(r.unstable_pct, 1)}</td>
+      <td class="num">${num(r.mean_probability, 3)}</td>
+      <td class="num">${num(r.p90_probability, 3)}</td>
+      <td class="num">${num(r.settlements_exposed)}</td>
+      <td class="num">${num(r.road_km_exposed, 0)}</td>
+      <td>${r.map ? `<a href="${r.map}">open</a>`
+                  : '<span style="color:var(--muted)">—</span>'}</td>
+    </tr>`).join('');
+}
+
+document.querySelectorAll('#t th').forEach(th => th.addEventListener('click', () => {
+  const k = th.dataset.k;
+  if (!k) return;
+  if (k === sortKey) desc = !desc; else { sortKey = k; desc = true; }
+  draw();
+}));
+document.getElementById('q').addEventListener('input', draw);
+draw();
+
+const skipped = META.skipped_too_large || [], failed = META.failed || [];
+document.getElementById('caveat').innerHTML =
+  '<b>What these numbers are.</b> Unstable % is the share of a province above ' +
+  'failure probability 0.5 — a relative figure, not an annual probability. ' +
+  'Settlement and road counts are exposure screening by angle of reach: no ' +
+  'runout model, no vulnerability, no damage function. Provinces are ' +
+  'comparable only because they share one fitted parameter set, which was ' +
+  'fitted on soil-mantled crystalline terrain and is extrapolated wherever no ' +
+  'inventory exists.' +
+  (skipped.length ? `<br><br><b>Skipped as too large:</b> ${skipped.join(', ')}.
+     Run these at a coarser resolution.` : '') +
+  (failed.length ? `<br><br><b>Failed:</b> ${failed.join(', ')}.` : '');
+</script>
+</body>
+</html>
+"""

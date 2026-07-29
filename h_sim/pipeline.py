@@ -1174,7 +1174,8 @@ def _clip_to_unit(path: str, mask, grid: Grid, out_path: str) -> str:
 
 
 def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
-                   hazard: bool = False, climate: bool = False
+                   hazard: bool = False, climate: bool = False,
+                   risk: bool = False, webmap: bool = False
                    ) -> Dict[str, object]:
     """Produce maps for one state or province.
 
@@ -1239,6 +1240,22 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
     }
     _log("unit", f"{unit.name}: {out['stats']['unstable_area_pct']:.1f}% "
                  f"above 0.5, mean P {out['stats']['mean_probability']:.4f}")
+
+    # Exposure and the browsable page come last, because both read the rasters
+    # this unit has just finished writing - including the clip, so a settlement
+    # is never scored against a neighbouring province's ground.
+    if risk:
+        try:
+            r = run_risk(sub, mode=mode)
+            out["risk"] = {k: v for k, v in r.items() if isinstance(v, str)}
+            out["exposure"] = r["stats"]
+        except Exception as exc:                          # noqa: BLE001
+            _log("unit", f"{unit.name}: exposure skipped ({exc})")
+    if webmap:
+        try:
+            out["webmap"] = run_webmap(sub)["webmap"]
+        except Exception as exc:                          # noqa: BLE001
+            _log("unit", f"{unit.name}: web map skipped ({exc})")
     return out
 
 
@@ -1251,6 +1268,7 @@ def run_region(cfg: C.Config, mode: str = "download",
                countries: Optional[Sequence[str]] = None,
                names: Optional[Sequence[str]] = None,
                hazard: bool = False, climate: bool = False,
+               risk: bool = False, webmap: bool = False,
                dry_run: bool = False, resume: bool = True
                ) -> Dict[str, object]:
     """STEP 9 - sweep the region one administrative unit at a time.
@@ -1320,7 +1338,7 @@ def run_region(cfg: C.Config, mode: str = "download",
         _log("region", f"[{i}/{len(runnable)}] {unit.country} / {unit.name}")
         try:
             res = run_admin_unit(cfg, unit, mode=mode, hazard=hazard,
-                                 climate=climate)
+                                 climate=climate, risk=risk, webmap=webmap)
         except Exception as exc:                          # noqa: BLE001
             _log("FAILED", f"{unit.name}: {type(exc).__name__}: {exc}")
             failed.append({"unit": unit.as_dict(), "error": str(exc)})
@@ -1336,8 +1354,61 @@ def run_region(cfg: C.Config, mode: str = "download",
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, default=str)
     report["summary"] = path
+
+    # One page over the whole sweep. Fifty province folders are an archive; a
+    # ranked table with a link per province is something a meeting can work
+    # from, which is the point of running the region rather than a catchment.
+    if report["units"]:
+        try:
+            report["index"] = run_region_index(cfg, report)
+        except Exception as exc:                          # noqa: BLE001
+            _log("region", f"index skipped ({exc})")
+
     _log("done", f"{done} units produced, {len(failed)} failed -> {path}")
     return report
+
+
+def run_region_index(cfg: C.Config, report: Dict[str, object]) -> str:
+    """A single ranked page over every province a sweep produced."""
+    from . import webmap
+
+    out_dir = os.path.join(cfg.out_dir, f"{cfg.name}_region")
+    os.makedirs(out_dir, exist_ok=True)
+
+    rows = []
+    for u in report.get("units", []):
+        unit = u.get("unit") or {}
+        stats = u.get("stats") or {}
+        exp = u.get("exposure") or {}
+        page = u.get("webmap")
+        rows.append({
+            "country": unit.get("country", ""),
+            "name": unit.get("name", ""),
+            "slug": unit.get("slug", ""),
+            "bbox": unit.get("bbox"),
+            "cells": stats.get("cells_in_unit"),
+            "unstable_pct": stats.get("unstable_area_pct"),
+            "mean_probability": stats.get("mean_probability"),
+            "p90_probability": stats.get("p90_probability"),
+            "settlements": exp.get("n_settlements"),
+            "settlements_exposed": exp.get("n_settlements_exposed"),
+            "road_km": exp.get("road_km_total"),
+            "road_km_exposed": exp.get("road_km_exposed"),
+            "map": (os.path.relpath(page, out_dir) if page else None),
+        })
+    rows.sort(key=lambda r: -(r["unstable_pct"] or 0))
+
+    path = webmap.build_region_index(
+        out_dir, f"H-SIM \u2014 {cfg.name}", rows,
+        {"resolution_deg": report.get("resolution_deg"),
+         "buffer_deg": report.get("buffer_deg"),
+         "n_units_found": report.get("n_units_found"),
+         "n_completed": report.get("n_completed"),
+         "skipped_too_large": [r["name"] for r in
+                               report.get("skipped_too_large", [])],
+         "failed": [f["unit"]["name"] for f in report.get("failed", [])]})
+    _log("region", f"index -> {path}")
+    return path
 
 
 # ---------------------------------------------------------------------------

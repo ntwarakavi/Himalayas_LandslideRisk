@@ -648,6 +648,10 @@ something is wrong with the DEM), and `*_recharge_<scenario>.tif`.
 
 Full write-up and scripts: [docs/RESULTS.md](docs/RESULTS.md),
 [`analysis/`](analysis/). All spatial-block cross-validated on Gorkha.
+A technical explanation of every method in the pipeline — terrain routing,
+the stability model and its depth term, calibration protocol, the exposure
+screen, road mechanisms, and the gated-adoption rule — lives at
+[docs/METHODS.md](docs/METHODS.md).
 
 **Resolution dominates everything else.**
 

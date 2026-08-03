@@ -244,6 +244,19 @@ class Config:
     #: Specific catchment area, in metres, above which a cell counts as a
     #: channel for the washout flag on road segments crossing it.
     washout_sca_m: float = 5000.0
+    #: Weight reach sources by the fraction of their D-infinity flow routed
+    #: through the target (Flow-R-style spreading; Horton et al. 2013), so
+    #: ground draining toward an asset counts more than ground merely above
+    #: it. Off by default pending the held-out measurement in
+    #: analysis/08_connectivity.py: this repository adopts refinements when a
+    #: number says they help.
+    connectivity_weighting: bool = False
+    #: Minimum share of weight every cone source keeps under connectivity
+    #: weighting, so unchannelised near-field delivery is never zeroed.
+    connectivity_floor: float = 0.2
+    #: Score settlements over a place-type-scaled footprint disc, headlined
+    #: at the 90th-percentile cell, rather than at the centroid alone.
+    settlement_footprints: bool = True
     #: OSM highway classes to fetch. Adding residential and track multiplies
     #: the segment count by an order of magnitude.
     road_classes: List[str] = field(

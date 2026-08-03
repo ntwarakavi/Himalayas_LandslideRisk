@@ -193,6 +193,68 @@ def dinf_accumulation(filled: np.ndarray, angle: np.ndarray,
     return area
 
 
+def dinf_dependence(filled: np.ndarray, angle: np.ndarray,
+                    row: int, col: int, halo: int = 1) -> np.ndarray:
+    """Fraction of each cell's flow that passes through a target patch.
+
+    The reverse of :func:`dinf_accumulation`: where accumulation asks "how much
+    arrives here from everywhere", dependence asks "how much of *that* cell's
+    water comes through *here*" (Tarboton's dependence map). Seeded with 1 on
+    the ``(2*halo+1)``-square patch around ``(row, col)`` - a one-cell halo,
+    because a debris path a cell's width off the exact flow line still arrives
+    - and propagated upslope: a cell's dependence is the share-weighted sum of
+    its two D-infinity receivers' dependence. Cells are processed from low to
+    high, so both receivers are resolved before any cell that feeds them.
+
+    Intended to be called on a *window* around the target, not the whole grid:
+    flow that leaves the window is treated as lost, which is exactly right
+    when the window is the reach search radius - beyond it the angle criterion
+    has already said no.
+    """
+    rows, cols = filled.shape
+    dep = np.zeros((rows, cols), dtype="float64")
+    r0, r1 = max(row - halo, 0), min(row + halo + 1, rows)
+    c0, c1 = max(col - halo, 0), min(col + halo + 1, cols)
+    dep[r0:r1, c0:c1] = 1.0
+
+    valid = np.isfinite(filled)
+    order = np.argsort(np.where(valid, filled, np.inf), axis=None)
+    order = order[:int(valid.sum())]
+
+    for idx in order:
+        r, c = divmod(int(idx), cols)
+        if dep[r, c] >= 1.0:              # inside the target patch
+            continue
+        a = angle[r, c]
+        if not np.isfinite(a):
+            continue                      # pit or flat: nothing leaves
+        k = a / (math.pi / 4.0)
+        k0 = int(math.floor(k)) % 8
+        k1 = (k0 + 1) % 8
+        p1 = k - math.floor(k)
+        acc = 0.0
+        for kk, share in ((k0, 1.0 - p1), (k1, p1)):
+            if share <= 0:
+                continue
+            rr, cc = r + _D_ROW[kk], c + _D_COL[kk]
+            if 0 <= rr < rows and 0 <= cc < cols:
+                acc += share * dep[rr, cc]
+        dep[r, c] = acc
+    return dep
+
+
+def dinf_angles(dem: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """Fill and return the D-infinity flow angle grid alone.
+
+    For consumers that need routing geometry but not accumulation - the
+    dependence weighting in the reach score - this skips the expensive
+    elevation-ordered accumulation pass.
+    """
+    filled = fill_depressions(dem)
+    angle, _ = dinf_flow_direction(filled, dx, dy)
+    return angle
+
+
 def specific_catchment_area(dem: np.ndarray, dx: float, dy: float
                             ) -> Tuple[np.ndarray, np.ndarray]:
     """Specific catchment area ``a`` (m) and slope (m/m) for a DEM block.

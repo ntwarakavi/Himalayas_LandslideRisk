@@ -993,7 +993,9 @@ def run_risk(cfg: C.Config, mode: str = "download",
 
     index = R.ReachIndex(dem, grid.transform, dx, dy,
                          travel_angle_deg=cfg.travel_angle_deg,
-                         search_radius_m=cfg.reach_radius_m)
+                         search_radius_m=cfg.reach_radius_m,
+                         flow=_reach_flow(cfg, dem, dx, dy),
+                         connectivity_floor=cfg.connectivity_floor)
     _log("risk", f"angle of reach {cfg.travel_angle_deg} deg, "
                  f"search radius {cfg.reach_radius_m:.0f} m")
     _log("risk", f"{len(scens)} climate scenarios: "
@@ -1031,7 +1033,8 @@ def run_risk(cfg: C.Config, mode: str = "download",
                      "unit boundary dropped")
 
     base = CL.BASELINE.key
-    scored_towns = R.score_settlements(index, towns, probs, baseline=base)
+    scored_towns = R.score_settlements(index, towns, probs, baseline=base,
+                                       footprints=cfg.settlement_footprints)
     scored_roads = R.score_roads(index, roads, probs,
                                  segment_m=cfg.road_segment_m, baseline=base)
     if clip:
@@ -1249,6 +1252,23 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
 # ---------------------------------------------------------------------------
 # step 9: regional sweep, one state or province at a time
 # ---------------------------------------------------------------------------
+
+def _reach_flow(cfg: C.Config, dem, dx: float, dy: float):
+    """Filled DEM and D-infinity angles for connectivity weighting, or None.
+
+    Computed in memory when ``cfg.connectivity_weighting`` is on: filling plus
+    the angle pass is a fraction of the full routing cost, and caching another
+    raster is not worth an off-by-default feature's while.
+    """
+    if not cfg.connectivity_weighting:
+        return None
+    from .model import hydrology
+
+    _log("risk", "connectivity weighting on: filling + D-inf flow angles")
+    filled = hydrology.fill_depressions(dem)
+    ang, _ = hydrology.dinf_flow_direction(filled, dx, dy)
+    return (filled, ang)
+
 
 def _clip_lookup(cfg: C.Config, grid: Grid):
     """A ``(lon, lat) -> bool`` test for ``cfg.clip_geometry``, or None.

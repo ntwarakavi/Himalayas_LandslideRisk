@@ -1559,6 +1559,143 @@ def test_summarise_rolls_up_mechanism_kilometres():
     assert out["mechanisms"]["road_km_both"] == 0.5
 
 
+
+
+def test_dependence_follows_the_flow_line():
+    """On a planar south-dipping slope, only cells due north of the target
+    depend on it; a parallel column two cells east does not."""
+    from h_sim.model import hydrology as H
+
+    n = 30
+    dem = (np.arange(n, 0, -1, dtype="float64")[:, None]
+           * np.ones((1, n)) * 10.0)  # rises to the north, drains south
+    filled = H.fill_depressions(dem)
+    ang, _ = H.dinf_flow_direction(filled, 30.0, 30.0)
+    dep = H.dinf_dependence(filled, ang, row=25, col=15)
+
+    assert dep[10, 15] > 0.99          # straight upslope, on the flow line
+    assert dep[10, 25] < 0.01          # parallel column, never passes through
+    assert dep[28, 15] < 0.01          # downslope of the target
+
+
+def test_connectivity_weighting_separates_gully_from_off_axis():
+    """Same cone, same unstable cells: on-flow-line sources outweigh
+    off-axis ones only when connectivity weighting is on."""
+    from rasterio.transform import from_origin
+    from h_sim.model import hydrology as H
+    from h_sim.model import risk as R
+
+    cell, n = 30.0, 60
+    dem = (np.arange(n, 0, -1, dtype="float64")[:, None]
+           * np.ones((1, n)) * 20.0)  # steep planar slope draining south
+    deg = cell / 111320.0
+    tr = from_origin(80.0, 30.0, deg, deg)
+    filled = H.fill_depressions(dem)
+    ang, _ = H.dinf_flow_direction(filled, cell, cell)
+
+    target = tuple(tr * (30.5, 50.5))       # (col,row)->(lon,lat), near foot
+    prob_on = np.zeros((n, n)); prob_on[30:40, 29:32] = 0.9   # on flow line
+    prob_off = np.zeros((n, n)); prob_off[30:40, 44:47] = 0.9  # off-axis
+
+    plain = R.ReachIndex(dem, tr, cell, cell)
+    conn = R.ReachIndex(dem, tr, cell, cell, flow=(filled, ang),
+                        connectivity_floor=0.2)
+
+    p_on, p_off = plain.score_point(prob_on, *target), \
+        plain.score_point(prob_off, *target)
+    c_on, c_off = conn.score_point(prob_on, *target), \
+        conn.score_point(prob_off, *target)
+
+    # Both patches sit in the cone; the plain cone cares only about distance,
+    # so require merely that both register.
+    assert p_on.reaching > 0 and p_off.reaching > 0
+    # Connectivity boosts the draining patch relative to the off-axis one.
+    ratio_plain = p_on.reaching / p_off.reaching
+    ratio_conn = c_on.reaching / c_off.reaching
+    assert ratio_conn > ratio_plain * 1.5
+    # The floor keeps off-axis delivery alive rather than zeroing it.
+    assert c_off.reaching > 0
+
+
+def test_delivering_area_counts_supply_where_the_mean_cannot():
+    """Uniform p over many cells vs few: same reaching, very different
+    expected delivering area."""
+    from rasterio.transform import from_origin
+    from h_sim.model import risk as R
+
+    cell, n = 30.0, 60
+    dem = (np.arange(n, 0, -1, dtype="float64")[:, None]
+           * np.ones((1, n)) * 20.0)
+    deg = cell / 111320.0
+    tr = from_origin(80.0, 30.0, deg, deg)
+    idx = R.ReachIndex(dem, tr, cell, cell)
+    target = tuple(tr * (30.5, 50.5))
+    rch = idx.reach(*target)
+    assert rch.rows.size > 100
+
+    p_all = np.full((n, n), 0.5)
+    few = np.zeros((n, n))
+    few[rch.rows[:10], rch.cols[:10]] = 0.5
+
+    s_all, s_few = rch.score(p_all), rch.score(few)
+    assert abs(s_all.reaching - 0.5) < 1e-9
+    assert s_all.delivering_m2 > 10 * s_few.delivering_m2
+    assert abs(s_few.delivering_m2 - 10 * 0.5 * cell * cell) < 1e-6
+
+
+def test_worst_sector_points_at_the_unstable_octant():
+    from rasterio.transform import from_origin
+    from h_sim.model import risk as R
+
+    cell, n = 30.0, 61
+    c = n // 2
+    y, x = np.mgrid[0:n, 0:n]
+    dem = np.hypot(y - c, x - c) * -20.0 + 800.0   # a peakless bowl: target
+    dem = 800.0 - dem                               # ... invert: rim high
+    deg = cell / 111320.0
+    tr = from_origin(80.0, 30.0, deg, deg)
+    idx = R.ReachIndex(dem, tr, cell, cell)
+    target = tuple(tr * (c + 0.5, c + 0.5))
+    rch = idx.reach(*target)
+    assert rch.rows.size > 0
+
+    prob = np.zeros((n, n))
+    ne = (rch.az > 22.5) & (rch.az <= 67.5)
+    assert ne.any()
+    prob[rch.rows[ne], rch.cols[ne]] = 0.9
+    s = rch.score(prob)
+    assert s.sector == "NE"
+    assert s.sector_reaching > 0.8
+
+
+def test_footprint_sees_the_exposed_edge_the_centroid_misses():
+    """A village centre on safe flats scores near zero at the point; the
+    footprint reaches the cells under the wall and reports them."""
+    from rasterio.transform import from_origin
+    from h_sim.model import risk as R
+
+    cell, n = 30.0, 60
+    dem = np.zeros((n, n))
+    dem[:, :20] = 600.0                # a steep wall west of column 20
+    deg = cell / 111320.0
+    tr = from_origin(80.0, 30.0, deg, deg)
+    idx = R.ReachIndex(dem, tr, cell, cell)
+    prob = np.zeros((n, n)); prob[:, :20] = 0.9
+
+    # Centroid sits 8 cells (240 m) east of the wall foot: outside nothing,
+    # but its own cell's cone still sees the wall - so compare the *footprint
+    # p90* against the *point* score somewhere the disc matters more.
+    lonlat = tuple(tr * (28.5, 30.5))
+    point = idx.score_point(prob, *lonlat)
+    reaches = R.footprint_reaches(idx, *lonlat, radius_m=250.0)
+    assert len(reaches) > 10
+    foot = R.score_footprint(reaches, prob)
+    assert foot.score >= point.score
+    # And a disc cell nearer the wall genuinely scores higher than the centre.
+    best = max(r.score(prob).score for r in reaches)
+    assert best > point.score
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

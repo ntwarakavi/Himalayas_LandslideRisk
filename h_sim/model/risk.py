@@ -110,6 +110,9 @@ def band(score: float) -> str:
 
 BAND_ORDER = [b for _, b in RISK_BANDS]
 
+#: Compass octants, clockwise from north, for the worst-sector report.
+SECTORS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+
 #: Score at or above which an asset is reported as exposed in summaries.
 EXPOSED_THRESHOLD = RISK_BANDS[1][0]
 
@@ -124,6 +127,19 @@ class AssetScore:
     n_sources: int                  # cells satisfying the angle criterion
     source_relief_m: float          # height of the worst source above target
     source_distance_m: float        # its horizontal distance
+    #: Expected unstable area positioned to reach the asset, in m2:
+    #: sum of p_i x cell area over the sources. An expectation, so it is
+    #: valid under the strong positive dependence the shared parameter draw
+    #: induces between cells - which the union probability 1 - prod(1 - p_i)
+    #: is not. It is what separates thirty unstable source cells from three
+    #: thousand when their mean is the same. Relative like everything else:
+    #: compare it between assets, never read it as absolute supply.
+    delivering_m2: float = 0.0
+    #: Compass octant whose sources carry the highest weighted mean failure
+    #: probability, and that mean - "the threat is from the NE". Empty when
+    #: nothing reaches.
+    sector: str = ""
+    sector_reaching: float = 0.0
 
     @property
     def score(self) -> float:
@@ -144,7 +160,10 @@ class AssetScore:
                 "reaching_max": round(self.reaching_max, 4),
                 "n_sources": self.n_sources,
                 "source_relief_m": round(self.source_relief_m, 1),
-                "source_distance_m": round(self.source_distance_m, 1)}
+                "source_distance_m": round(self.source_distance_m, 1),
+                "delivering_m2": round(self.delivering_m2, 0),
+                "sector": self.sector,
+                "sector_reaching": round(self.sector_reaching, 4)}
 
 
 EMPTY_SCORE = AssetScore(0.0, 0.0, 0.0, 0, 0.0, 0.0)
@@ -169,6 +188,12 @@ class Reach:
                                default_factory=lambda: np.empty(0, float))
     dist: np.ndarray = field(repr=False,
                              default_factory=lambda: np.empty(0, float))
+    #: Compass azimuth from the target to each source, degrees clockwise
+    #: from north.
+    az: np.ndarray = field(repr=False,
+                           default_factory=lambda: np.empty(0, float))
+    #: Cell area in m2, for the expected delivering area.
+    cell_m2: float = 0.0
 
     def score(self, prob: np.ndarray) -> AssetScore:
         """Score this reach against one susceptibility map."""
@@ -186,12 +211,31 @@ class Reach:
         total = w.sum()
         weighted = float((p * w).sum() / total) if total > 0 else 0.0
         k = int(np.argmax(p))
+
+        # The octant the threat comes from: the compass sector whose sources
+        # carry the highest weighted mean. Reported so a field visit knows
+        # which slope to walk, not just that one exists.
+        sector, sector_val = "", 0.0
+        if self.az.size:
+            oct_idx = (np.round(self.az[ok] / 45.0).astype(int)) % 8
+            for i, label in enumerate(SECTORS):
+                m = oct_idx == i
+                if not m.any():
+                    continue
+                tw = w[m].sum()
+                v = float((p[m] * w[m]).sum() / tw) if tw > 0 else 0.0
+                if v > sector_val:
+                    sector, sector_val = label, v
+
         return AssetScore(on_site=on,
                           reaching=weighted,
                           reaching_max=float(p[k]),
                           n_sources=int(ok.sum()),
                           source_relief_m=float(self.relief[ok][k]),
-                          source_distance_m=float(self.dist[ok][k]))
+                          source_distance_m=float(self.dist[ok][k]),
+                          delivering_m2=float(p.sum() * self.cell_m2),
+                          sector=sector,
+                          sector_reaching=sector_val)
 
 
 class ReachIndex:
@@ -205,7 +249,25 @@ class ReachIndex:
     def __init__(self, dem: np.ndarray, transform,
                  dx_m: float, dy_m: float,
                  travel_angle_deg: float = DEFAULT_TRAVEL_ANGLE_DEG,
-                 search_radius_m: float = DEFAULT_SEARCH_RADIUS_M):
+                 search_radius_m: float = DEFAULT_SEARCH_RADIUS_M,
+                 flow: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+                 connectivity_floor: float = 0.2):
+        """``flow``, when given, is ``(filled_dem, dinf_angle)`` and switches
+        on connectivity weighting: each source's weight is scaled by the
+        fraction of its D-infinity flow that passes through the target patch
+        (Tarboton's dependence, cf. the spreading algorithms of Holmgren 1994
+        as used regionally by Horton et al. 2013, Flow-R). Debris paths are
+        mostly channelised, so ground draining *toward* an asset should count
+        for more than ground merely above it - but not exclusively, which is
+        what ``connectivity_floor`` preserves: the minimum share of weight
+        every cone source keeps, so near-field planar delivery that follows
+        no channel is never zeroed out.
+
+        Off by default (``flow=None``), pending the held-out measurement in
+        analysis/08_connectivity.py: the cone alone is the published SINMAP-
+        adjacent screen, and this repository adopts refinements when a number
+        says they help, not because they sound right.
+        """
         self.dem = np.asarray(dem, "float64")
         self.transform = transform
         self.dx, self.dy = float(dx_m), float(dy_m)
@@ -215,6 +277,10 @@ class ReachIndex:
         self.rx = max(int(round(self.radius_m / self.dx)), 1)
         self.ry = max(int(round(self.radius_m / self.dy)), 1)
         self._offsets = self._build_offsets()
+        self.flow = flow
+        self.connectivity_floor = float(connectivity_floor)
+        if flow is not None and flow[0].shape != self.dem.shape:
+            raise ValueError("flow grids and DEM have different shapes")
 
     def _build_offsets(self):
         """Row/column offsets inside the search radius, with their distances."""
@@ -255,8 +321,29 @@ class ReachIndex:
 
         # A debris path widens roughly in proportion to distance travelled, so
         # the share of the fan a fixed-width target occupies falls as 1/d.
-        d = dist[ok]
-        return Reach(r0, c0, rr[ok], cc[ok], 1.0 / d, relief[ok], d)
+        rr, cc, d = rr[ok], cc[ok], dist[ok]
+        wt = 1.0 / d
+
+        # Connectivity: scale by the fraction of each source's flow routed
+        # through the target patch, floored so unchannelised delivery keeps
+        # a share. Computed on the search window alone - beyond it the angle
+        # criterion has already said no.
+        if self.flow is not None:
+            from . import hydrology as H
+            filled, ang = self.flow
+            wr0, wr1 = max(r0 - self.ry, 0), min(r0 + self.ry + 1, h)
+            wc0, wc1 = max(c0 - self.rx, 0), min(c0 + self.rx + 1, w)
+            dep = H.dinf_dependence(filled[wr0:wr1, wc0:wc1],
+                                    ang[wr0:wr1, wc0:wc1],
+                                    r0 - wr0, c0 - wc0)
+            f = self.connectivity_floor
+            wt = wt * (f + (1.0 - f) * dep[rr - wr0, cc - wc0])
+
+        # Compass azimuth target -> source, clockwise from north.
+        az = np.degrees(np.arctan2((cc - c0) * self.dx,
+                                   -(rr - r0) * self.dy)) % 360.0
+        return Reach(r0, c0, rr, cc, wt, relief[ok], d, az,
+                     cell_m2=self.dx * self.dy)
 
     # convenience wrappers -------------------------------------------------
 
@@ -303,7 +390,12 @@ def score_reaches(prob: np.ndarray, reaches: Sequence[Reach]
                       reaching_max=max(s.reaching_max for s in scores),
                       n_sources=max(s.n_sources for s in scores),
                       source_relief_m=best.source_relief_m,
-                      source_distance_m=best.source_distance_m)
+                      source_distance_m=best.source_distance_m,
+                      # The largest expected supply anywhere on the segment;
+                      # sector travels with the vertex that set the headline.
+                      delivering_m2=max(s.delivering_m2 for s in scores),
+                      sector=best.sector,
+                      sector_reaching=best.sector_reaching)
 
 
 # ---------------------------------------------------------------------------
@@ -475,19 +567,87 @@ def _apply(rec: dict, scores: Dict[str, AssetScore], baseline: str) -> dict:
     return rec
 
 
+#: Footprint radius by OSM place type, metres. A settlement is an area, not
+#: its centroid: OSM place nodes sit at the centre while the hillside wards a
+#: reach score exists for sit at the edge. These radii are a stated heuristic
+#: standing in for mapped built-up extent (GHS-BUILT or building footprints
+#: would replace them behind the same interface); they scale with how far a
+#: place of that type plausibly extends.
+FOOTPRINT_RADIUS_M = {"city": 1000.0, "town": 500.0,
+                      "village": 250.0, "hamlet": 100.0}
+DEFAULT_FOOTPRINT_M = 250.0
+
+#: The footprint headline is this quantile of the per-cell scores, not the
+#: maximum: the max over many cells is exactly the saturation artefact the
+#: module docstring warns about, while the 90th percentile still reports the
+#: exposed edge of town rather than its safe centre.
+FOOTPRINT_QUANTILE = 0.9
+
+
+def footprint_reaches(index: ReachIndex, lon: float, lat: float,
+                      radius_m: float) -> List[Reach]:
+    """Reaches of every grid cell within ``radius_m`` of a point."""
+    rc = index.rowcol(lon, lat)
+    h, w = index.dem.shape
+    nx = max(int(math.ceil(radius_m / index.dx)), 0)
+    ny = max(int(math.ceil(radius_m / index.dy)), 0)
+    out = []
+    for r in range(rc[0] - ny, rc[0] + ny + 1):
+        for c in range(rc[1] - nx, rc[1] + nx + 1):
+            if not (0 <= r < h and 0 <= c < w):
+                continue
+            if math.hypot((r - rc[0]) * index.dy,
+                          (c - rc[1]) * index.dx) > radius_m:
+                continue
+            cx, cy = index.transform * (c + 0.5, r + 0.5)
+            rch = index.reach(cx, cy)
+            if rch is not None:
+                out.append(rch)
+    return out
+
+
+def score_footprint(reaches: Sequence[Reach], prob: np.ndarray,
+                    q: float = FOOTPRINT_QUANTILE) -> AssetScore:
+    """One score for a footprint: the cell at the ``q`` rank of the scores.
+
+    A whole cell's record is reported rather than mixing quantiles of
+    different fields, so the sector, source and supply all describe the same
+    place - the exposed edge that set the headline.
+    """
+    scores = sorted((r.score(prob) for r in reaches), key=lambda s: s.score)
+    return scores[int(round(q * (len(scores) - 1)))]
+
+
 def score_settlements(index: ReachIndex, settlements,
                       probs: Dict[str, np.ndarray],
-                      baseline: str = "current") -> List[dict]:
-    """Score every settlement under every scenario; drop those off-grid."""
+                      baseline: str = "current",
+                      footprints: bool = True) -> List[dict]:
+    """Score every settlement under every scenario; drop those off-grid.
+
+    With ``footprints`` on, a settlement is scored over the cells of a disc
+    scaled by its place type and headlined at the 90th-percentile cell, so a
+    town whose centre is safe but whose edge sits under a slope is no longer
+    reported by its safest point.
+    """
     out = []
     for s in settlements:
-        rch = index.reach(s.lon, s.lat)
-        if rch is None:
-            continue
         rec = {"name": s.name, "lon": s.lon, "lat": s.lat, "place": s.place,
                "population": s.population, "source": s.source}
-        out.append(_apply(rec, {k: rch.score(p) for k, p in probs.items()},
-                          baseline))
+        if footprints:
+            radius = FOOTPRINT_RADIUS_M.get(s.place, DEFAULT_FOOTPRINT_M)
+            reaches = footprint_reaches(index, s.lon, s.lat, radius)
+            if not reaches:
+                continue
+            rec["footprint_m"] = radius
+            rec["n_cells"] = len(reaches)
+            scores = {k: score_footprint(reaches, p)
+                      for k, p in probs.items()}
+        else:
+            rch = index.reach(s.lon, s.lat)
+            if rch is None:
+                continue
+            scores = {k: rch.score(p) for k, p in probs.items()}
+        out.append(_apply(rec, scores, baseline))
     out.sort(key=lambda r: -r["score"])
     return out
 

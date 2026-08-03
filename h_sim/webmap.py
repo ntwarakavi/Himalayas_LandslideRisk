@@ -138,14 +138,16 @@ COORD_DP = 5
 #: cell count, its relief and its distance - are properties of the reach
 #: geometry, which does not change with climate, so carrying them per scenario
 #: multiplies the page size to restate the same numbers.
-SCENARIO_FIELDS = ("score", "on_site", "reaching", "reaching_max")
+SCENARIO_FIELDS = ("score", "on_site", "reaching", "reaching_max",
+                   "delivering_m2")
 
 #: Written once at the top level and read from there; anything else is either
-#: a per-scenario score or something the page derives. The mechanism flags are
-#: terrain geometry, invariant across scenarios, so they live here too.
+#: a per-scenario score or something the page derives. The mechanism flags and
+#: footprint geometry are invariant across scenarios, so they live here too.
 IDENTITY_FIELDS = ("name", "place", "population", "highway", "segment",
                    "length_m", "source",
-                   "cut_slope", "cut_slope_deg", "washout", "washout_sca_m")
+                   "cut_slope", "cut_slope_deg", "washout", "washout_sca_m",
+                   "footprint_m", "n_cells")
 
 
 def _thin(rec: dict, baseline: str = "current") -> dict:
@@ -635,9 +637,17 @@ function assetPopup(p, title, extra) {
     ${row('exposure', `<b>${c.score}</b> (${bandFor(c)})`)}
     ${row('reaching', c.reaching)}
     ${row('on site', c.on_site)}
+    ${row('unstable supply', c.delivering_m2
+         ? `${num(c.delivering_m2 / 10000, 1)} ha positioned to reach` : null)}
+    ${row('worst sector', g.sector
+         ? `${g.sector} (weighted ${(g.sector_reaching ?? 0).toFixed(3)})`
+         : null)}
     ${row('worst source', g.n_sources
          ? `${g.source_relief_m} m above, ${g.source_distance_m} m away`
          : 'none')}
+    ${p.footprint_m
+      ? row('assessed over', `${p.n_cells} cells, ${p.footprint_m} m footprint (p90)`)
+      : ''}
     ${scenarioRows(p)}`;
 }
 

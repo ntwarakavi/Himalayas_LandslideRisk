@@ -237,6 +237,13 @@ class Config:
     reach_radius_m: float = 2000.0
     #: Length of the pieces roads are cut into before scoring.
     road_segment_m: float = 500.0
+    #: Adjacent upslope gradient at which a road segment is flagged as
+    #: cut-slope susceptible. A geometric flag, not a model score: it marks
+    #: where the infinite-slope model's road-cut blind spot is.
+    cut_slope_angle_deg: float = 35.0
+    #: Specific catchment area, in metres, above which a cell counts as a
+    #: channel for the washout flag on road segments crossing it.
+    washout_sca_m: float = 5000.0
     #: OSM highway classes to fetch. Adding residential and track multiplies
     #: the segment count by an order of magnitude.
     road_classes: List[str] = field(

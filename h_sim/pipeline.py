@@ -1040,6 +1040,25 @@ def run_risk(cfg: C.Config, mode: str = "download",
                         if clip(*r["coords"][len(r["coords"]) // 2])]
         _log("clip", f"{n - len(scored_roads)} of {n} road segments outside "
                      "the unit boundary dropped")
+
+    # Two failure modes the reach score cannot see, flagged from terrain
+    # geometry alone: cut-slope (steep ground immediately above the segment)
+    # and washout (the segment touches a channel). Annotated after clipping,
+    # so only kept segments pay for the neighbourhood scan.
+    if scored_roads:
+        mech = R.MechanismIndex(dem, _read(terrain["sca"]), grid.transform,
+                                dx, dy,
+                                cut_slope_deg=cfg.cut_slope_angle_deg,
+                                washout_sca_m=cfg.washout_sca_m)
+        for rec in scored_roads:
+            rec.update(mech.assess(rec["coords"]))
+        n_cut = sum(1 for r in scored_roads if r["cut_slope"])
+        n_wash = sum(1 for r in scored_roads if r["washout"])
+        _log("mechanisms", f"{n_cut} segments flagged cut-slope "
+                           f"(>{cfg.cut_slope_angle_deg:.0f} deg adjacent), "
+                           f"{n_wash} at channel crossings "
+                           f"(SCA>{cfg.washout_sca_m:.0f} m)")
+
     _log("risk", f"{len(scored_towns)} settlements and "
                  f"{len(scored_roads)} road segments scored")
 

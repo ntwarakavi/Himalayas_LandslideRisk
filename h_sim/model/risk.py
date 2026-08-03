@@ -307,6 +307,109 @@ def score_reaches(prob: np.ndarray, reaches: Sequence[Reach]
 
 
 # ---------------------------------------------------------------------------
+# road failure mechanisms beyond burial from above
+# ---------------------------------------------------------------------------
+
+#: Adjacent upslope gradient at or above which a segment is flagged as
+#: cut-slope susceptible. Reported hillslope thresholds for cut-slope failure
+#: along Himalayan roads sit around 30-40 degrees; 35 is the middle of that
+#: band. This is the *hillslope* gradient at grid resolution, standing proxy
+#: for the engineered cut face the grid cannot see.
+DEFAULT_CUT_SLOPE_DEG = 35.0
+
+#: Specific catchment area, in metres, at or above which a cell is treated as
+#: a channel for the washout flag. Hillslopes in this region carry SCA of
+#: hundreds of metres; convergent hollows low thousands; anything above 5000 m
+#: is drainage that can deliver a debris flow to a crossing.
+DEFAULT_WASHOUT_SCA_M = 5000.0
+
+
+class MechanismIndex:
+    """Geometric flags for the two road failure modes the reach score misses.
+
+    The reaching score covers **burial from above** - unstable ground
+    positioned to deliver material onto the road. Himalayan roads are lost at
+    least as often to two mechanisms that SINMAP has no term for, and that
+    honesty requires labelling as geometry rather than model output:
+
+    * **cut_slope** - the road traverses ground whose immediately adjacent
+      upslope gradient exceeds a threshold. Where a road crosses such ground
+      it does so on a cut, and cut faces oversteepen the very slope the
+      infinite-slope model assumes undisturbed. Measured on the Shimla
+      inventory, that assumption fails to the point of inversion (README,
+      limits 2-3): this flag marks where that blind spot is, it does not
+      score it.
+    * **washout** - the segment touches a cell whose specific catchment area
+      marks it as a channel. Culverts and causeways at such crossings are
+      taken out by debris flows and flood scour arriving *along the channel*,
+      from far beyond any local search radius.
+
+    Both are properties of the terrain alone, so they are computed once per
+    segment and do not vary with climate scenario. Combine them with the
+    exposure score visually: a red segment carrying a washout flag is a
+    crossing fed by ground the model calls unstable.
+    """
+
+    def __init__(self, dem: np.ndarray, sca: np.ndarray, transform,
+                 dx_m: float, dy_m: float,
+                 cut_slope_deg: float = DEFAULT_CUT_SLOPE_DEG,
+                 washout_sca_m: float = DEFAULT_WASHOUT_SCA_M):
+        self.dem = np.asarray(dem, "float64")
+        self.sca = np.asarray(sca, "float64")
+        if self.dem.shape != self.sca.shape:
+            raise ValueError(f"DEM {self.dem.shape} and SCA {self.sca.shape} "
+                             "are on different grids")
+        self.transform = transform
+        self.cut_tan = math.tan(math.radians(cut_slope_deg))
+        self.cut_slope_deg = cut_slope_deg
+        self.washout_sca_m = float(washout_sca_m)
+        d = math.hypot(dx_m, dy_m)
+        self._noff = ((-1, -1, d), (-1, 0, dy_m), (-1, 1, d),
+                      (0, -1, dx_m), (0, 1, dx_m),
+                      (1, -1, d), (1, 0, dy_m), (1, 1, d))
+
+    def _rowcol(self, lon: float, lat: float) -> Tuple[int, int]:
+        inv = ~self.transform
+        col, row = inv * (lon, lat)
+        return int(row), int(col)
+
+    def assess(self, coords: Sequence[Tuple[float, float]]) -> dict:
+        """Flags for one segment, from its vertices' unique cells."""
+        h, w = self.dem.shape
+        cells = []
+        seen = set()
+        for lon, lat in coords:
+            rc = self._rowcol(lon, lat)
+            if rc in seen or not (0 <= rc[0] < h and 0 <= rc[1] < w):
+                continue
+            seen.add(rc)
+            cells.append(rc)
+
+        max_tan, max_sca = 0.0, 0.0
+        for r0, c0 in cells:
+            z0 = self.dem[r0, c0]
+            s = self.sca[r0, c0]
+            if np.isfinite(s):
+                max_sca = max(max_sca, float(s))
+            if not np.isfinite(z0):
+                continue
+            for dr, dc, dist in self._noff:
+                r, c = r0 + dr, c0 + dc
+                if not (0 <= r < h and 0 <= c < w):
+                    continue
+                rise = self.dem[r, c] - z0
+                if np.isfinite(rise) and rise > 0:
+                    max_tan = max(max_tan, float(rise) / dist)
+
+        return {
+            "cut_slope": bool(max_tan >= self.cut_tan),
+            "cut_slope_deg": round(math.degrees(math.atan(max_tan)), 1),
+            "washout": bool(max_sca >= self.washout_sca_m),
+            "washout_sca_m": round(max_sca, 0),
+        }
+
+
+# ---------------------------------------------------------------------------
 # geometry helpers
 # ---------------------------------------------------------------------------
 
@@ -467,8 +570,20 @@ def summarise(settlements: Sequence[dict], roads: Sequence[dict],
                 "risk: there is no vulnerability or damage function here. "
                 "The score is the proximity-weighted fraction of upslope "
                 "ground positioned to reach the asset that the stability "
-                "model calls unstable.",
+                "model calls unstable. Road cut_slope and washout are "
+                "geometric flags from terrain alone - where the model's "
+                "blind spots are, not scores from it.",
     }
+    # Mechanism flags are terrain geometry, so unlike everything above they do
+    # not vary by scenario and are rolled up once.
+    if roads and "cut_slope" in roads[0]:
+        km = lambda pred: round(sum(r["length_m"] for r in roads  # noqa: E731
+                                    if pred(r)) / 1000.0, 1)
+        out["mechanisms"] = {
+            "road_km_cut_slope": km(lambda r: r["cut_slope"]),
+            "road_km_washout": km(lambda r: r["washout"]),
+            "road_km_both": km(lambda r: r["cut_slope"] and r["washout"]),
+        }
     if not keys:
         out["scenarios"] = {baseline: scenario_stats(settlements, roads, None)}
         keys = [baseline]

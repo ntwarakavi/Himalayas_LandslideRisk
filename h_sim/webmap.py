@@ -141,9 +141,11 @@ COORD_DP = 5
 SCENARIO_FIELDS = ("score", "on_site", "reaching", "reaching_max")
 
 #: Written once at the top level and read from there; anything else is either
-#: a per-scenario score or something the page derives.
+#: a per-scenario score or something the page derives. The mechanism flags are
+#: terrain geometry, invariant across scenarios, so they live here too.
 IDENTITY_FIELDS = ("name", "place", "population", "highway", "segment",
-                   "length_m", "source")
+                   "length_m", "source",
+                   "cut_slope", "cut_slope_deg", "washout", "washout_sca_m")
 
 
 def _thin(rec: dict, baseline: str = "current") -> dict:
@@ -478,6 +480,8 @@ _PAGE = r"""<!doctype html>
   .pill { display:inline-block; padding:1px 6px; border-radius:9px;
           font-size:11px; background:var(--line); color:var(--muted);
           margin-left:6px; }
+  .mechicon { background:none; border:none; }
+  .glyph { vertical-align:-2px; margin-right:6px; }
 </style>
 </head>
 <body>
@@ -500,6 +504,8 @@ _PAGE = r"""<!doctype html>
         <input type="checkbox" id="bandtoggle" checked>
         colour settlements and roads by exposure
       </label>
+
+      <div id="mechlegend"></div>
 
       <div id="stats"></div>
       <div id="compare"></div>
@@ -668,15 +674,69 @@ function roadStyle(f) {
           opacity: 0.9};
 }
 
+function mechRows(p) {
+  if (!p.cut_slope && !p.washout) return '';
+  return row('mechanisms',
+    [p.cut_slope ? `cut-slope (${p.cut_slope_deg}&deg; adjacent)` : null,
+     p.washout ? `channel crossing (SCA ${num(p.washout_sca_m)} m)` : null]
+    .filter(Boolean).join(' &middot; '));
+}
+
+function roadPopup(p) {
+  return assetPopup(p, p.name || '(unnamed road)',
+    row('class', p.highway) +
+    row('segment', `${p.segment} &middot; ${p.length_m} m`) +
+    mechRows(p));
+}
+
 function roadLayer(gj) {
   return L.geoJSON(gj, {
     style: roadStyle,
-    onEachFeature: (f, l) => {
-      const p = f.properties;
-      l.bindPopup(() => assetPopup(p, p.name || '(unnamed road)',
-        row('class', p.highway) +
-        row('segment', `${p.segment} &middot; ${p.length_m} m`)));
-    }});
+    onEachFeature: (f, l) => l.bindPopup(() => roadPopup(f.properties))});
+}
+
+// ---- road failure mechanisms ---------------------------------------------
+// Exposure is the colour; the failure mechanism is the shape. The line
+// itself is burial from above (the reach score). Segments flagged for the
+// two mechanisms that score cannot see carry a glyph at their midpoint:
+// a triangle for cut-slope, a diamond for a channel crossing. Glyph fill
+// tracks the segment's exposure colour, so shape and colour answer
+// different questions on the same symbol.
+const GLYPHS = {cut: 'M7 1 L13 12 L1 12 Z',
+                wash: 'M7 0 L13 7 L7 14 L1 7 Z'};
+
+function glyphSvg(path, fill) {
+  return '<svg class="glyph" width="14" height="14" viewBox="0 0 14 14"'
+    + ' xmlns="http://www.w3.org/2000/svg"><path d="' + path + '" fill="'
+    + fill + '" stroke="#000" stroke-opacity="0.45" stroke-width="1"/></svg>';
+}
+
+function mechIcon(p) {
+  const fill = fillFor(p);
+  const parts = [];
+  if (p.cut_slope) parts.push(glyphSvg(GLYPHS.cut, fill));
+  if (p.washout) parts.push(glyphSvg(GLYPHS.wash, fill));
+  return L.divIcon({className: 'mechicon', html: parts.join(''),
+                    iconSize: [14 * parts.length, 14],
+                    iconAnchor: [7 * parts.length, 7]});
+}
+
+let mechMarkers = [];
+
+function mechanismLayer(gj) {
+  mechMarkers = [];
+  const g = L.layerGroup();
+  gj.features.forEach(f => {
+    const p = f.properties;
+    if (!p.cut_slope && !p.washout) return;
+    const cs = f.geometry.coordinates;
+    const mid = cs[Math.floor(cs.length / 2)];
+    const m = L.marker([mid[1], mid[0]], {icon: mechIcon(p)});
+    m.bindPopup(() => roadPopup(p));
+    mechMarkers.push({marker: m, props: p});
+    g.addLayer(m);
+  });
+  return g;
 }
 
 function inventoryLayer(colour, r) {
@@ -692,6 +752,7 @@ function restyle() {
   if (settlements) settlements.eachLayer(l => l.setStyle(
     {fillColor: fillFor(l.feature.properties)}));
   if (roads) roads.setStyle(roadStyle);
+  mechMarkers.forEach(m => m.marker.setIcon(mechIcon(m.props)));
   // The legend describes colours that are no longer on the map when the
   // toggle is off, so it dims rather than lies.
   document.getElementById('bands').style.opacity = STATE.bands ? '' : '0.35';
@@ -708,6 +769,7 @@ if (HAVE_MAP) {
             fill: false, dashArray: '8 5'}}),
     true);
   roads = addData('roads', 'Roads by exposure', roadLayer, true);
+  addData('roads', 'Failure mechanisms', mechanismLayer, true);
   settlements = addData('settlements', 'Settlements by exposure',
                         settlementLayer, true);
   addData('inventory', 'Training landslides',
@@ -731,6 +793,18 @@ document.getElementById('bandtoggle').addEventListener('change', ev => {
   STATE.bands = ev.target.checked;
   restyle();
 });
+
+if (mechMarkers.length) {
+  document.getElementById('mechlegend').innerHTML =
+    '<h2>Road failure mechanisms</h2>'
+    + '<div>' + glyphSvg(GLYPHS.cut, '#888')
+    + 'cut-slope: steep ground immediately above</div>'
+    + '<div>' + glyphSvg(GLYPHS.wash, '#888')
+    + 'washout: crosses a channel</div>'
+    + '<p class="sub" style="margin-top:4px">The line is burial from above; '
+    + 'glyph shape is the mechanism, glyph colour the segment\'s exposure. '
+    + 'Flags come from terrain geometry, not the stability model.</p>';
+}
 
 document.getElementById('meta').textContent = [
   META.area, META.resolution].filter(Boolean).join(' · ');
@@ -774,6 +848,12 @@ function drawStats() {
       ['total length', `${num(s.road_km_total, 1)} km`],
       ['exposed', `${num(s.road_km_exposed, 1)} km` + d('road_km_exposed')],
       ['share exposed', `${s.road_pct_exposed ?? 0}%`],
+      // Mechanism flags are terrain geometry, so unlike everything above
+      // they do not move with the scenario selector.
+      ...(SUMMARY.mechanisms ? [
+        ['cut-slope flagged', `${num(SUMMARY.mechanisms.road_km_cut_slope, 1)} km`],
+        ['channel crossings', `${num(SUMMARY.mechanisms.road_km_washout, 1)} km`],
+      ] : []),
     ]),
   ].join('');
 

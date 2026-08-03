@@ -397,18 +397,23 @@ def _geom_bounds(geom: dict) -> Optional[Tuple[float, float, float, float]]:
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+def geometry_mask(geom: dict, grid) -> "object":
+    """Boolean array, True inside ``geom`` (GeoJSON geometry), on ``grid``."""
+    import numpy as np
+    from rasterio.features import rasterize
+
+    arr = rasterize([(geom, 1)], out_shape=grid.shape,
+                    transform=grid.transform, fill=0, dtype="uint8")
+    return arr.astype(bool) if arr is not None else np.ones(grid.shape, bool)
+
+
 def unit_mask(unit: AdminUnit, grid) -> "object":
     """Boolean array, True inside the unit, on ``grid``.
 
     Used to clip a buffered run back to the province it belongs to, so
     neighbouring provinces do not each claim the same border cells.
     """
-    import numpy as np
-    from rasterio.features import rasterize
-
-    arr = rasterize([(unit.geometry, 1)], out_shape=grid.shape,
-                    transform=grid.transform, fill=0, dtype="uint8")
-    return arr.astype(bool) if arr is not None else np.ones(grid.shape, bool)
+    return geometry_mask(unit.geometry, grid)
 
 
 def summarise(units: Sequence[AdminUnit], resolution_deg: float,

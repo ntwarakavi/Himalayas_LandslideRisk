@@ -161,6 +161,13 @@ class Config:
     work_dir: str = "data/work"
     out_dir: str = "outputs"
 
+    #: MapTiler API key for the web map's "DataViz Light" basemap. When unset
+    #: (and no MAPTILER_KEY in the environment) the option is still offered,
+    #: served from CARTO's keyless light tiles instead. Never a hard
+    #: dependency: basemaps are cosmetic and every layer that carries a number
+    #: ships with the page.
+    maptiler_key: Optional[str] = None
+
     # Source selection / local overrides -----------------------------------
     #   * copernicus30 - 1 arc-second DEM, the default. The physical model
     #     carries no table calibrated at a coarser resolution, so unlike a
@@ -295,6 +302,14 @@ class Config:
     #: Flow routing holds the area in memory, so the alternative is an
     #: out-of-memory kill part-way through a multi-day sweep.
     admin_max_cells: int = 40_000_000
+
+    #: GeoJSON geometry the run's assets are clipped to. Set by the regional
+    #: sweep to the unit's polygon: the run itself covers the buffered bounding
+    #: box (catchments must be routed wide - see ``admin_buffer_deg``), but
+    #: settlements and road segments outside the polygon belong to a
+    #: neighbouring unit and are dropped rather than scored twice. None means
+    #: no clip, which is right for the single-area steps.
+    clip_geometry: Optional[dict] = None
 
     #: Scenarios step6 evaluates: rainfall return periods (years) and peak
     #: ground accelerations (g). Each produces its own map.

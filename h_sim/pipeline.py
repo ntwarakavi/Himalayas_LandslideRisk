@@ -1017,10 +1017,29 @@ def run_risk(cfg: C.Config, mode: str = "download",
                                     classes=cfg.road_classes)
         _log("exposure", f"{len(towns)} settlements, {len(roads)} ways")
 
+    # The run covers the buffered bounding box, but assets outside the clip
+    # polygon (the province, in a regional sweep) belong to a neighbour: they
+    # would be scored against ground this unit just blanked, shown floating
+    # beyond the border, and counted twice across the sweep. Settlements are
+    # dropped before scoring; roads after segmentation, by segment midpoint,
+    # so a road crossing the border keeps exactly its in-province stretch.
+    clip = _clip_lookup(cfg, grid)
+    if clip:
+        n = len(towns)
+        towns = [t for t in towns if clip(t.lon, t.lat)]
+        _log("clip", f"{n - len(towns)} of {n} settlements outside the "
+                     "unit boundary dropped")
+
     base = CL.BASELINE.key
     scored_towns = R.score_settlements(index, towns, probs, baseline=base)
     scored_roads = R.score_roads(index, roads, probs,
                                  segment_m=cfg.road_segment_m, baseline=base)
+    if clip:
+        n = len(scored_roads)
+        scored_roads = [r for r in scored_roads
+                        if clip(*r["coords"][len(r["coords"]) // 2])]
+        _log("clip", f"{n - len(scored_roads)} of {n} road segments outside "
+                     "the unit boundary dropped")
     _log("risk", f"{len(scored_towns)} settlements and "
                  f"{len(scored_roads)} road segments scored")
 
@@ -1123,12 +1142,37 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
     def dump(name: str, obj) -> None:
         data_files.append(webmap.write_data(out_dir, name, obj))
 
+    # The unit outline, so the page shows where the clip is rather than
+    # leaving assets to stop at an invisible line.
+    clip = None
+    if cfg.clip_geometry:
+        dump("boundary", {"type": "Feature", "properties": {},
+                          "geometry": cfg.clip_geometry})
+        # The scored files may predate boundary clipping - re-running only
+        # this stage is seconds, re-scoring a province is not - so the same
+        # test is applied here at page build. Already-clipped files pass
+        # through unchanged.
+        clip = _clip_lookup(
+            cfg, Grid.from_bbox(cfg.clipped_bbox(), cfg.resolution_deg))
+
+    kept: Dict[str, list] = {}
+    dropped = 0
     for kind in ("settlements", "roads"):
         src = _out(cfg, f"risk_{kind}.json")
         if not os.path.exists(src):
             continue
         with open(src, encoding="utf-8") as fh:
             rows = json.load(fh)
+        if clip:
+            n = len(rows)
+            rows = [r for r in rows
+                    if (clip(r["lon"], r["lat"]) if kind == "settlements"
+                        else clip(*r["coords"][len(r["coords"]) // 2]))]
+            if n - len(rows):
+                dropped += n - len(rows)
+                _log("webmap", f"{n - len(rows)} of {n} {kind} outside the "
+                               "unit boundary hidden")
+        kept[kind] = rows
         gj = (webmap.points_geojson(rows) if kind == "settlements"
               else webmap.lines_geojson(rows))
         dump(kind, gj)
@@ -1140,6 +1184,17 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
                  "scenarios": {k: {"score": v["score"], "band": v["band"]}
                                for k, v in (r.get("scenarios") or {}).items()}}
                 for r in rows[:40]]
+
+    if dropped:
+        # The stored summary counted the unclipped set. The page must not say
+        # 60 settlements over a map that draws 41, so the per-scenario stats
+        # are recomputed here from exactly the rows the page ships; the keys
+        # the page reads for scenarios and rasters are left as stored.
+        from .model import risk as R
+        summary.update(R.summarise(kept.get("settlements", []),
+                                   kept.get("roads", []),
+                                   scenarios=[s.key for s in scens],
+                                   baseline=CL.BASELINE.key))
 
     # The training data, so the fit is visible next to what it produced.
     if cfg.inventory_path and os.path.exists(cfg.inventory_path):
@@ -1162,7 +1217,9 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
             "resolution": f"{cfg.resolution_deg} deg"}
     path = webmap.build(out_dir, f"H-SIM \u2014 {cfg.name}", bounds,
                         layers, summary, meta, cache_dir=cfg.data_dir,
-                        data_files=data_files)
+                        data_files=data_files,
+                        maptiler_key=(cfg.maptiler_key
+                                      or os.environ.get("MAPTILER_KEY")))
     _log("done", f"web map -> {path} ({len(scen_layers)} climate scenarios)")
     if open_after:
         import webbrowser
@@ -1173,6 +1230,30 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
 # ---------------------------------------------------------------------------
 # step 9: regional sweep, one state or province at a time
 # ---------------------------------------------------------------------------
+
+def _clip_lookup(cfg: C.Config, grid: Grid):
+    """A ``(lon, lat) -> bool`` test for ``cfg.clip_geometry``, or None.
+
+    The polygon is rasterised once onto the run's own grid and points are
+    looked up in the resulting mask. Cell-resolution accuracy is the right
+    accuracy: the scores being clipped were computed on that grid, so a finer
+    boundary test would draw a distinction the model cannot.
+    """
+    if not cfg.clip_geometry:
+        return None
+    from .input import admin
+
+    mask = admin.geometry_mask(cfg.clip_geometry, grid)
+    h, w = mask.shape
+    res = grid.res
+
+    def inside(lon: float, lat: float) -> bool:
+        col = int((lon - grid.west) / res)
+        row = int((grid.north - lat) / res)
+        return 0 <= row < h and 0 <= col < w and bool(mask[row, col])
+
+    return inside
+
 
 def _clip_to_unit(path: str, mask, grid: Grid, out_path: str) -> str:
     """Blank a raster outside the administrative unit it belongs to."""
@@ -1228,6 +1309,9 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
     # parent run rather than looking for a fit named after the province.
     sub.fitted_params = (cfg.fitted_params
                          or _out(cfg, "fitted_params.json"))
+    # The polygon travels with the sub-run so exposure is clipped to the unit,
+    # not its bounding box, and the web map can draw the boundary.
+    sub.clip_geometry = unit.geometry
 
     _log("unit", f"{unit.country} / {unit.name}  "
                  f"({sub.cell_count():,} cells incl. buffer)")

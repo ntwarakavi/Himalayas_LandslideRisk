@@ -346,11 +346,52 @@ def vendor_leaflet(out_dir: str, cache_dir: Optional[str] = None) -> bool:
     return True
 
 
+def basemaps(maptiler_key: Optional[str] = None) -> List[dict]:
+    """The base layers the page offers, first one shown by default.
+
+    "DataViz Light" is the default: muted, light cartography keeps the
+    probability raster and exposure colours legible, which the busier street
+    and terrain maps fight. It is MapTiler's dataviz-light style when a key is
+    supplied; without one it falls back to CARTO's keyless light tiles - the
+    same style of cartography - with the attribution naming whichever provider
+    actually served it.
+    """
+    if maptiler_key:
+        light = {
+            "name": "DataViz Light",
+            "url": ("https://api.maptiler.com/maps/dataviz-light/"
+                    "{z}/{x}/{y}.png?key=" + maptiler_key),
+            "options": {"maxZoom": 20,
+                        "attribution": "&copy; MapTiler, "
+                                       "&copy; OpenStreetMap contributors"}}
+    else:
+        light = {
+            "name": "DataViz Light",
+            "url": "https://{s}.basemaps.cartocdn.com/light_all/"
+                   "{z}/{x}/{y}{r}.png",
+            "options": {"maxZoom": 19, "subdomains": "abcd",
+                        "attribution": "&copy; OpenStreetMap contributors, "
+                                       "&copy; CARTO"}}
+    return [
+        light,
+        {"name": "OpenStreetMap",
+         "url": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+         "options": {"maxZoom": 18,
+                     "attribution": "&copy; OpenStreetMap contributors"}},
+        {"name": "Terrain",
+         "url": "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+         "options": {"maxZoom": 17,
+                     "attribution": "&copy; OpenTopoMap, "
+                                    "&copy; OpenStreetMap contributors"}},
+    ]
+
+
 def build(out_dir: str, title: str, bounds: Dict[str, float],
           layers: Dict[str, str], summary: Optional[dict] = None,
           meta: Optional[dict] = None,
           cache_dir: Optional[str] = None,
-          data_files: Sequence[str] = ()) -> str:
+          data_files: Sequence[str] = (),
+          maptiler_key: Optional[str] = None) -> str:
     """Write index.html next to the assets in ``out_dir``."""
     os.makedirs(out_dir, exist_ok=True)
     local = vendor_leaflet(out_dir, cache_dir)
@@ -360,6 +401,7 @@ def build(out_dir: str, title: str, bounds: Dict[str, float],
     html = html.replace("__DATA__", "\n".join(
         f'<script src="{f}"></script>' for f in data_files))
     html = html.replace("__BOUNDS__", json.dumps(bounds))
+    html = html.replace("__BASEMAPS__", json.dumps(basemaps(maptiler_key)))
     html = html.replace("__LAYERS__", json.dumps(layers))
     html = html.replace("__SUMMARY__", json.dumps(summary or {}))
     html = html.replace("__META__", json.dumps(meta or {}))
@@ -454,6 +496,10 @@ _PAGE = r"""<!doctype html>
 
       <h2>Exposure bands</h2>
       <div id="bands"></div>
+      <label class="sub" style="display:block;margin-top:6px;cursor:pointer">
+        <input type="checkbox" id="bandtoggle" checked>
+        colour settlements and roads by exposure
+      </label>
 
       <div id="stats"></div>
       <div id="compare"></div>
@@ -466,6 +512,7 @@ _PAGE = r"""<!doctype html>
 __DATA__
 <script>
 const BOUNDS  = __BOUNDS__;
+const BASEMAPS = __BASEMAPS__;   // [{name, url, options}], first is default
 const LAYERS  = __LAYERS__;
 const SUMMARY = __SUMMARY__;
 const META    = __META__;
@@ -479,23 +526,28 @@ const SCENARIOS = (LAYERS.scenarios && LAYERS.scenarios.length)
   ? LAYERS.scenarios
   : [{key: 'current', label: 'present day', raster: LAYERS.raster}];
 const BASE = SUMMARY.baseline || SCENARIOS[0].key;
-const STATE = {key: SCENARIOS[0].key};
+const STATE = {key: SCENARIOS[0].key, bands: true};
+
+// Neutral styling for when band colouring is switched off: the assets stay
+// on the map as geography - where the settlements and roads are - without
+// asserting anything about their exposure. Scores stay in the popups.
+const NEUTRAL = {point: '#5b6470', road: '#5b6470'};
 
 // The tables are worth reading even when the map library did not load - a
 // blocked network should cost the basemap, not the whole page.
 const HAVE_MAP = (typeof L !== 'undefined');
-let map = null, base = null, terrain = null, bnds = null;
+let map = null, bnds = null;
+const baseLayers = {};
 const overlays = {};
 let rasterOverlay = null;
 
 if (HAVE_MAP) {
   map = L.map('map', {preferCanvas: true});
-  base = L.tileLayer(
-    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    {maxZoom: 18, attribution: '&copy; OpenStreetMap contributors'}).addTo(map);
-  terrain = L.tileLayer(
-    'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-    {maxZoom: 17, attribution: '&copy; OpenTopoMap, &copy; OpenStreetMap contributors'});
+  BASEMAPS.forEach((b, i) => {
+    const t = L.tileLayer(b.url, b.options);
+    baseLayers[b.name] = t;
+    if (i === 0) t.addTo(map);
+  });
 
   bnds = [[BOUNDS.south, BOUNDS.west], [BOUNDS.north, BOUNDS.east]];
   map.fitBounds(bnds);
@@ -589,11 +641,15 @@ function markerRadius(p) {
 
 let settlements = null, roads = null;
 
+function fillFor(p) {
+  return STATE.bands ? bandColour(bandFor(cur(p))) : NEUTRAL.point;
+}
+
 function settlementLayer(gj) {
   return L.geoJSON(gj, {
     pointToLayer: (f, latlng) => L.circleMarker(latlng, {
       radius: markerRadius(f.properties),
-      fillColor: bandColour(bandFor(cur(f.properties))), color: '#00000055',
+      fillColor: fillFor(f.properties), color: '#00000055',
       weight: 1, fillOpacity: 0.92}),
     onEachFeature: (f, l) => {
       const p = f.properties;
@@ -604,6 +660,8 @@ function settlementLayer(gj) {
 }
 
 function roadStyle(f) {
+  if (!STATE.bands)
+    return {color: NEUTRAL.road, weight: 2.5, opacity: 0.75};
   const c = cur(f.properties);
   return {color: bandColour(bandFor(c)),
           weight: c.score >= (SUMMARY.exposed_threshold ?? 0.08) ? 4 : 2.5,
@@ -632,12 +690,23 @@ function restyle() {
   const sc = SCENARIOS.find(s => s.key === STATE.key) || SCENARIOS[0];
   if (rasterOverlay && sc.raster) rasterOverlay.setUrl(sc.raster);
   if (settlements) settlements.eachLayer(l => l.setStyle(
-    {fillColor: bandColour(bandFor(cur(l.feature.properties)))}));
+    {fillColor: fillFor(l.feature.properties)}));
   if (roads) roads.setStyle(roadStyle);
+  // The legend describes colours that are no longer on the map when the
+  // toggle is off, so it dims rather than lies.
+  document.getElementById('bands').style.opacity = STATE.bands ? '' : '0.35';
   drawStats();
 }
 
 if (HAVE_MAP) {
+  // The administrative boundary the assets were clipped to. Drawn first so
+  // everything scored sits on top of it; non-interactive so it never steals
+  // a click from a settlement on the border.
+  addData('boundary', 'Unit boundary', gj => L.geoJSON(gj, {
+    interactive: false,
+    style: {color: '#111', weight: 3, opacity: 0.95,
+            fill: false, dashArray: '8 5'}}),
+    true);
   roads = addData('roads', 'Roads by exposure', roadLayer, true);
   settlements = addData('settlements', 'Settlements by exposure',
                         settlementLayer, true);
@@ -645,7 +714,7 @@ if (HAVE_MAP) {
           inventoryLayer('#111111', 2.2), false);
   addData('background', 'Training background',
           inventoryLayer('#2c7bb6', 1.8), false);
-  L.control.layers({'OpenStreetMap': base, 'Terrain': terrain}, overlays,
+  L.control.layers(baseLayers, overlays,
                    {collapsed: false}).addTo(map);
   restyle();
 }
@@ -657,6 +726,11 @@ document.getElementById('ramp').style.background =
 document.getElementById('bands').innerHTML = Object.entries(BANDS)
   .map(([k, v]) => `<div><span class="chip" style="background:${v}"></span>${k}</div>`)
   .join('');
+
+document.getElementById('bandtoggle').addEventListener('change', ev => {
+  STATE.bands = ev.target.checked;
+  restyle();
+});
 
 document.getElementById('meta').textContent = [
   META.area, META.resolution].filter(Boolean).join(' · ');
@@ -771,13 +845,15 @@ document.getElementById('caveat').innerHTML =
 
 def build_region_index(out_dir: str, title: str, rows: Sequence[dict],
                        meta: Optional[dict] = None) -> str:
-    """One ranked page over every province a regional sweep produced.
+    """One page that is the whole regional product: pick a province, see it.
 
     A sweep leaves one folder per province, which is an archive rather than a
-    result. What a discussion needs is the provinces in order, the numbers that
-    order them, and a way into any one of them - so this writes a sortable
-    table with a link per province, and says plainly which units were skipped
-    and why.
+    result. This writes the single page a user opens instead: a country
+    dropdown, a province dropdown under it, and the selected province's map
+    embedded below - plus the ranked, sortable table over every province,
+    whose rows select into the same view. The per-province pages stay on disk
+    as the frames this page loads, so nothing is duplicated and a province is
+    still shareable on its own or via the page's #slug hash.
     """
     os.makedirs(out_dir, exist_ok=True)
     html = _INDEX.replace("__TITLE__", title)
@@ -834,6 +910,18 @@ _INDEX = r"""<!doctype html>
   input { padding:7px 10px; font:inherit; font-size:13px; width:260px;
           color:var(--fg); background:var(--bg); border:1px solid var(--line);
           border-radius:4px; margin-bottom:10px; }
+  .pickrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+             margin-bottom:10px; }
+  .pickrow select { padding:7px 10px; font:inherit; font-size:13px;
+                    color:var(--fg); background:var(--bg);
+                    border:1px solid var(--line); border-radius:4px;
+                    min-width:200px; }
+  .pickrow a { font-size:12px; color:var(--muted); margin-left:auto; }
+  .framewrap { border:1px solid var(--line); border-radius:6px;
+               overflow:hidden; height:64vh; min-height:380px;
+               background:var(--panel); }
+  .framewrap iframe { width:100%; height:100%; border:0; display:block; }
+  .rowlink { cursor:pointer; color:var(--accent); text-decoration:underline; }
 </style>
 </head>
 <body>
@@ -841,6 +929,16 @@ _INDEX = r"""<!doctype html>
   <h1>__TITLE__</h1>
   <p class="sub" id="sub"></p>
   <div class="cards" id="cards"></div>
+
+  <div id="viewer" style="display:none">
+    <h2>Province map</h2>
+    <div class="pickrow">
+      <select id="pickCountry" aria-label="country"></select>
+      <select id="pickUnit" aria-label="province"></select>
+      <a id="pickExt" target="_blank" rel="noopener">open in its own tab &#8599;</a>
+    </div>
+    <div class="framewrap"><iframe id="frame" title="province map"></iframe></div>
+  </div>
 
   <h2>Provinces, most unstable first</h2>
   <input id="q" placeholder="filter by province or country">
@@ -889,6 +987,53 @@ document.getElementById('cards').innerHTML = [
 ].map(([k, v]) => `<div class="card"><div class="n">${v}</div>
    <div class="k">${k}</div></div>`).join('');
 
+// ---- one app over every province ------------------------------------------
+// Each province's map is its own self-contained page (its rasters and asset
+// layers are per-province and lazy by construction), so the app is a picker
+// over those pages: country, then province, loaded into the frame below.
+// The selection lives in the URL hash, so a province is linkable.
+const MAPPED = ROWS.filter(r => r.map && r.slug);
+const elCountry = document.getElementById('pickCountry');
+const elUnit = document.getElementById('pickUnit');
+const elFrame = document.getElementById('frame');
+const elExt = document.getElementById('pickExt');
+
+function unitsIn(c) {
+  return MAPPED.filter(r => r.country === c)
+    .slice().sort((a, b) => (b.unstable_pct || 0) - (a.unstable_pct || 0));
+}
+
+function fillUnits(c) {
+  elUnit.innerHTML = unitsIn(c).map(r =>
+    `<option value="${r.slug}">${r.name}</option>`).join('');
+}
+
+function select(slug, push) {
+  const row = MAPPED.find(r => r.slug === slug) || MAPPED[0];
+  if (!row) return;
+  elCountry.value = row.country;
+  fillUnits(row.country);
+  elUnit.value = row.slug;
+  if (elFrame.getAttribute('src') !== row.map) elFrame.src = row.map;
+  elExt.href = row.map;
+  if (push) history.replaceState(null, '', '#' + row.slug);
+}
+
+if (MAPPED.length) {
+  document.getElementById('viewer').style.display = '';
+  elCountry.innerHTML = [...new Set(MAPPED.map(r => r.country))].sort()
+    .map(c => `<option>${c}</option>`).join('');
+  elCountry.addEventListener('change', () => {
+    fillUnits(elCountry.value);
+    select(elUnit.value, true);
+  });
+  elUnit.addEventListener('change', () => select(elUnit.value, true));
+  window.addEventListener('hashchange',
+    () => select(location.hash.slice(1), false));
+  // Start on the linked province, or the most unstable one mapped.
+  select(location.hash.slice(1) || MAPPED[0].slug, false);
+}
+
 function draw() {
   const q = document.getElementById('q').value.trim().toLowerCase();
   const rows = ROWS
@@ -913,10 +1058,17 @@ function draw() {
       <td class="num">${num(r.p90_probability, 3)}</td>
       <td class="num">${num(r.settlements_exposed)}</td>
       <td class="num">${num(r.road_km_exposed, 0)}</td>
-      <td>${r.map ? `<a href="${r.map}">open</a>`
+      <td>${r.map ? `<span class="rowlink" data-slug="${r.slug}">view</span>`
                   : '<span style="color:var(--muted)">—</span>'}</td>
     </tr>`).join('');
 }
+
+document.querySelector('#t tbody').addEventListener('click', ev => {
+  const slug = ev.target && ev.target.dataset && ev.target.dataset.slug;
+  if (!slug) return;
+  select(slug, true);
+  document.getElementById('viewer').scrollIntoView({behavior: 'smooth'});
+});
 
 document.querySelectorAll('#t th').forEach(th => th.addEventListener('click', () => {
   const k = th.dataset.k;

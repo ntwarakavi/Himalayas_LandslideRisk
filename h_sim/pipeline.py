@@ -603,7 +603,8 @@ def run_stability(cfg: C.Config, mode: str = "download",
         c = 0.5 * sum(params.cohesion)
         phi = 0.5 * sum(params.friction_deg)
         rt = 0.5 * sum(params.rt) * (1.0 if scale is None else scale)
-        kc = physical.critical_acceleration(slope, sca, c, phi, rt)
+        kc = physical.critical_acceleration(slope, sca, c, phi, rt,
+                                            depth_k=params.depth_k)
         out["critical_acceleration"] = _write(
             grid, kc, _out(cfg, "critical_acceleration.tif"))
 

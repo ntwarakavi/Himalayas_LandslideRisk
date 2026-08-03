@@ -101,22 +101,38 @@ class SoilParameters:
     rt
         R/T in units of 1/m. Small values mean a highly transmissive soil that
         drains readily; large values mean water backs up and wetness builds.
+    depth_k
+        Rate of soil-depth decline with gradient, ``h = h0 exp(-depth_k
+        tan(theta))`` - the exponential thinning of regolith on steepening
+        slopes measured in soil-mantled terrain (DeRose 1996) and used for
+        distributed effective depth in TOPMODEL (Saulnier et al. 1997; cf.
+        Catani et al. 2010, GIST). The model never sees ``h`` itself, only
+        the two parameters that carry ``1/h`` - dimensionless cohesion and
+        R/T - so a nonzero ``depth_k`` multiplies both by the per-pixel
+        factor of :func:`depth_factor`, anchored so the fitted ranges keep
+        their face values at a 30-degree slope. Zero, the default and the
+        published SINMAP, is uniform depth.
     """
 
     cohesion: Tuple[float, float] = (0.0, 0.25)
     friction_deg: Tuple[float, float] = (30.0, 45.0)
     rt: Tuple[float, float] = (0.0001, 0.01)
+    depth_k: float = 0.0
 
     def as_dict(self) -> dict:
         return {"cohesion": list(self.cohesion),
                 "friction_deg": list(self.friction_deg),
-                "rt": list(self.rt)}
+                "rt": list(self.rt),
+                "depth_k": self.depth_k}
 
     @classmethod
     def from_dict(cls, raw: dict) -> "SoilParameters":
         return cls(cohesion=tuple(raw["cohesion"]),
                    friction_deg=tuple(raw["friction_deg"]),
-                   rt=tuple(raw["rt"]))
+                   rt=tuple(raw["rt"]),
+                   # Fits written before the depth term existed load as the
+                   # uniform-depth model they were.
+                   depth_k=float(raw.get("depth_k", 0.0)))
 
 
 # ---------------------------------------------------------------------------
@@ -136,22 +152,55 @@ def wetness(sca: np.ndarray, slope: np.ndarray, rt) -> np.ndarray:
     return np.clip(w, 0.0, 1.0)
 
 
+#: The depth term is anchored here: fitted cohesion and R/T keep their face
+#: values at tan(30 deg), the middle of the band where shallow failures
+#: happen, and scale up (thinner soil) or down (thicker) either side.
+DEPTH_REF_TAN = float(np.tan(np.radians(30.0)))
+
+#: The depth law is capped at this gradient. Regolith-thinning relations are
+#: measured on soil-mantled slopes; past about 60 degrees there is no soil
+#: column left for an exponential to describe, and extrapolating it there
+#: would only inflate cohesion on rock faces the model cannot speak to.
+DEPTH_CAP_TAN = float(np.tan(np.radians(60.0)))
+
+
+def depth_factor(slope, depth_k: float):
+    """Per-pixel ``1/h`` scaling for slope-dependent soil depth.
+
+    With ``h = h0 exp(-depth_k tan(theta))``, everything the model reads
+    through ``1/h`` - the dimensionless cohesion and R/T - gains the factor
+    ``exp(depth_k (tan(theta) - tan 30 deg))``, capped at 60 degrees.
+    Returns the scalar 1.0 when ``depth_k`` is zero, so the default model
+    pays nothing.
+    """
+    if not depth_k:
+        return 1.0
+    t = np.minimum(np.asarray(slope, "float64"), DEPTH_CAP_TAN)
+    return np.exp(depth_k * (t - DEPTH_REF_TAN))
+
+
 def factor_of_safety(slope: np.ndarray, sca: np.ndarray, cohesion: float,
                      friction_deg: float, rt,
                      density_ratio: float = DENSITY_RATIO,
-                     k_h=0.0) -> np.ndarray:
+                     k_h=0.0, depth_k: float = 0.0) -> np.ndarray:
     """Infinite-slope factor of safety under steady-state wetness.
 
     ``k_h`` is the horizontal seismic coefficient (dimensionless, a fraction of
-    g). Zero gives the static case.
+    g). Zero gives the static case. A nonzero ``depth_k`` applies the
+    slope-dependent soil depth of :func:`depth_factor`: thinner soil on
+    steeper ground is at once relatively more root-bound (cohesion up) and
+    less transmissive (R/T up, so wetter), which is the physically coupled
+    pair - both are the same ``1/h``.
     """
     theta = np.arctan(slope)
     sin_t = np.sin(theta)
     cos_t = np.cos(theta)
-    w = wetness(sca, slope, rt)
+    f = depth_factor(slope, depth_k)
+    w = wetness(sca, slope, rt * f)
     tan_phi = np.tan(np.radians(friction_deg))
 
-    numer = cohesion + (cos_t - k_h * sin_t - w * density_ratio * cos_t) * tan_phi
+    numer = (cohesion * f
+             + (cos_t - k_h * sin_t - w * density_ratio * cos_t) * tan_phi)
     denom = sin_t + k_h * cos_t
     with np.errstate(divide="ignore", invalid="ignore"):
         fs = numer / np.where(denom > 1e-6, denom, np.nan)
@@ -162,7 +211,8 @@ def factor_of_safety(slope: np.ndarray, sca: np.ndarray, cohesion: float,
 
 def critical_acceleration(slope: np.ndarray, sca: np.ndarray, cohesion: float,
                           friction_deg: float, rt,
-                          density_ratio: float = DENSITY_RATIO) -> np.ndarray:
+                          density_ratio: float = DENSITY_RATIO,
+                          depth_k: float = 0.0) -> np.ndarray:
     """Newmark critical acceleration k_c, in g: the k_h at which FS reaches 1.
 
     Solving FS = 1 for the seismic coefficient gives
@@ -175,9 +225,10 @@ def critical_acceleration(slope: np.ndarray, sca: np.ndarray, cohesion: float,
     """
     theta = np.arctan(slope)
     sin_t, cos_t = np.sin(theta), np.cos(theta)
-    w = wetness(sca, slope, rt)
+    f = depth_factor(slope, depth_k)
+    w = wetness(sca, slope, rt * f)
     tan_phi = np.tan(np.radians(friction_deg))
-    numer = cohesion + cos_t * (1.0 - w * density_ratio) * tan_phi - sin_t
+    numer = cohesion * f + cos_t * (1.0 - w * density_ratio) * tan_phi - sin_t
     return numer / (cos_t + sin_t * tan_phi)
 
 
@@ -207,7 +258,7 @@ def failure_probability(slope: np.ndarray, sca: np.ndarray,
     for i in range(n_samples):
         rt_i = rt[i] if recharge_scale is None else rt[i] * recharge_scale
         fs = factor_of_safety(slope, sca, c[i], phi[i], rt_i, density_ratio,
-                              k_h=k_h)
+                              k_h=k_h, depth_k=params.depth_k)
         fails += (fs < 1.0)
     p = fails / n_samples
     return np.where(valid, p, np.nan)
@@ -234,10 +285,12 @@ def stability_classes(slope: np.ndarray, sca: np.ndarray,
 
     # Worst case: least cohesion, least friction, wettest.
     fs_worst = factor_of_safety(slope, sca, c_lo, phi_lo, rt_hi * scale,
-                                density_ratio, k_h=k_h)
+                                density_ratio, k_h=k_h,
+                                depth_k=params.depth_k)
     # Best case, and dry, so wetness plays no part.
     fs_best_dry = factor_of_safety(slope, np.zeros_like(sca), c_hi, phi_hi,
-                                   rt_lo, density_ratio, k_h=k_h)
+                                   rt_lo, density_ratio, k_h=k_h,
+                                   depth_k=params.depth_k)
     p = failure_probability(slope, sca, params, n_samples=100,
                             density_ratio=density_ratio,
                             recharge_scale=recharge_scale, k_h=k_h)
@@ -314,7 +367,17 @@ def _auc(scores: np.ndarray, y: np.ndarray) -> float:
                  / (n_pos * n_neg))
 
 
-def parameter_grid() -> Sequence[SoilParameters]:
+#: Depth-decline candidates for the augmented fit grid, in units of
+#: 1/tan(theta). k = 1 roughly halves the soil column between flat ground
+#: and 35 degrees; 2.5 thins it near six-fold - together bracketing the
+#: DeRose-type decline rates reported for steep soil-mantled terrain. Zero
+#: is always searched alongside them, so the augmented grid is free to
+#: reject the term by choosing the uniform-depth model.
+DEPTH_K_CANDIDATES = (1.0, 2.5)
+
+
+def parameter_grid(depth_candidates: Sequence[float] = (0.0,)
+                   ) -> Sequence[SoilParameters]:
     """Candidate parameter ranges spanning soil-mantled mountain hillslopes.
 
     Cohesion runs from bare (0) up to a well-rooted forest soil. Friction
@@ -325,20 +388,23 @@ def parameter_grid() -> Sequence[SoilParameters]:
     of the range width to its level constant.
     """
     grid = []
-    for c_hi in (0.05, 0.15, 0.25, 0.40):
-        for phi_lo, phi_hi in ((25.0, 35.0), (30.0, 40.0), (35.0, 45.0)):
-            for rt_hi in (0.0005, 0.002, 0.01, 0.05):
-                grid.append(SoilParameters((0.0, c_hi), (phi_lo, phi_hi),
-                                           (rt_hi / 50.0, rt_hi)))
+    for depth_k in depth_candidates:
+        for c_hi in (0.05, 0.15, 0.25, 0.40):
+            for phi_lo, phi_hi in ((25.0, 35.0), (30.0, 40.0), (35.0, 45.0)):
+                for rt_hi in (0.0005, 0.002, 0.01, 0.05):
+                    grid.append(SoilParameters((0.0, c_hi), (phi_lo, phi_hi),
+                                               (rt_hi / 50.0, rt_hi),
+                                               depth_k=depth_k))
     return grid
 
 
 def _search(slope: np.ndarray, sca: np.ndarray, y: np.ndarray,
             n_samples: int, seed: int,
-            recharge_scale: Optional[np.ndarray] = None
+            recharge_scale: Optional[np.ndarray] = None,
+            grid: Optional[Sequence[SoilParameters]] = None
             ) -> Tuple[Optional[SoilParameters], float, list]:
     best, best_auc, trials = None, -np.inf, []
-    for params in parameter_grid():
+    for params in (parameter_grid() if grid is None else grid):
         p = failure_probability(slope, sca, params, n_samples=n_samples,
                                 seed=seed, recharge_scale=recharge_scale)
         ok = np.isfinite(p)
@@ -357,8 +423,14 @@ def fit_parameters(slope_pres: np.ndarray, sca_pres: np.ndarray,
                    slope_bg: np.ndarray, sca_bg: np.ndarray,
                    n_samples: int = 60, seed: int = 0,
                    recharge_pres: Optional[np.ndarray] = None,
-                   recharge_bg: Optional[np.ndarray] = None) -> dict:
+                   recharge_bg: Optional[np.ndarray] = None,
+                   grid: Optional[Sequence[SoilParameters]] = None) -> dict:
     """Search soil parameter ranges that best separate landslides from terrain.
+
+    ``grid`` overrides the candidate set - pass
+    ``parameter_grid((0.0,) + DEPTH_K_CANDIDATES)`` to let the search
+    consider slope-dependent soil depth. Do that in the product configs only
+    on the strength of analysis/09_soil_depth.py.
 
     The physics fixes the *form* of the response; what a region's soils and
     hydrology supply are the parameter values. Those are searched over ranges
@@ -387,7 +459,8 @@ def fit_parameters(slope_pres: np.ndarray, sca_pres: np.ndarray,
     y = np.concatenate([np.ones(len(sp)), np.zeros(len(sb))])
     scale = None if rp is None else np.concatenate([rp[ok_p], rb[ok_b]])
 
-    best, best_auc, trials = _search(slope, sca, y, n_samples, seed, scale)
+    best, best_auc, trials = _search(slope, sca, y, n_samples, seed, scale,
+                                     grid=grid)
     if best is None:
         raise ValueError("no parameter set produced a usable score")
     return {"parameters": best, "auc": best_auc,
@@ -444,7 +517,8 @@ def cross_validate(points_pres: np.ndarray, slope_pres: np.ndarray,
                    n_folds: int = 5, block_deg: float = 0.25,
                    n_samples: int = 40, seed: int = 0,
                    recharge_pres: Optional[np.ndarray] = None,
-                   recharge_bg: Optional[np.ndarray] = None) -> dict:
+                   recharge_bg: Optional[np.ndarray] = None,
+                   grid: Optional[Sequence[SoilParameters]] = None) -> dict:
     """Fit the parameters fold by fold and score on the withheld fold.
 
     The parameter search is rerun inside each fold, so the reported AUC is not
@@ -484,7 +558,7 @@ def cross_validate(points_pres: np.ndarray, slope_pres: np.ndarray,
                 sp[tr_p], ap[tr_p], sb[tr_b], ab[tr_b], n_samples=n_samples,
                 seed=seed,
                 recharge_pres=None if rp is None else rp[tr_p],
-                recharge_bg=None if rb is None else rb[tr_b])
+                recharge_bg=None if rb is None else rb[tr_b], grid=grid)
         except ValueError:
             continue
         params = fit["parameters"]

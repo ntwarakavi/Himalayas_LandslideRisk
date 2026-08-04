@@ -268,17 +268,17 @@ Five commands. The product is region-wide; the single-area steps exist only to
 fit and check the parameters that the regional sweep then applies everywhere.
 
 ```bash
-python -m h_sim.cli step1-check                                            # 1
-python -m h_sim.cli step2-download --config configs/01_calibrate.json      # 2
-python -m h_sim.cli step3-calibrate      --config configs/01_calibrate.json      # 3
-python -m h_sim.cli step4-validate --build --name gorkha \
+python3 -m h_sim.cli step1-check                                            # 1
+python3 -m h_sim.cli step2-download --config configs/01_calibrate.json      # 2
+python3 -m h_sim.cli step3-calibrate      --config configs/01_calibrate.json      # 3
+python3 -m h_sim.cli step4-validate --build --name gorkha \
     --inventory data/raw/inventory/sikkim/Google_Earth_landslides_polygon_21Dec2021.shp
-python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json  # 5
-python -m h_sim.cli step6-climate        --config configs/02_hkh_region.json  # 6
-python -m h_sim.cli step7-settlements    --config configs/02_hkh_region.json  # 7
-python -m h_sim.cli step8-roads          --config configs/02_hkh_region.json  # 8
-python -m h_sim.cli step9-webapp         --config configs/02_hkh_region.json  # 9
-python -m h_sim.cli package              --name hkh
+python3 -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json  # 5
+python3 -m h_sim.cli step6-climate        --config configs/02_hkh_region.json  # 6
+python3 -m h_sim.cli step7-settlements    --config configs/02_hkh_region.json  # 7
+python3 -m h_sim.cli step8-roads          --config configs/02_hkh_region.json  # 8
+python3 -m h_sim.cli step9-webapp         --config configs/02_hkh_region.json  # 9
+python3 -m h_sim.cli package              --name hkh
 ```
 
 `run-all --config configs/01_calibrate.json` does the same in one command.

@@ -1,5 +1,5 @@
 {
-  "_comment": "CLIMATE SPREAD across the region - all four CMIP6 pathways over the planning-horizon window, so the difference between maps is the forcing rather than a mixture of forcing and date. Every future is normalised by the present-day recharge reference recorded at fitting time, never by its own median, or a uniformly wetter future would cancel itself out.",
+  "_comment": "CLIMATE SPREAD across the region - all four CMIP6 pathways over both near-term windows, 2021-2040 and 2041-2060, so the maps show the forcing spread and its time course over the planning horizon rather than a mixture of forcing and date. Every future is normalised by the present-day recharge reference recorded at fitting time, never by its own median, or a uniformly wetter future would cancel itself out.",
   "name": "hkh_climate",
   "resolution_deg": 0.00083333,
   "dem_source": "copernicus30",
@@ -16,6 +16,10 @@
   "climate": "current",
   "climate_suite": [
     "current",
+    "ssp126:2021-2040",
+    "ssp245:2021-2040",
+    "ssp370:2021-2040",
+    "ssp585:2021-2040",
     "ssp126:2041-2060",
     "ssp245:2041-2060",
     "ssp370:2041-2060",

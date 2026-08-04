@@ -588,7 +588,8 @@ python -m h_sim.cli step7-climate --config configs/04_hkh_climate.json
 
 # or name scenarios directly
 python -m h_sim.cli step7-climate --name gorkha \
-    --scenarios current ssp245:2041-2060 ssp585:2041-2060
+    --scenarios current ssp245:2021-2040 ssp585:2021-2040 \
+                ssp245:2041-2060 ssp585:2041-2060
 ```
 
 ```
@@ -604,21 +605,25 @@ Scenarios are `current`, or `<ssp>:<period>`:
 | | |
 |---|---|
 | Pathways | `ssp126` `ssp245` `ssp370` `ssp585` |
-| Periods | `2021-2040` **`2041-2060`** (default) `2061-2080` `2081-2100` |
+| Periods | **`2021-2040`** **`2041-2060`** (suite defaults; a bare `ssp` takes 2041-2060) `2061-2080` `2081-2100` |
 | GCM | `--climate-model`, default IPSL-CM6A-LR (mid-range sensitivity) |
 
-**Every default lands on 2041-2060** — a twenty to thirty year planning horizon,
-which is the horizon a road alignment or a settlement plan is actually decided
-over. The end-of-century windows show a larger signal, which is why they are
-usually quoted and why they are not the default here: a map of 2090 is not a
-decision anyone can act on, and the further out the window, the more of its
-spread is the choice of general circulation model rather than the pathway. Ask
-for them explicitly when the question is how bad it eventually gets.
+**The defaults cover both near-term windows, 2021-2040 and 2041-2060** — the
+first is the horizon current maintenance budgets and early warning run on, the
+second the twenty to thirty year window a road alignment or a settlement plan
+is actually decided over, and running both shows the time course rather than
+one undated future. The end-of-century windows show a larger signal, which is
+why they are usually quoted and why they are not the default here: a map of
+2090 is not a decision anyone can act on, and the further out the window, the
+more of its spread is the choice of general circulation model rather than the
+pathway. Ask for them explicitly when the question is how bad it eventually
+gets.
 
-`configs/04_hkh_climate.json` runs all four pathways over the planning window
-across the region, so the spread between maps is the forcing rather than a
-mixture of forcing and date. Each future gets a susceptibility map, a change
-raster against the present day, and a row in `<name>_climate_summary.json`.
+`configs/04_hkh_climate.json` runs all four pathways over both windows across
+the region, so the maps separate cleanly into the forcing spread at fixed date
+and the time course at fixed forcing. Each future gets a susceptibility map, a
+change raster against the present day, and a row in
+`<name>_climate_summary.json`.
 
 ---
 

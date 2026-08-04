@@ -1190,14 +1190,16 @@ def test_short_scenario_labels():
             == "SSP2-4.5 2041-60")
 
 
-def test_defaults_sit_on_the_planning_horizon():
-    """Nothing should quietly default to end of century."""
+def test_defaults_sit_on_the_near_term_windows():
+    """Nothing should quietly default to end of century - and the map suite
+    and the exposure scoring should cover the same two windows, so an asset's
+    scenario table never names a future the rasters were not computed for."""
+    near = ("2021-2040", CL.DEFAULT_PERIOD)
     cfg = C.Config()
-    assert all(s == "current" or s.endswith(CL.DEFAULT_PERIOD)
-               for s in cfg.climate_suite), cfg.climate_suite
-    assert all(s == "current" or s.split(":")[1] in ("2021-2040",
-                                                     CL.DEFAULT_PERIOD)
-               for s in cfg.risk_climate), cfg.risk_climate
+    for lst in (cfg.climate_suite, cfg.risk_climate):
+        assert all(s == "current" or s.split(":")[1] in near
+                   for s in lst), lst
+    assert set(cfg.climate_suite) == set(cfg.risk_climate)
     assert all(s.is_baseline or s.period == CL.DEFAULT_PERIOD
                for s in CL.suite())
 

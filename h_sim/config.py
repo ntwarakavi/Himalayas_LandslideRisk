@@ -196,15 +196,17 @@ class Config:
     #                     under: "current", or "ssp585:2041-2060"
     #   climate_suite     the scenarios step7 sweeps. The baseline is always
     #                     included, since every future is measured against it.
-    #                     The window is climate.DEFAULT_PERIOD - a twenty to
-    #                     thirty year planning horizon rather than end of
-    #                     century, which is the horizon decisions are taken
-    #                     over. Name a later window explicitly to see how bad
-    #                     it eventually gets.
+    #                     The defaults cover both near-term windows, 2021-2040
+    #                     and 2041-2060: the first is the horizon current
+    #                     maintenance budgets run on, the second the twenty to
+    #                     thirty year window a road alignment or settlement
+    #                     plan is decided over. Name a later window explicitly
+    #                     to see how bad it eventually gets.
     climate: str = "current"
     climate_suite: List[str] = field(
-        default_factory=lambda: ["current", "ssp245:2041-2060",
-                                 "ssp585:2041-2060"])
+        default_factory=lambda: ["current",
+                                 "ssp245:2021-2040", "ssp585:2021-2040",
+                                 "ssp245:2041-2060", "ssp585:2041-2060"])
     climate_model: str = "IPSL-CM6A-LR"       # a mid-sensitivity CMIP6 model
     climate_res: str = "2.5m"                 # CMIP6 grid (30s is ~22 GB/file)
 

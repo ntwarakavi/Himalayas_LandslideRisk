@@ -646,6 +646,10 @@ something is wrong with the DEM), and `*_recharge_<scenario>.tif`.
 
 ## Measured performance
 
+A twelve-slide overview deck with speaker notes — product, physics,
+measured evidence, display rules, limits, and run commands — lives at
+[docs/H-SIM_overview.pptx](docs/H-SIM_overview.pptx).
+
 Full write-up and scripts: [docs/RESULTS.md](docs/RESULTS.md),
 [`analysis/`](analysis/). All spatial-block cross-validated on Gorkha.
 A technical explanation of every method in the pipeline — terrain routing,

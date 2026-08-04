@@ -35,8 +35,6 @@ default stays and this file is the record of why.
 
 from __future__ import annotations
 
-import numpy as np
-
 import common as K
 
 from h_sim.model import physical as P

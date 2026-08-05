@@ -2005,6 +2005,35 @@ def test_resume_reruns_only_the_stage_a_marker_failed_to_produce(tmp_path,
     assert seen == []
 
 
+
+
+def test_fiona_geometry_objects_serialise_after_plain_geometry():
+    """fiona 1.9+ returns Geometry objects; the boundary layer must still
+    json.dumps. This is the exact production failure of 2026-08-05."""
+    import json as J
+    from fiona.model import Geometry
+    from h_sim.input.admin import plain_geometry, geometry_mask
+    from h_sim.utility.grid import Grid
+
+    g = Geometry(type="Polygon",
+                 coordinates=[[(84.9, 27.0), (85.15, 27.0), (85.15, 27.4),
+                               (84.9, 27.4), (84.9, 27.0)]])
+    try:
+        J.dumps(g)
+        raise AssertionError("fiona now serialises; the guard may be "
+                             "removable, but must never regress silently")
+    except TypeError:
+        pass
+    pg = plain_geometry(g)
+    s = J.dumps({"type": "Feature", "geometry": pg})
+    assert '"Polygon"' in s
+    m = geometry_mask(pg, Grid.from_bbox((84.9, 27.0, 85.3, 27.4), 0.002))
+    assert m.any() and not m.all()
+    # idempotent on plain dicts, and safe on None
+    assert plain_geometry(pg) is pg
+    assert plain_geometry(None) is None
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

@@ -54,6 +54,27 @@ _NAME_FIELDS = ("name", "shapeName", "NAME_1", "ADM1_EN", "adm1_name")
 _COUNTRY_FIELDS = ("admin", "shapeGroup", "NAME_0", "ADM0_EN", "country")
 
 
+def plain_geometry(geom) -> dict:
+    """A GeoJSON geometry as plain dicts and lists, whatever fiona returned.
+
+    fiona 1.9+ hands back ``fiona.model.Geometry`` objects. Everything
+    numerical accepts them (rasterize reads the geo interface), but the one
+    place a geometry meets a strict ``json.dumps`` - the web map's boundary
+    layer - crashes with "Object of type Geometry is not JSON serializable".
+    Converted once at load, so no consumer ever has to care again.
+    """
+    if isinstance(geom, dict) or geom is None:
+        return geom
+    try:
+        from fiona.model import to_dict
+        return to_dict(geom)
+    except Exception:                                     # noqa: BLE001
+        gi = getattr(geom, "__geo_interface__", None)
+        if isinstance(gi, dict):
+            return json.loads(json.dumps(gi, default=lambda o: list(o)))
+        return dict(geom)
+
+
 def slugify(s: str) -> str:
     """The filesystem-safe form used in every per-unit filename."""
     out = "".join(c.lower() if c.isalnum() else "_" for c in s)
@@ -348,7 +369,7 @@ def load_units(shp_path: str, region_bbox: Sequence[float],
                 continue
             if name.lower() in skip:
                 continue
-            geom = feat["geometry"]
+            geom = plain_geometry(feat["geometry"])
             if geom is None:
                 continue
             if not same:

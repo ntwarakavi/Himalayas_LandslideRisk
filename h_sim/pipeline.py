@@ -1355,8 +1355,11 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
     sub.fitted_params = (cfg.fitted_params
                          or _out(cfg, "fitted_params.json"))
     # The polygon travels with the sub-run so exposure is clipped to the unit,
-    # not its bounding box, and the web map can draw the boundary.
-    sub.clip_geometry = unit.geometry
+    # not its bounding box, and the web map can draw the boundary. Coerced to
+    # plain dicts here as well as at load, so a unit constructed any other
+    # way still serialises.
+    from .input.admin import plain_geometry
+    sub.clip_geometry = plain_geometry(unit.geometry)
 
     _log("unit", f"{unit.country} / {unit.name}  "
                  f"({sub.cell_count():,} cells incl. buffer)")

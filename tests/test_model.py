@@ -1905,11 +1905,16 @@ def test_refresh_skips_provinces_finished_stage_by_stage(tmp_path,
                    data_dir=str(tmp_path), admin_path="fake.shp",
                    admin_elevation_res=None, admin_countries=["Nepal"])
 
+    page = tmp_path / "p" / "index.html"
+    page.parent.mkdir()
+    page.write_text("x")
     for stage, extra in (("settlements", {"exposure": {"n_settlements": 7}}),
                          ("roads", {"exposure": {"road_km_total": 12.0}}),
-                         ("webmap", {"webmap": "p/index.html"})):
+                         ("webmap", {"webmap": str(page)})):
         J.dump({"unit": unit.as_dict(), **extra},
                open(tmp_path / f"hkh_{unit.slug}_{stage}.json", "w"))
+    for prod in ("risk_settlements", "risk_roads"):
+        (tmp_path / f"hkh_{unit.slug}_{prod}.json").write_text("[]")
 
     monkeypatch.setattr(A, "load_units", lambda *a, **k: [unit])
     called = []
@@ -1920,7 +1925,7 @@ def test_refresh_skips_provinces_finished_stage_by_stage(tmp_path,
                           resume=True)
     assert not called, "province was re-run despite being done stage-by-stage"
     u = report["units"][0]
-    assert u["webmap"] == "p/index.html"
+    assert u["webmap"] == str(page)
     assert u["exposure"]["n_settlements"] == 7      # both stages folded
     assert u["exposure"]["road_km_total"] == 12.0
 
@@ -1984,19 +1989,24 @@ def test_resume_reruns_only_the_stage_a_marker_failed_to_produce(tmp_path,
             "exposure": {"n_settlements": 9, "road_km_total": 3.0},
             "errors": {"webmap": "ImportError: boom"}},
            open(tmp_path / f"hkh_{unit.slug}_{tag}.json", "w"))
+    for prod in ("risk_settlements", "risk_roads"):
+        (tmp_path / f"hkh_{unit.slug}_{prod}.json").write_text("[]")
 
     monkeypatch.setattr(A, "load_units", lambda *a, **k: [unit])
+    page = tmp_path / "p" / "index.html"
+    page.parent.mkdir()
+    page.write_text("x")
     seen = []
     def fake_unit(cfg_, u, mode="download", stages=()):
         seen.append(tuple(stages))
-        return {"unit": u.as_dict(), "webmap": "p/index.html"}
+        return {"unit": u.as_dict(), "webmap": str(page)}
     monkeypatch.setattr(P, "run_admin_unit", fake_unit)
 
     report = P.run_region(cfg, stages=("settlements", "roads", "webmap"),
                           resume=True)
     assert seen == [("webmap",)]                # only the missing stage ran
     u = report["units"][0]
-    assert u["webmap"] == "p/index.html"
+    assert u["webmap"] == str(page)
     assert u["exposure"]["n_settlements"] == 9  # prior exposure preserved
     assert not (u.get("errors") or {}).get("webmap")   # error cleared
     # rerunning again is now a clean skip
@@ -2066,6 +2076,47 @@ def test_road_cache_is_class_aware(tmp_path, monkeypatch):
     # and the new cache remembers its classes
     raw = J.load(open(cache / "roads_aoi.json"))
     assert "residential" in raw["classes"]
+
+
+
+
+def test_deleting_the_roads_product_forces_a_roads_rerun(tmp_path,
+                                                         monkeypatch):
+    """The exact production failure: settlements and roads both report
+    under 'exposure', so a settlements marker must not satisfy the roads
+    stage - and a deleted risk_roads.json must mean roads re-run."""
+    import json as J
+    from h_sim import pipeline as P
+    from h_sim.input import admin as A
+    from h_sim.input.admin import AdminUnit
+
+    geom = {"type": "Polygon", "coordinates":
+            [[[84, 27], [85, 27], [85, 28], [84, 28], [84, 27]]]}
+    unit = AdminUnit(name="Skm", country="India",
+                     bbox=(84.0, 27.0, 85.0, 28.0), geometry=geom)
+    cfg = C.Config(name="hkh", out_dir=str(tmp_path), work_dir=str(tmp_path),
+                   data_dir=str(tmp_path), admin_path="fake.shp",
+                   admin_elevation_res=None, admin_countries=["India"])
+
+    page = tmp_path / "p" / "index.html"
+    page.parent.mkdir(); page.write_text("x")
+    tag = "_".join(sorted(("settlements", "roads", "webmap")))
+    J.dump({"unit": unit.as_dict(),
+            "exposure": {"n_settlements": 9, "road_km_total": 3.0},
+            "webmap": str(page)},
+           open(tmp_path / f"hkh_{unit.slug}_{tag}.json", "w"))
+    # settlements product exists; the roads product was deleted by the user
+    (tmp_path / f"hkh_{unit.slug}_risk_settlements.json").write_text("[]")
+
+    monkeypatch.setattr(A, "load_units", lambda *a, **k: [unit])
+    seen = []
+    monkeypatch.setattr(P, "run_admin_unit",
+                        lambda c, u, mode="download", stages=():
+                        seen.append(tuple(stages))
+                        or {"unit": u.as_dict(),
+                            "exposure": {"road_km_total": 5.0}})
+    P.run_region(cfg, stages=("settlements", "roads", "webmap"), resume=True)
+    assert seen == [("roads",)], seen
 
 
 if __name__ == "__main__":

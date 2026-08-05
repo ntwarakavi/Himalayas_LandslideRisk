@@ -1719,7 +1719,7 @@ def run_region(cfg: C.Config, mode: str = "download",
                     else:
                         have[key] = rec[key]
         missing = tuple(s for s in stages
-                        if not have.get(_STAGE_PRODUCT.get(s, s)))
+                        if not _stage_done(cfg, unit, have, s))
         if resume and not missing:
             with open(marker, "w", encoding="utf-8") as fh:
                 json.dump(have, fh, indent=2, default=str)
@@ -1855,10 +1855,34 @@ def run_prune(cfg: C.Config, yes: bool = False) -> Dict[str, object]:
     return {"deleted": doomed, "bytes": total}
 
 
-#: What each sweep stage must have written for its marker to count as done.
-_STAGE_PRODUCT = {"susceptibility": "stats", "climate": "climate",
-                  "hazard": "hazard", "settlements": "exposure",
-                  "roads": "exposure", "webmap": "webmap"}
+def _stage_done(cfg: C.Config, unit, have: Dict[str, object],
+                stage: str) -> bool:
+    """Did a prior run actually produce this stage, for this unit?
+
+    Settlements and roads both report under "exposure", so each is checked
+    for its own statistic AND for its product file on disk - deleting
+    hkh_<slug>_risk_roads.json is the documented way to force a roads
+    rerun, and resume must honour it. The webmap likewise counts only if
+    the page it points to still exists.
+    """
+    exp = have.get("exposure") or {}
+    base = os.path.join(cfg.out_dir, f"{cfg.name}_{unit.slug}")
+    if stage == "settlements":
+        return (exp.get("n_settlements") is not None
+                and os.path.exists(base + "_risk_settlements.json"))
+    if stage == "roads":
+        return (exp.get("road_km_total") is not None
+                and os.path.exists(base + "_risk_roads.json"))
+    if stage == "webmap":
+        page = str(have.get("webmap") or "")
+        if not page:
+            return False
+        cand = page if os.path.isabs(page) \
+            else os.path.join(cfg.out_dir, page)
+        return os.path.exists(cand) or os.path.exists(page)
+    key = {"susceptibility": "stats", "climate": "climate",
+           "hazard": "hazard"}.get(stage, stage)
+    return bool(have.get(key))
 
 
 def _known_unstable(cfg: C.Config, unit) -> Optional[float]:

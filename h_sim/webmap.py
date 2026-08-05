@@ -516,6 +516,7 @@ _PAGE = r"""<!doctype html>
         colour settlements and roads by exposure
       </label>
 
+      <div id="roadfilter"></div>
       <div id="mechlegend"></div>
 
       <div id="stats"></div>
@@ -568,6 +569,10 @@ _PAGE = r"""<!doctype html>
       (hamlet 100&nbsp;m &hellip; city 1&nbsp;km); the headline is the
       90th-percentile cell &mdash; the exposed edge of town, not its safest
       point and not its single worst cell.</dd>
+      <dt>road types (filter)</dt>
+      <dd>Show or hide highway classes on the map. The filter changes the
+      map only; the ROADS panel and every count keep covering all classes
+      the run assessed.</dd>
       <dt>roads: total length</dt>
       <dd>The classified motorable network from OpenStreetMap - motorway,
       trunk, primary, secondary, tertiary. Rural link roads
@@ -869,13 +874,67 @@ function casingLayer(gj) {
     style: () => ({color: '#111', weight: 6.5, opacity: casingOpacity()})});
 }
 
+// ---- road-type filter -----------------------------------------------------
+// Checkboxes over the highway classes actually present. A map filter only:
+// the ROADS panel keeps counting every class the run assessed, and the
+// caption says so.
+const ROAD_TYPE_ORDER = ['motorway', 'trunk', 'primary', 'secondary',
+                         'tertiary', 'unclassified', 'residential', 'road'];
+const ROAD_TYPES_ON = new Set();
+let ROADS_GJ = null;
+let roadsGroup = null;
+
+function classOn(p) {
+  return !p.highway || !ROAD_TYPES_ON.size || ROAD_TYPES_ON.has(p.highway);
+}
+
+function filteredRoadsGJ() {
+  return {type: 'FeatureCollection',
+          features: ROADS_GJ.features.filter(f => classOn(f.properties))};
+}
+
+function rebuildRoads() {
+  if (!roadsGroup || !ROADS_GJ) return;
+  roadsGroup.clearLayers();
+  const g = filteredRoadsGJ();
+  casing = casingLayer(g);
+  roads = roadLayer(g);
+  roadsGroup.addLayer(casing);
+  roadsGroup.addLayer(roads);
+}
+
+function buildRoadFilter() {
+  if (!ROADS_GJ) return;
+  const present = ROAD_TYPE_ORDER.filter(c =>
+    ROADS_GJ.features.some(f => f.properties.highway === c));
+  if (present.length < 2) return;
+  present.forEach(c => ROAD_TYPES_ON.add(c));
+  document.getElementById('roadfilter').innerHTML =
+    '<h2>Road types</h2>'
+    + present.map(c =>
+        `<label style="display:block;font-size:12px;margin:2px 0">`
+        + `<input type="checkbox" data-rt="${c}" checked> ${c}</label>`)
+      .join('')
+    + '<p class="sub" style="margin-top:4px">Filters the map only; the '
+    + 'ROADS panel counts every class the run assessed.</p>';
+  document.querySelectorAll('#roadfilter input').forEach(cb =>
+    cb.addEventListener('change', () => {
+      if (cb.checked) ROAD_TYPES_ON.add(cb.dataset.rt);
+      else ROAD_TYPES_ON.delete(cb.dataset.rt);
+      rebuildRoads();
+    }));
+}
+
 function combinedRoadLayer(gj) {
   // Risk and failure mechanism are one thing on one road: a single overlay
   // draws the emphasis casing beneath the exposure-coloured, pattern-coded
   // line. Zoomed out the casing and pattern fade, leaving colour alone.
+  ROADS_GJ = gj;
   casing = casingLayer(gj);
   roads = roadLayer(gj);
-  return L.layerGroup([casing, roads]);
+  roadsGroup = L.layerGroup([casing, roads]);
+  buildRoadFilter();
+  return roadsGroup;
 }
 
 function mechSample(dash, cap) {

@@ -601,6 +601,8 @@ STEP_TITLES = {
     "settlements": ("7", "Settlements and villages: exposure, now and later"),
     "roads": ("8", "Roads and infrastructure: exposure, now and later"),
     "webmap": ("9", "Web apps for everything above"),
+    "refresh": ("7-9", "Exposure and app, one province at a time, "
+                       "worst first"),
 }
 
 
@@ -608,6 +610,11 @@ def _region_stage(args, stage: str) -> int:
     """Run one stage of the workflow across every province in the region."""
     cfg = _build_config(args)
     num, title = STEP_TITLES[stage]
+    # "refresh" is the deadline mode: every stage a province needs to appear
+    # in the app, completed per province, so the app grows one finished
+    # province at a time instead of staying empty until the last stage.
+    run_stages = (("settlements", "roads", "webmap") if stage == "refresh"
+                  else (stage,))
     print(f"STEP {num}  {title}\n")
 
     if _needs_fit(cfg) and not args.dry_run:
@@ -617,7 +624,7 @@ def _region_stage(args, stage: str) -> int:
 
     report = pipeline.run_region(
         cfg, mode=args.mode, countries=args.countries, names=args.units,
-        stages=(stage,), dry_run=args.dry_run, resume=not args.no_resume)
+        stages=run_stages, dry_run=args.dry_run, resume=not args.no_resume)
 
     if args.dry_run:
         print(f"\n  {report['n_units_found']} provinces, "
@@ -634,7 +641,8 @@ def _region_stage(args, stage: str) -> int:
         print(f"\n  Plan -> {report['summary']}")
         return 0
 
-    _report_region(report, stage, cfg)
+    _report_region(report, "settlements" if stage == "refresh" else stage,
+                   cfg)
     return 0
 
 
@@ -707,6 +715,10 @@ def _step_roads(args) -> int:
 
 def _step_webapp(args) -> int:
     return _region_stage(args, "webmap")
+
+
+def _step_refresh(args) -> int:
+    return _region_stage(args, "refresh")
 
 
 def _step_risk(args) -> int:
@@ -902,6 +914,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                         "included. Default: config.risk_climate")
     _region_opts(p)
 
+    p = sub.add_parser("province-refresh", aliases=["refresh"],
+                       help="STEPS 7-9 per province, worst first: exposure, "
+                            "then that province's page, then the app "
+                            "updates - so there is always something to show")
+    _region_opts(p)
+
     p = sub.add_parser("step9-webapp", aliases=["webapp", "step9", "map"],
                        help="STEP 9: browsable web apps for steps 5-8, one "
                             "per province plus a ranked regional index")
@@ -983,6 +1001,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "settlements": _step_settlements, "step7": _step_settlements,
         "step8-roads": _step_roads, "roads": _step_roads,
         "step8": _step_roads,
+        "province-refresh": _step_refresh, "refresh": _step_refresh,
         "step9-webapp": _step_webapp, "webapp": _step_webapp,
         "step9": _step_webapp, "map": _step_webapp,
         # single-area, for debugging one province

@@ -498,6 +498,19 @@ after a moment — or serve the folder once with
 `python -m http.server -d outputs` and open
 `http://localhost:8000/hkh_region/`.
 
+**Short on time?** Use deadline mode:
+
+```bash
+python -m h_sim.cli province-refresh --config configs/02_hkh_region.json
+```
+
+It runs settlements, roads and the province page *per province* — worst
+provinces first, using any prior susceptibility results to order the queue —
+and rebuilds the app after every one. The app is live from minute zero and
+grows a finished province at a time, so whenever the clock runs out,
+`outputs/hkh_region/index.html` shows everything completed so far, ranked.
+Interrupt it freely; rerunning resumes where it stopped.
+
 If the page is missing, the webmap stage did not finish: check for
 `hkh_*_webmap.json` markers in `outputs/` and rerun
 `step9-webapp --config configs/02_hkh_region.json` — it resumes, skipping

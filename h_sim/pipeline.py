@@ -1521,6 +1521,37 @@ def run_region(cfg: C.Config, mode: str = "download",
         _log("region", f"plan only -> {path}")
         return report
 
+    # Worst provinces first, where a previous susceptibility pass already
+    # measured them: whatever the clock cuts off, the part of the product
+    # that exists is the part that matters most. Unmeasured units keep their
+    # plan order at the back of the queue.
+    known = {u.slug: _known_unstable(cfg, u) for u in runnable}
+    if any(v is not None for v in known.values()):
+        runnable = sorted(runnable,
+                          key=lambda u: -(known[u.slug]
+                                          if known[u.slug] is not None
+                                          else -1.0))
+        _log("region", "queue ordered worst-first from prior results")
+
+    countries_used = (countries or cfg.admin_countries
+                      or list(C.HKH_COUNTRIES))
+
+    def _refresh_index() -> None:
+        """Rebuild the app from whatever markers exist right now."""
+        try:
+            report["index"] = run_region_index(
+                cfg, _merge_stage_reports(cfg, report,
+                                          countries=countries_used))
+        except Exception as exc:                          # noqa: BLE001
+            _log("region", f"index refresh skipped ({exc})")
+
+    # The app exists from minute zero and grows: built here from any earlier
+    # markers, then rebuilt after every province, so an interrupted sweep
+    # still leaves a working page over everything finished so far.
+    _refresh_index()
+    if report.get("index"):
+        _log("app", f"live from the start -> {report['index']}")
+
     done, failed = 0, []
     for i, unit in enumerate(runnable, start=1):
         tag = "_".join(sorted(stages))
@@ -1542,6 +1573,8 @@ def run_region(cfg: C.Config, mode: str = "download",
             json.dump(res, fh, indent=2, default=str)
         report["units"].append(res)
         done += 1
+        _refresh_index()
+        _log("app", f"{unit.name} live ({done} this run)")
 
     report["n_completed"] = done
     report["failed"] = failed
@@ -1554,17 +1587,21 @@ def run_region(cfg: C.Config, mode: str = "download",
     # ranked table with a link per province is something a meeting can work
     # from, which is the point of running the region rather than a catchment.
     if report["units"]:
-        try:
-            merged = _merge_stage_reports(
-                cfg, report,
-                countries=(countries or cfg.admin_countries
-                           or list(C.HKH_COUNTRIES)))
-            report["index"] = run_region_index(cfg, merged)
-        except Exception as exc:                          # noqa: BLE001
-            _log("region", f"index skipped ({exc})")
+        _refresh_index()
 
     _log("done", f"{done} units produced, {len(failed)} failed -> {path}")
     return report
+
+
+def _known_unstable(cfg: C.Config, unit) -> Optional[float]:
+    """Unstable-area %% from a previous susceptibility marker, if one exists."""
+    path = os.path.join(cfg.out_dir,
+                        f"{cfg.name}_{unit.slug}_susceptibility.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return float(json.load(fh)["stats"]["unstable_area_pct"])
+    except Exception:                                     # noqa: BLE001
+        return None
 
 
 def _merge_stage_reports(cfg: C.Config,

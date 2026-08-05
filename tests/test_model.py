@@ -1836,6 +1836,58 @@ def test_admin_unit_with_nothing_produced_raises(monkeypatch, tmp_path):
         raise AssertionError("hollow success: no error raised")
 
 
+
+
+def test_run_region_delivers_progressively_and_worst_first(tmp_path,
+                                                           monkeypatch):
+    """The app exists before the first unit runs, is rebuilt after every
+    unit, and units with known prior results run worst-first."""
+    import json as J
+    from h_sim import pipeline as P
+    from h_sim.input import admin as A
+    from h_sim.input.admin import AdminUnit
+
+    geom = {"type": "Polygon", "coordinates":
+            [[[84, 27], [85, 27], [85, 28], [84, 28], [84, 27]]]}
+    units = [AdminUnit(name="Mild", country="Nepal",
+                       bbox=(84.0, 27.0, 85.0, 28.0), geometry=geom),
+             AdminUnit(name="Severe", country="Nepal",
+                       bbox=(84.0, 27.0, 85.0, 28.0), geometry=geom)]
+
+    cfg = C.Config(name="hkh", out_dir=str(tmp_path), work_dir=str(tmp_path),
+                   data_dir=str(tmp_path), admin_path="fake.shp",
+                   admin_elevation_res=None,
+                   admin_countries=["Nepal"])
+
+    # prior susceptibility markers: Severe is far worse than Mild
+    for u, pct in (("nepal_mild", 2.0), ("nepal_severe", 19.0)):
+        J.dump({"unit": {"slug": u, "country": "Nepal", "name": u},
+                "stats": {"unstable_area_pct": pct}},
+               open(tmp_path / f"hkh_{u}_susceptibility.json", "w"))
+
+    monkeypatch.setattr(A, "load_units", lambda *a, **k: units)
+    monkeypatch.setattr(P, "estimate_cells", lambda *a, **k: 1000,
+                        raising=False)
+
+    ran, index_builds = [], []
+    def fake_unit(cfg_, unit, mode="download", stages=()):
+        ran.append(unit.name)
+        return {"unit": unit.as_dict(), "webmap": f"{unit.slug}/index.html"}
+    monkeypatch.setattr(P, "run_admin_unit", fake_unit)
+    real_index = P.run_region_index
+    def spy_index(cfg_, report):
+        index_builds.append(len(report.get("units", [])))
+        return real_index(cfg_, report)
+    monkeypatch.setattr(P, "run_region_index", spy_index)
+
+    report = P.run_region(cfg, stages=("webmap",), resume=True)
+
+    assert ran == ["Severe", "Mild"]            # worst first
+    # index built before the loop, after each of two units, and at the end
+    assert len(index_builds) >= 3
+    assert report.get("index") and os.path.exists(report["index"])
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

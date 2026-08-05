@@ -2,7 +2,7 @@
   "_comment": "THE PRODUCT - every mountain state and province across the Hindu Kush Himalaya, one at a time, with trigger scenarios, climate futures, settlement and road exposure and a browsable page for each, plus one ranked index over the whole sweep. Fit once with 01 first; this never refits. 90 m is the practical regional grid: 30 m scores better (0.816 against 0.806 held out) but costs nine times the cells, and eight units already exceed the memory ceiling at 90 m.",
   "name": "hkh",
   "resolution_deg": 0.00083333,
-  "dem_source": "copernicus30",
+  "dem_source": "copernicus90",
   "region_bbox": [
     60.0,
     16.0,

@@ -77,24 +77,38 @@ PGA_SOURCE_INFO = (
 
 def download_file(url: str, dest: str, retries: int = 4,
                   timeout: int = 120) -> Optional[str]:
-    """Download ``url`` to ``dest`` (skip if present). Returns path or None (404)."""
+    """Download ``url`` to ``dest`` (skip if present). Returns path or None (404).
+
+    Interrupted transfers resume: a leftover ``.part`` is continued with an
+    HTTP Range request when the server honours it (a 206), and started over
+    when it does not (a 200) - so losing the connection at 90% of a large
+    climate file costs the last 10%, not the whole file.
+    """
     if os.path.exists(dest) and os.path.getsize(dest) > 0:
         return dest
     os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + ".part"
     delay = 2.0
     for attempt in range(1, retries + 1):
         try:
-            with requests.get(url, stream=True, timeout=timeout) as r:
+            have = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+            headers = {"Range": f"bytes={have}-"} if have else {}
+            with requests.get(url, stream=True, timeout=timeout,
+                              headers=headers) as r:
                 if r.status_code == 404:
                     return None
+                if have and r.status_code == 416:
+                    # Range not satisfiable: the part is already complete.
+                    os.replace(tmp, dest)
+                    return dest
                 r.raise_for_status()
-                tmp = dest + ".part"
-                with open(tmp, "wb") as fh:
+                resume = have and r.status_code == 206
+                with open(tmp, "ab" if resume else "wb") as fh:
                     for chunk in r.iter_content(chunk_size=1 << 20):
                         if chunk:
                             fh.write(chunk)
-                os.replace(tmp, dest)
-                return dest
+            os.replace(tmp, dest)
+            return dest
         except (requests.RequestException, OSError) as exc:
             if attempt == retries:
                 raise
@@ -128,19 +142,28 @@ def _ew(lon: int) -> str:
 # ---------------------------------------------------------------------------
 
 def download_dem(bbox: Sequence[float], data_dir: str,
-                 source: str = "copernicus90") -> List[str]:
-    """Download 1-deg Copernicus DEM tiles intersecting ``bbox``."""
+                 source: str = "copernicus90",
+                 max_workers: int = 6) -> List[str]:
+    """Download 1-deg Copernicus DEM tiles intersecting ``bbox``.
+
+    Tiles are independent files on a CDN, so they are fetched concurrently -
+    the wall-clock win is roughly the worker count on a region-scale sweep.
+    Cached tiles cost a stat call each; results keep tile order so the mosaic
+    is deterministic.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     base, res = (COP_DEM_90, "30") if source == "copernicus90" else (COP_DEM_30, "10")
     w, s, e, n = bbox
-    out: List[str] = []
+    jobs = []
     for lat in _int_range(s, n, 1):
         for lon in _int_range(w, e, 1):
             tile = f"Copernicus_DSM_COG_{res}_{_ns(lat)}_00_{_ew(lon)}_00_DEM"
-            url = f"{base}/{tile}/{tile}.tif"
-            dest = os.path.join(data_dir, "dem", f"{tile}.tif")
-            got = download_file(url, dest)
-            if got:
-                out.append(got)
+            jobs.append((f"{base}/{tile}/{tile}.tif",
+                         os.path.join(data_dir, "dem", f"{tile}.tif")))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        got = list(pool.map(lambda j: download_file(*j), jobs))
+    out = [g for g in got if g]
     if not out:
         raise RuntimeError(
             "No Copernicus DEM tiles found for the AOI (all ocean, or network "

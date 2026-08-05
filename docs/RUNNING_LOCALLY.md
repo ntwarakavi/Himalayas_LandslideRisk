@@ -11,7 +11,7 @@ the measured results — see the [README](../README.md).
 | Python | 3.9 or newer (3.11+ recommended) |
 | Disk | ~3 GB for a fitted Gorkha run; ~15 GB if you also fetch GLiM and the 30 s climatology |
 | Memory | Flow routing holds the whole area of interest in memory. About 4 GB covers a 6-million-cell run; see [Sizing a run](#4-sizing-a-run) |
-| Network | Only for the download step. Everything else works offline once cached |
+| Network | Only for the download step. Everything else works offline once cached. Tiles fetch in parallel and interrupted files resume from where they stopped |
 | OS | Linux, macOS or Windows (WSL recommended on Windows) |
 
 The one heavy dependency is `rasterio` (it bundles GDAL). `fiona` is needed only
@@ -105,7 +105,11 @@ basin and run the pieces separately — there is no tiling driver.
 
 Note that `--res` and `--dem-source` are independent. At `--res 0.0025` a 30 m
 DEM is downsampled to ~250 m and the source barely matters; the finer DEM only
-pays once the grid can resolve it.
+pays once the grid can resolve it. **This is also the biggest download lever:**
+GLO-30 tiles are roughly ten times the size of GLO-90 tiles, so a 90 m run
+fetching `copernicus30` pays a tenfold download cost for information the grid
+then throws away. `configs/02` uses `copernicus90` for exactly this reason;
+keep `copernicus30` for the 30 m calibration runs, where it does pay.
 
 **Resolution is the most consequential setting here.** Measured on Gorkha,
 spatial-block AUC runs 0.728 at 250 m, 0.806 at 90 m and 0.816 at 30 m, because

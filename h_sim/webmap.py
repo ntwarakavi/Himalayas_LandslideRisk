@@ -931,8 +931,11 @@ if (HAVE_MAP) {
           inventoryLayer('#111111', 2.2), false);
   addData('background', 'Training background',
           inventoryLayer('#2c7bb6', 1.8), false);
+  // Top-left, because the floating info panel owns the top-right corner -
+  // this is what made the layer picker vanish when the panel began to
+  // float. Expanded, so the layers are a visible menu, not an icon hunt.
   L.control.layers(baseLayers, overlays,
-                   {collapsed: false}).addTo(map);
+                   {collapsed: false, position: 'topleft'}).addTo(map);
   restyle();
 }
 

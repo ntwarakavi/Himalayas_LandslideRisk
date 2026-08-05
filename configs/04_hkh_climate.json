@@ -48,5 +48,10 @@
   "admin_local_relief_m": 500.0,
   "admin_min_mountain_fraction": 0.1,
   "admin_min_mountain_area_km2": 1000.0,
-  "admin_min_mountain_peak_m": 1400.0
+  "admin_min_mountain_peak_m": 1400.0,
+  "admin_countries": [
+    "India",
+    "Nepal",
+    "Bhutan"
+  ]
 }

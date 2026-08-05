@@ -1624,6 +1624,58 @@ def run_region(cfg: C.Config, mode: str = "download",
     return report
 
 
+def run_prune(cfg: C.Config, yes: bool = False) -> Dict[str, object]:
+    """Remove outputs and work files for countries outside the selection.
+
+    Matches on the ``<name>_<country-slug>_`` filename prefix every per-unit
+    product carries, over ``out_dir`` and ``work_dir`` only - ``data/raw`` is
+    shared downloads and is never touched, so widening the selection back
+    later costs recompute, not re-download. A dry run (the default) lists
+    what would go; nothing is deleted without ``yes``.
+    """
+    from .input.admin import slugify
+
+    selected = cfg.admin_countries
+    if not selected:
+        _log("prune", "no admin_countries set; nothing is excluded")
+        return {"deleted": [], "bytes": 0}
+    excluded = [c for c in C.HKH_COUNTRIES if c not in selected]
+    prefixes = tuple(f"{cfg.name}_{slugify(c)}_" for c in excluded)
+
+    doomed: List[str] = []
+    total = 0
+    for root in (cfg.out_dir, cfg.work_dir):
+        if not os.path.isdir(root):
+            continue
+        for entry in sorted(os.listdir(root)):
+            if not entry.startswith(prefixes):
+                continue
+            path = os.path.join(root, entry)
+            if os.path.isdir(path):
+                size = sum(os.path.getsize(os.path.join(dp, f))
+                           for dp, _, fs in os.walk(path) for f in fs)
+            else:
+                size = os.path.getsize(path)
+            doomed.append(path)
+            total += size
+
+    _log("prune", f"{len(doomed)} entries for "
+                  f"{', '.join(excluded)}: {total / 1e9:.2f} GB")
+    if not yes:
+        for p in doomed[:15]:
+            _log("prune", f"  would delete {p}")
+        if len(doomed) > 15:
+            _log("prune", f"  ... and {len(doomed) - 15} more")
+        _log("prune", "dry run; pass --yes to delete")
+        return {"deleted": [], "would_delete": doomed, "bytes": total}
+
+    import shutil
+    for p in doomed:
+        (shutil.rmtree if os.path.isdir(p) else os.remove)(p)
+    _log("prune", f"deleted {len(doomed)} entries, {total / 1e9:.2f} GB freed")
+    return {"deleted": doomed, "bytes": total}
+
+
 def _known_unstable(cfg: C.Config, unit) -> Optional[float]:
     """Unstable-area %% from a previous susceptibility marker, if one exists."""
     path = os.path.join(cfg.out_dir,

@@ -721,6 +721,12 @@ def _step_refresh(args) -> int:
     return _region_stage(args, "refresh")
 
 
+def _step_prune(args) -> int:
+    cfg = _build_config(args)
+    pipeline.run_prune(cfg, yes=args.yes)
+    return 0
+
+
 def _step_risk(args) -> int:
     cfg = _build_config(args)
     print("STEP 10  Exposure of settlements and roads\n")
@@ -914,6 +920,15 @@ def main(argv: Optional[List[str]] = None) -> int:
                         "included. Default: config.risk_climate")
     _region_opts(p)
 
+    p = sub.add_parser("prune-excluded", aliases=["prune"],
+                       help="delete outputs and work files for countries "
+                            "outside admin_countries (dry run unless --yes; "
+                            "downloads in data/raw are never touched)")
+    p.add_argument("--yes", action="store_true",
+                   help="actually delete; without it, only list")
+    p.add_argument("--config", help="config JSON")
+    p.add_argument("--name", help="run name (default from config)")
+
     p = sub.add_parser("province-refresh", aliases=["refresh"],
                        help="STEPS 7-9 per province, worst first: exposure, "
                             "then that province's page, then the app "
@@ -1001,6 +1016,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "settlements": _step_settlements, "step7": _step_settlements,
         "step8-roads": _step_roads, "roads": _step_roads,
         "step8": _step_roads,
+        "prune-excluded": _step_prune, "prune": _step_prune,
         "province-refresh": _step_refresh, "refresh": _step_refresh,
         "step9-webapp": _step_webapp, "webapp": _step_webapp,
         "step9": _step_webapp, "map": _step_webapp,

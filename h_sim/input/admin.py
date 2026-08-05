@@ -54,6 +54,12 @@ _NAME_FIELDS = ("name", "shapeName", "NAME_1", "ADM1_EN", "adm1_name")
 _COUNTRY_FIELDS = ("admin", "shapeGroup", "NAME_0", "ADM0_EN", "country")
 
 
+def slugify(s: str) -> str:
+    """The filesystem-safe form used in every per-unit filename."""
+    out = "".join(c.lower() if c.isalnum() else "_" for c in s)
+    return "_".join(p for p in out.split("_") if p)
+
+
 @dataclass
 class AdminUnit:
     """One state or province, and the box a run over it needs."""
@@ -69,10 +75,7 @@ class AdminUnit:
     @property
     def slug(self) -> str:
         """Filesystem-safe identifier, unique across countries."""
-        def clean(s: str) -> str:
-            out = "".join(c.lower() if c.isalnum() else "_" for c in s)
-            return "_".join(p for p in out.split("_") if p)
-        return f"{clean(self.country)}_{clean(self.name)}"
+        return f"{slugify(self.country)}_{slugify(self.name)}"
 
     def span_deg(self) -> Tuple[float, float]:
         w, s, e, n = self.bbox

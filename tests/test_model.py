@@ -1925,6 +1925,41 @@ def test_refresh_skips_provinces_finished_stage_by_stage(tmp_path,
     assert u["exposure"]["road_km_total"] == 12.0
 
 
+
+
+def test_prune_deletes_only_excluded_countries(tmp_path):
+    from h_sim import pipeline as P
+
+    outd, workd, rawd = (tmp_path / d for d in ("out", "work", "raw"))
+    for d in (outd, workd, rawd):
+        d.mkdir()
+    keep = [outd / "hkh_india_sikkim_risk_roads.json",
+            outd / "hkh_nepal_bagmati_webmap.json",
+            workd / "hkh_bhutan_gasa_dem.tif",
+            rawd / "hkh_pakistan_lookalike.txt"]        # raw is never touched
+    kill = [outd / "hkh_pakistan_northern_areas_susceptibility.json",
+            outd / "hkh_afghanistan_nuristan_risk_settlements.json",
+            workd / "hkh_china_xizang_sca.tif"]
+    for p in keep + kill:
+        p.write_text("x")
+    (outd / "hkh_myanmar_chin_webmap").mkdir()
+    (outd / "hkh_myanmar_chin_webmap" / "index.html").write_text("x")
+
+    cfg = C.Config(name="hkh", out_dir=str(outd), work_dir=str(workd),
+                   data_dir=str(rawd),
+                   admin_countries=["India", "Nepal", "Bhutan"])
+
+    dry = P.run_prune(cfg, yes=False)
+    assert not dry["deleted"] and len(dry["would_delete"]) == 4
+    assert all(p.exists() for p in keep + kill)          # dry run touches nothing
+
+    wet = P.run_prune(cfg, yes=True)
+    assert len(wet["deleted"]) == 4
+    assert all(p.exists() for p in keep)
+    assert not any(p.exists() for p in kill)
+    assert not (outd / "hkh_myanmar_chin_webmap").exists()
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

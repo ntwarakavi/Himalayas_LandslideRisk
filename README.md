@@ -526,8 +526,9 @@ outputs/hkh_region/index.html                               THE APP
 dropdowns over the selected province's full map; inside every province view:
 the climate selector (present day, opened by default, plus SSP2-4.5 and
 SSP5-8.5 over both 2021-2040 and 2041-2060), exposure bands with an on/off
-colour toggle, failure-mechanism glyphs on roads (▲ cut-slope, ◆ channel
-crossing) with exposure as the colour and mechanism as the shape, the worst
+colour toggle, failure mechanisms as road stroke patterns (solid burial-only,
+dashed cut-slope, dotted washout, dash-dot both) under a dark emphasis
+casing, with exposure as the colour and mechanism as the line style, the worst
 settlements list, the clipped unit boundary, three basemaps with a light
 dataviz default, popups carrying every scenario score, the expected unstable
 supply, the worst threat sector and the settlement footprint — and a

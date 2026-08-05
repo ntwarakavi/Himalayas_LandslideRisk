@@ -568,12 +568,12 @@ _PAGE = r"""<!doctype html>
       <dt>share exposed (roads)</dt>
       <dd>Exposed kilometres as a % of all road kilometres assessed in this
       province.</dd>
-      <dt>&#9650; cut-slope</dt>
+      <dt>dashed line: cut-slope</dt>
       <dd>Ground immediately above the segment steeper than the configured
       angle (default 35&deg;; the popup shows the measured value). A terrain
       flag marking where the model's road-cut blind spot is &mdash; not a
       model score.</dd>
-      <dt>&#9670; washout</dt>
+      <dt>dotted line: washout</dt>
       <dd>The segment touches a drainage cell (specific catchment area above
       the configured threshold, default 5,000&nbsp;m). Crossings there are
       taken by flows arriving <i>along the channel</i>.</dd>
@@ -751,11 +751,26 @@ function settlementLayer(gj) {
     }});
 }
 
+// Exposure is the colour; the failure mechanism is the stroke pattern.
+// Solid = burial from above only; dashed = cut-slope; dotted = washout;
+// dash-dot = both. The pattern survives the neutral-colour toggle, so
+// switching bands off never erases which way a road fails.
+function mechDash(p) {
+  if (p.cut_slope && p.washout) return '12 6 1 6';
+  if (p.cut_slope) return '10 6';
+  if (p.washout) return '1 8';
+  return null;
+}
+
 function roadStyle(f) {
+  const p = f.properties;
+  const dash = mechDash(p);
+  const base = {dashArray: dash,
+                lineCap: (p.washout && !p.cut_slope) ? 'round' : 'butt'};
   if (!STATE.bands)
-    return {color: NEUTRAL.road, weight: 2.5, opacity: 0.75};
-  const c = cur(f.properties);
-  return {color: bandColour(bandFor(c)),
+    return {...base, color: NEUTRAL.road, weight: 2.5, opacity: 0.75};
+  const c = cur(p);
+  return {...base, color: bandColour(bandFor(c)),
           weight: c.score >= (SUMMARY.exposed_threshold ?? 0.08) ? 4 : 2.5,
           opacity: 0.9};
 }
@@ -781,48 +796,30 @@ function roadLayer(gj) {
     onEachFeature: (f, l) => l.bindPopup(() => roadPopup(f.properties))});
 }
 
-// ---- road failure mechanisms ---------------------------------------------
-// Exposure is the colour; the failure mechanism is the shape. The line
-// itself is burial from above (the reach score). Segments flagged for the
-// two mechanisms that score cannot see carry a glyph at their midpoint:
-// a triangle for cut-slope, a diamond for a channel crossing. Glyph fill
-// tracks the segment's exposure colour, so shape and colour answer
-// different questions on the same symbol.
-const GLYPHS = {cut: 'M7 1 L13 12 L1 12 Z',
-                wash: 'M7 0 L13 7 L7 14 L1 7 Z'};
+// A dark casing beneath flagged segments - the border that makes a
+// mechanism-carrying road stand out from a plain one at any zoom. Its own
+// overlay so the emphasis can be switched off; the stroke pattern on the
+// road line itself always tells the mechanism.
+let mechCount = 0;
 
-function glyphSvg(path, fill) {
-  return '<svg class="glyph" width="14" height="14" viewBox="0 0 14 14"'
-    + ' xmlns="http://www.w3.org/2000/svg"><path d="' + path + '" fill="'
-    + fill + '" stroke="#000" stroke-opacity="0.45" stroke-width="1"/></svg>';
+function casingLayer(gj) {
+  mechCount = 0;
+  return L.geoJSON(gj, {
+    interactive: false,
+    filter: f => {
+      const hit = !!(f.properties.cut_slope || f.properties.washout);
+      if (hit) mechCount += 1;
+      return hit;
+    },
+    style: {color: '#111', weight: 6.5, opacity: 0.5}});
 }
 
-function mechIcon(p) {
-  const fill = fillFor(p);
-  const parts = [];
-  if (p.cut_slope) parts.push(glyphSvg(GLYPHS.cut, fill));
-  if (p.washout) parts.push(glyphSvg(GLYPHS.wash, fill));
-  return L.divIcon({className: 'mechicon', html: parts.join(''),
-                    iconSize: [14 * parts.length, 14],
-                    iconAnchor: [7 * parts.length, 7]});
-}
-
-let mechMarkers = [];
-
-function mechanismLayer(gj) {
-  mechMarkers = [];
-  const g = L.layerGroup();
-  gj.features.forEach(f => {
-    const p = f.properties;
-    if (!p.cut_slope && !p.washout) return;
-    const cs = f.geometry.coordinates;
-    const mid = cs[Math.floor(cs.length / 2)];
-    const m = L.marker([mid[1], mid[0]], {icon: mechIcon(p)});
-    m.bindPopup(() => roadPopup(p));
-    mechMarkers.push({marker: m, props: p});
-    g.addLayer(m);
-  });
-  return g;
+function mechSample(dash) {
+  return '<svg class="glyph" width="46" height="10">'
+    + '<line x1="2" y1="5" x2="44" y2="5" stroke="#111" stroke-width="7"'
+    + ' opacity="0.5"/>'
+    + '<line x1="2" y1="5" x2="44" y2="5" stroke="#888" stroke-width="3"'
+    + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/></svg>';
 }
 
 function inventoryLayer(colour, r) {
@@ -838,7 +835,6 @@ function restyle() {
   if (settlements) settlements.eachLayer(l => l.setStyle(
     {fillColor: fillFor(l.feature.properties)}));
   if (roads) roads.setStyle(roadStyle);
-  mechMarkers.forEach(m => m.marker.setIcon(mechIcon(m.props)));
   // The legend describes colours that are no longer on the map when the
   // toggle is off, so it dims rather than lies.
   document.getElementById('bands').style.opacity = STATE.bands ? '' : '0.35';
@@ -854,8 +850,8 @@ if (HAVE_MAP) {
     style: {color: '#111', weight: 3, opacity: 0.95,
             fill: false, dashArray: '8 5'}}),
     true);
+  addData('roads', 'Failure mechanisms (emphasis)', casingLayer, true);
   roads = addData('roads', 'Roads by exposure', roadLayer, true);
-  addData('roads', 'Failure mechanisms', mechanismLayer, true);
   settlements = addData('settlements', 'Settlements by exposure',
                         settlementLayer, true);
   addData('inventory', 'Training landslides',
@@ -884,15 +880,15 @@ document.getElementById('bandtoggle').addEventListener('change', ev => {
   restyle();
 });
 
-if (mechMarkers.length) {
+if (mechCount) {
   document.getElementById('mechlegend').innerHTML =
     '<h2>Road failure mechanisms</h2>'
-    + '<div>' + glyphSvg(GLYPHS.cut, '#888')
-    + 'cut-slope: steep ground immediately above</div>'
-    + '<div>' + glyphSvg(GLYPHS.wash, '#888')
-    + 'washout: crosses a channel</div>'
-    + '<p class="sub" style="margin-top:4px">The line is burial from above; '
-    + 'glyph shape is the mechanism, glyph colour the segment\'s exposure. '
+    + '<div>' + mechSample(null) + 'solid: burial from above only</div>'
+    + '<div>' + mechSample('10 6') + 'dashed: cut-slope above the road</div>'
+    + '<div>' + mechSample('1 8') + 'dotted: washout, crosses a channel</div>'
+    + '<div>' + mechSample('12 6 1 6') + 'dash-dot: both</div>'
+    + '<p class="sub" style="margin-top:4px">Colour is exposure; the stroke '
+    + 'pattern is the mechanism; the dark border marks flagged segments. '
     + 'Flags come from terrain geometry, not the stability model.</p>';
 }
 
@@ -1175,8 +1171,8 @@ _INDEX = r"""<!doctype html>
     <p class="caps">Inside each province view: <b>climate scenarios</b>
     (present day and both near-term windows per pathway) &middot;
     <b>exposure bands</b> with an on/off colour toggle &middot;
-    <b>failure-mechanism glyphs</b> on roads (&#9650; cut-slope,
-    &#9670; channel crossing) &middot; <b>worst settlements</b> list &middot;
+    <b>failure mechanisms</b> as road stroke patterns (dashed cut-slope,
+    dotted washout) &middot; <b>worst settlements</b> list &middot;
     the unit <b>boundary</b> &middot; three basemaps. Every layer and table
     follows the scenario selector.</p>
   </div>
@@ -1320,8 +1316,8 @@ hover."],
   viewer: ["The province viewer", "Pick a country, then a province; the \
 full interactive map loads below. Inside it: five climate scenarios \
 (present day opens by default), exposure bands with a colour toggle, \
-failure-mechanism glyphs on roads, the worst settlements, the clipped \
-boundary, three basemaps, and a glossary in its sidebar. The selection \
+failure mechanisms as road stroke patterns, the worst settlements, the \
+clipped boundary, three basemaps, and a glossary in its sidebar. The selection \
 lives in this page's URL hash, so a province can be linked directly."],
 };
 

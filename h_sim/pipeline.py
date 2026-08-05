@@ -1158,17 +1158,44 @@ def _cluster_assets(points: List[Tuple[float, float, str]],
                 return points[i][2]
         return "(unnamed)"
 
+    # Shapes: a tight convex outline around each cluster's members, padded
+    # 250 m, rather than an enclosing circle - circles balloon on elongated
+    # clusters (a road) and overlap their neighbours; hulls hug the members,
+    # and since every cross-pair between distinct clusters exceeds the link
+    # distance, padded hulls stay apart. Padding each point's square corners
+    # before taking the hull also makes a straight-line cluster a proper
+    # thin polygon instead of a degenerate segment.
+    def hull(pts_xy):
+        pts_xy = sorted(set(pts_xy))
+        if len(pts_xy) <= 2:
+            return pts_xy
+        def half(seq):
+            h = []
+            for p in seq:
+                while len(h) >= 2 and ((h[-1][0] - h[-2][0])
+                                       * (p[1] - h[-2][1])
+                                       - (h[-1][1] - h[-2][1])
+                                       * (p[0] - h[-2][0])) <= 0:
+                    h.pop()
+                h.append(p)
+            return h
+        lo, hi = half(pts_xy), half(reversed(pts_xy))
+        return lo[:-1] + hi[:-1]
+
+    PAD = 250.0
     shapes = []
     for g in sorted(groups.values(), key=len, reverse=True):
         if len(g) < 2:
             continue
-        clat = sum(points[i][0] for i in g) / len(g)
-        clon = sum(points[i][1] for i in g) / len(g)
-        r = max(math.hypot((points[i][1] - clon) * mx,
-                           (points[i][0] - clat) * my) for i in g)
+        padded = []
+        for i in g:
+            x, y = xy[i]
+            for dx in (-PAD, PAD):
+                for dy in (-PAD, PAD):
+                    padded.append((x + dx, y + dy))
+        poly = [(round(x / mx, 5), round(y / my, 5)) for x, y in hull(padded)]
         shapes.append({"n": len(g), "name": label(g),
-                       "lat": round(clat, 5), "lon": round(clon, 5),
-                       "radius_m": int(r + 300)})
+                       "polygon": [[lon, lat] for lon, lat in poly]})
 
     return {"n": len(groups),
             "top": [{"n": len(g), "name": label(g),

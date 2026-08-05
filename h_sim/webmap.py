@@ -571,12 +571,13 @@ _PAGE = r"""<!doctype html>
       <dt>share exposed (roads)</dt>
       <dd>Exposed kilometres as a % of all road kilometres assessed in this
       province.</dd>
-      <dt>risk clusters (green &middot; yellow circles)</dt>
-      <dd>Enclosing circles around distinct concentrations of at-risk
-      assets: exposed settlements (green border) or exposed road segments
-      (yellow border) grouped when within 2.5&nbsp;km of one another. The
-      sidebar lists the largest by member count; singleton clusters are
-      counted but not drawn.</dd>
+      <dt>risk clusters (green &middot; yellow outlines)</dt>
+      <dd>Tight outlines around distinct concentrations of at-risk assets:
+      exposed settlements (green border) or exposed road segments (yellow
+      border) grouped when within 2.5&nbsp;km of one another. Each shape is
+      the convex outline of its members, padded 250&nbsp;m, so shapes hug
+      their clusters and do not overlap. The sidebar lists the largest by
+      member count; singleton clusters are counted but not drawn.</dd>
       <dt>dashed line: cut-slope</dt>
       <dd>Ground immediately above the segment steeper than the configured
       angle (default 35&deg;; the popup shows the measured value). A terrain
@@ -941,8 +942,8 @@ if (HAVE_MAP) {
     const list = CLUST[kind] || [];
     if (!list.length) return;
     overlays[cs.label] = L.layerGroup(list.map(c =>
-      L.circle([c.lat, c.lon], {
-        radius: c.radius_m, color: cs.colour, weight: 2,
+      L.polygon((c.polygon || []).map(([lon, lat]) => [lat, lon]), {
+        color: cs.colour, weight: 2,
         fillColor: cs.colour, fillOpacity: 0.07})
       .bindPopup(`<b>${c.name}</b><br>${c.n} ${cs.what} in this cluster`)
     )).addTo(map);

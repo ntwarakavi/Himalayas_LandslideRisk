@@ -1107,6 +1107,64 @@ def _short_scenario(scen: CL.ClimateScenario) -> str:
     return f"SSP{ssp[0]}-{ssp[1]}.{ssp[2]} {lo}-{hi[-2:]}"
 
 
+def _cluster_assets(points: List[Tuple[float, float, str]],
+                    link_m: float = 2500.0) -> Dict[str, object]:
+    """Group points whose pairwise gaps are within ``link_m`` (single-link,
+    via a spatial hash), so "how many distinct concentrations of risk" has a
+    number. Returns the cluster count and the largest clusters by members,
+    each named after its first named member."""
+    import math
+    n = len(points)
+    if not n:
+        return {"n": 0, "top": []}
+    lat0 = sum(p[0] for p in points) / n
+    mx = 111320.0 * max(math.cos(math.radians(lat0)), 0.2)
+    my = 110540.0
+    xy = [(p[1] * mx, p[0] * my) for p in points]
+    cell = link_m
+    buckets: Dict[Tuple[int, int], List[int]] = {}
+    for i, (x, y) in enumerate(xy):
+        buckets.setdefault((int(x // cell), int(y // cell)), []).append(i)
+    parent = list(range(n))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for (cx, cy), members in buckets.items():
+        cand: List[int] = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                cand.extend(buckets.get((cx + dx, cy + dy), ()))
+        for i in members:
+            xi, yi = xy[i]
+            for j in cand:
+                if j <= i:
+                    continue
+                xj, yj = xy[j]
+                if (xi - xj) ** 2 + (yi - yj) ** 2 <= link_m ** 2:
+                    parent[find(i)] = find(j)
+
+    groups: Dict[int, List[int]] = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    tops = sorted(groups.values(), key=len, reverse=True)[:5]
+
+    def label(idx: List[int]) -> str:
+        for i in idx:
+            if points[i][2]:
+                return points[i][2]
+        return "(unnamed)"
+
+    return {"n": len(groups),
+            "top": [{"n": len(g), "name": label(g),
+                     "lat": round(sum(points[i][0] for i in g) / len(g), 4),
+                     "lon": round(sum(points[i][1] for i in g) / len(g), 4)}
+                    for g in tops if len(g) >= 2]}
+
+
 def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
                open_after: bool = False) -> Dict[str, str]:
     """STEP 11 - assemble a browsable Leaflet page from a finished run.
@@ -1224,6 +1282,26 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
                                    scenarios=[s.key for s in scens],
                                    baseline=CL.BASELINE.key))
 
+    # Distinct clusters of at-risk assets, computed from exactly the rows
+    # the page ships (post-clip): exposed settlements, and exposed road
+    # segments by midpoint, linked within 2.5 km.
+    thr = float(summary.get("exposed_threshold") or 0.08)
+    clusters = {
+        "settlements": _cluster_assets(
+            [(r["lat"], r["lon"], r.get("name") or "")
+             for r in kept.get("settlements", [])
+             if (r.get("score") or 0) >= thr]),
+        "roads": _cluster_assets(
+            [(r["coords"][len(r["coords"]) // 2][1],
+              r["coords"][len(r["coords"]) // 2][0],
+              r.get("name") or "")
+             for r in kept.get("roads", [])
+             if (r.get("score") or 0) >= thr]),
+    }
+    summary["clusters"] = clusters
+    _log("webmap", f"risk clusters: {clusters['settlements']['n']} "
+                   f"settlement, {clusters['roads']['n']} road")
+
     # The training data, so the fit is visible next to what it produced.
     if cfg.inventory_path and os.path.exists(cfg.inventory_path):
         try:
@@ -1252,7 +1330,7 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
     if open_after:
         import webbrowser
         webbrowser.open(f"file://{os.path.abspath(path)}")
-    return {"webmap": path, "dir": out_dir}
+    return {"webmap": path, "dir": out_dir, "clusters": clusters}
 
 
 # ---------------------------------------------------------------------------
@@ -1420,7 +1498,9 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
                          f"({type(exc).__name__}: {exc})")
     if "webmap" in want:
         try:
-            out["webmap"] = run_webmap(sub)["webmap"]
+            r = run_webmap(sub)
+            out["webmap"] = r["webmap"]
+            out["clusters"] = r.get("clusters")
         except Exception as exc:                          # noqa: BLE001
             out.setdefault("errors", {})["webmap"] = \
                 f"{type(exc).__name__}: {exc}"
@@ -1588,7 +1668,7 @@ def run_region(cfg: C.Config, mode: str = "download",
                     continue
                 for key in ("stats", "exposure", "webmap", "maps",
                             "risk", "errors", "summary", "climate",
-                            "hazard"):
+                            "hazard", "clusters"):
                     if not rec.get(key):
                         continue
                     if (key in ("stats", "exposure", "errors")
@@ -1649,6 +1729,36 @@ def run_region(cfg: C.Config, mode: str = "download",
 
     _log("done", f"{done} units produced, {len(failed)} failed -> {path}")
     return report
+
+
+def strip_page_products(cfg: C.Config) -> int:
+    """Drop the webmap product (and clusters) from every marker, so the next
+    sweep rebuilds each province's page with the current viewer while keeping
+    all scored exposure. The cheap way to roll a page redesign across a
+    finished region."""
+    n = 0
+    if not os.path.isdir(cfg.out_dir):
+        return 0
+    for entry in sorted(os.listdir(cfg.out_dir)):
+        if not (entry.startswith(f"{cfg.name}_")
+                and entry.endswith("_webmap.json")):
+            continue
+        path = os.path.join(cfg.out_dir, entry)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except Exception:                                 # noqa: BLE001
+            continue
+        if not isinstance(rec, dict) or "webmap" not in rec:
+            continue
+        rec.pop("webmap", None)
+        rec.pop("clusters", None)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(rec, fh, indent=2, default=str)
+        n += 1
+    _log("region", f"page product stripped from {n} markers; the next sweep "
+                   "rebuilds every province page")
+    return n
 
 
 def run_prune(cfg: C.Config, yes: bool = False) -> Dict[str, object]:
@@ -1756,7 +1866,8 @@ def _merge_stage_reports(cfg: C.Config,
         if countries and unit.get("country") not in countries:
             continue
         cur = merged.setdefault(slug, {"unit": unit})
-        for key in ("stats", "exposure", "webmap", "maps", "risk", "errors"):
+        for key in ("stats", "exposure", "webmap", "maps", "risk",
+                    "errors", "clusters"):
             if rec.get(key):
                 if key in ("stats", "exposure") and isinstance(cur.get(key), dict):
                     cur[key].update(rec[key])
@@ -1796,11 +1907,15 @@ def run_region_index(cfg: C.Config, report: Dict[str, object]) -> str:
             "road_km_exposed": exp.get("road_km_exposed"),
             "map": (os.path.relpath(page, out_dir) if page else None),
             "map_error": (u.get("errors") or {}).get("webmap"),
+            "sett_clusters": ((u.get("clusters") or {}).get("settlements")
+                              or {}).get("n"),
+            "road_clusters": ((u.get("clusters") or {}).get("roads")
+                              or {}).get("n"),
         })
     rows.sort(key=lambda r: -(r["unstable_pct"] or 0))
 
     path = webmap.build_region_index(
-        out_dir, f"H-SIM \u2014 {cfg.name}", rows,
+        out_dir, "Himalayan Slope Instability Model", rows,
         {"resolution_deg": report.get("resolution_deg"),
          "buffer_deg": report.get("buffer_deg"),
          "n_units_found": report.get("n_units_found"),

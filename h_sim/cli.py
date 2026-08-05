@@ -718,6 +718,8 @@ def _step_webapp(args) -> int:
 
 
 def _step_refresh(args) -> int:
+    if getattr(args, "rebuild_pages", False):
+        pipeline.strip_page_products(_build_config(args))
     return _region_stage(args, "refresh")
 
 
@@ -933,6 +935,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                        help="STEPS 7-9 per province, worst first: exposure, "
                             "then that province's page, then the app "
                             "updates - so there is always something to show")
+    p.add_argument("--rebuild-pages", action="store_true",
+                   help="rebuild every province page with the current viewer "
+                        "(keeps all scored exposure; only pages rebuild)")
     _region_opts(p)
 
     p = sub.add_parser("step9-webapp", aliases=["webapp", "step9", "map"],

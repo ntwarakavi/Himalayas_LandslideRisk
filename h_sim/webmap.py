@@ -442,14 +442,16 @@ _PAGE = r"""<!doctype html>
   html, body { margin:0; height:100%; font: 14px/1.5 -apple-system,
     BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg); color: var(--fg); }
-  #app { display: flex; height: 100%; }
-  #map { flex: 1 1 auto; min-width: 0; }
-  #side { width: 360px; flex: 0 0 360px; border-left: 1px solid var(--line);
-          overflow-y: auto; background: var(--panel); }
+  #app { position: relative; height: 100%; }
+  #map { position: absolute; inset: 0; }
+  #side { position: absolute; top: 12px; right: 12px; bottom: 12px;
+          width: 340px; z-index: 1000; overflow-y: auto;
+          background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25);
+          opacity: 0.97; }
   @media (max-width: 900px) {
-    #app { flex-direction: column; }
-    #side { width: 100%; flex: 0 0 45%; border-left: none;
-            border-top: 1px solid var(--line); }
+    #side { top: auto; left: 12px; right: 12px; bottom: 12px;
+            width: auto; max-height: 45%; }
   }
   .pad { padding: 14px 16px; }
   h1 { font-size: 16px; margin: 0 0 2px; letter-spacing: -0.01em; }
@@ -518,6 +520,7 @@ _PAGE = r"""<!doctype html>
 
       <div id="stats"></div>
       <div id="compare"></div>
+      <div id="clusters"></div>
       <div id="worst"></div>
 
       <details class="gloss"><summary>Glossary &mdash; every term, and
@@ -715,9 +718,7 @@ function assetPopup(p, title, extra) {
     ${row('on site', c.on_site)}
     ${row('unstable supply', c.delivering_m2
          ? `${num(c.delivering_m2 / 10000, 1)} ha positioned to reach` : null)}
-    ${row('worst sector', g.sector
-         ? `${g.sector} (weighted ${(g.sector_reaching ?? 0).toFixed(3)})`
-         : null)}
+    ${g.sector ? sectorFigure(g.sector, g.sector_reaching) : ''}
     ${row('worst source', g.n_sources
          ? `${g.source_relief_m} m above, ${g.source_distance_m} m away`
          : 'none')}
@@ -753,9 +754,21 @@ function settlementLayer(gj) {
 
 // Exposure is the colour; the failure mechanism is the stroke pattern.
 // Solid = burial from above only; dashed = cut-slope; dotted = washout;
-// dash-dot = both. The pattern survives the neutral-colour toggle, so
-// switching bands off never erases which way a road fails.
+// dash-dot = both. One vocabulary everywhere: the legend, the popups and
+// the glossary all use these exact words.
+const MECH = {cut: 'cut-slope above the road',
+              wash: 'washout, crosses a channel'};
+const MECH_MIN_ZOOM = 11;
+
+function assessed(p) {
+  const c = cur(p);
+  return !!(c && c.score !== null && c.score !== undefined);
+}
+
 function mechDash(p) {
+  // Zoomed out only the exposure colour reads; the pattern appears once
+  // there is room for it. Unassessed segments never claim a mechanism.
+  if (!assessed(p) || map.getZoom() < MECH_MIN_ZOOM) return null;
   if (p.cut_slope && p.washout) return '12 6 1 6';
   if (p.cut_slope) return '10 6';
   if (p.washout) return '1 8';
@@ -775,12 +788,36 @@ function roadStyle(f) {
           opacity: 0.9};
 }
 
+// The direction risk arrives from, drawn rather than said: a compass ring
+// with an arrow entering from the worst sector and pointing at the
+// settlement in the centre. North is up.
+const SECTOR_AZ = {N: 0, NE: 45, E: 90, SE: 135, S: 180, SW: 225,
+                   W: 270, NW: 315};
+
+function sectorFigure(sector, w) {
+  const az = SECTOR_AZ[sector] ?? 0;
+  return `<div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+    <svg width="46" height="46" viewBox="0 0 46 46">
+      <circle cx="23" cy="23" r="20" fill="none" stroke="#bbb"/>
+      <text x="23" y="9" text-anchor="middle" font-size="8"
+            fill="#888">N</text>
+      <circle cx="23" cy="23" r="3" fill="#555"/>
+      <g transform="rotate(${az} 23 23)">
+        <line x1="23" y1="6" x2="23" y2="14" stroke="#c0392b"
+              stroke-width="2.5"/>
+        <path d="M23 19 L18.5 11.5 L27.5 11.5 Z" fill="#c0392b"/>
+      </g>
+    </svg>
+    <span class="kv">risk arrives from the <b>${sector}</b><br>
+    (weighted ${(w ?? 0).toFixed(3)})</span></div>`;
+}
+
 function mechRows(p) {
-  if (!p.cut_slope && !p.washout) return '';
+  if (!assessed(p) || (!p.cut_slope && !p.washout)) return '';
   return row('mechanisms',
-    [p.cut_slope ? `cut-slope (${p.cut_slope_deg}&deg; adjacent)` : null,
-     p.washout ? `channel crossing (SCA ${num(p.washout_sca_m)} m)` : null]
-    .filter(Boolean).join(' &middot; '));
+    [p.cut_slope ? `${MECH.cut} (${p.cut_slope_deg}&deg;)` : null,
+     p.washout ? `${MECH.wash} (SCA ${num(p.washout_sca_m)} m)` : null]
+    .filter(Boolean).join('<br>'));
 }
 
 function roadPopup(p) {
@@ -801,24 +838,40 @@ function roadLayer(gj) {
 // overlay so the emphasis can be switched off; the stroke pattern on the
 // road line itself always tells the mechanism.
 let mechCount = 0;
+let casing = null;
+
+function casingOpacity() {
+  return map.getZoom() >= MECH_MIN_ZOOM ? 0.5 : 0;
+}
 
 function casingLayer(gj) {
   mechCount = 0;
   return L.geoJSON(gj, {
     interactive: false,
     filter: f => {
-      const hit = !!(f.properties.cut_slope || f.properties.washout);
+      const hit = assessed(f.properties)
+        && !!(f.properties.cut_slope || f.properties.washout);
       if (hit) mechCount += 1;
       return hit;
     },
-    style: {color: '#111', weight: 6.5, opacity: 0.5}});
+    style: () => ({color: '#111', weight: 6.5, opacity: casingOpacity()})});
 }
 
-function mechSample(dash) {
-  return '<svg class="glyph" width="46" height="10">'
-    + '<line x1="2" y1="5" x2="44" y2="5" stroke="#111" stroke-width="7"'
+function combinedRoadLayer(gj) {
+  // Risk and failure mechanism are one thing on one road: a single overlay
+  // draws the emphasis casing beneath the exposure-coloured, pattern-coded
+  // line. Zoomed out the casing and pattern fade, leaving colour alone.
+  casing = casingLayer(gj);
+  roads = roadLayer(gj);
+  return L.layerGroup([casing, roads]);
+}
+
+function mechSample(dash, cap) {
+  return '<svg class="glyph" width="58" height="12">'
+    + '<line x1="3" y1="6" x2="55" y2="6" stroke="#111" stroke-width="9"'
     + ' opacity="0.5"/>'
-    + '<line x1="2" y1="5" x2="44" y2="5" stroke="#888" stroke-width="3"'
+    + '<line x1="3" y1="6" x2="55" y2="6" stroke="#e8590c" stroke-width="4"'
+    + (cap ? ' stroke-linecap="round"' : '')
     + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/></svg>';
 }
 
@@ -839,6 +892,22 @@ function restyle() {
   // toggle is off, so it dims rather than lies.
   document.getElementById('bands').style.opacity = STATE.bands ? '' : '0.35';
   drawStats();
+
+// Distinct clusters of at-risk assets, counted at page build: exposed
+// settlements (and road segments) linked when within the clustering
+// distance of one another. A ranked list of the largest, so "where are
+// the concentrations" has an answer without panning.
+if (SUMMARY.clusters) {
+  const c = SUMMARY.clusters;
+  const li = (t) => (t || []).map(x =>
+    `<tr><td>${x.name}</td><td class="num">${x.n}</td></tr>`).join('');
+  const block = (kind, d) => !d || !d.n ? '' :
+    `<h2>${kind} risk clusters: ${d.n}</h2>` +
+    (d.top && d.top.length
+      ? `<table>${li(d.top)}</table>` : '');
+  document.getElementById('clusters').innerHTML =
+    block('Settlement', c.settlements) + block('Road', c.roads);
+}
 }
 
 if (HAVE_MAP) {
@@ -850,8 +919,12 @@ if (HAVE_MAP) {
     style: {color: '#111', weight: 3, opacity: 0.95,
             fill: false, dashArray: '8 5'}}),
     true);
-  addData('roads', 'Failure mechanisms (emphasis)', casingLayer, true);
-  roads = addData('roads', 'Roads by exposure', roadLayer, true);
+  addData('roads', 'Roads: exposure & failure mechanism',
+          combinedRoadLayer, true);
+  map.on('zoomend', () => {
+    if (roads) roads.setStyle(roadStyle);
+    if (casing) casing.setStyle({opacity: casingOpacity()});
+  });
   settlements = addData('settlements', 'Settlements by exposure',
                         settlementLayer, true);
   addData('inventory', 'Training landslides',
@@ -884,12 +957,12 @@ if (mechCount) {
   document.getElementById('mechlegend').innerHTML =
     '<h2>Road failure mechanisms</h2>'
     + '<div>' + mechSample(null) + 'solid: burial from above only</div>'
-    + '<div>' + mechSample('10 6') + 'dashed: cut-slope above the road</div>'
-    + '<div>' + mechSample('1 8') + 'dotted: washout, crosses a channel</div>'
-    + '<div>' + mechSample('12 6 1 6') + 'dash-dot: both</div>'
+    + '<div>' + mechSample('12 7') + 'dashed: ' + MECH.cut + '</div>'
+    + '<div>' + mechSample('1 9', true) + 'dotted: ' + MECH.wash + '</div>'
+    + '<div>' + mechSample('14 7 2 7') + 'dash-dot: both</div>'
     + '<p class="sub" style="margin-top:4px">Colour is exposure; the stroke '
-    + 'pattern is the mechanism; the dark border marks flagged segments. '
-    + 'Flags come from terrain geometry, not the stability model.</p>';
+    + 'pattern is the mechanism; the dark border marks flagged segments '
+    + '(visible when zoomed in). Shown only where exposure was assessed.</p>';
 }
 
 document.getElementById('meta').textContent = [
@@ -991,15 +1064,7 @@ function drawWorst() {
 
 drawStats();
 
-document.getElementById('caveat').innerHTML =
-  '<b>Read this as screening, not risk.</b> Assets are scored by the ' +
-  'proximity-weighted fraction of upslope ground that could reach them under ' +
-  'an angle-of-reach criterion and that the model calls unstable — not by a ' +
-  'runout model, and with no vulnerability or damage function. Susceptibility ' +
-  'itself is relative: differences between places are meaningful, the value is ' +
-  'not an annual probability of failure. Future scenarios change one thing, ' +
-  'the recharge field; the terrain, the soil parameters and the meaning of a ' +
-  'return period are held at their present-day values.';
+
 </script>
 </body>
 </html>
@@ -1097,7 +1162,12 @@ _INDEX = r"""<!doctype html>
               justify-content:center; text-align:center; padding:30px;
               color:var(--muted); background:var(--panel); font-size:13px; }
   .fallback a { color:var(--accent); }
-  .caps { font-size:12px; color:var(--muted); margin:10px 2px 0; }
+  .caps { font-size:12px; color:var(--muted); margin:10px 14px 0; }
+  .fullbleed { width:100vw; position:relative; left:50%; margin-left:-50vw; }
+  .fullbleed .toolbar { border-radius:0; border-left:none; border-right:none;
+                        padding-left:16px; padding-right:16px; }
+  .fullbleed .framewrap { border-radius:0; border-left:none;
+                          border-right:none; height:78vh; }
   .caps b { color:var(--fg); font-weight:600; }
   tr:hover td { background:var(--panel); }
   .tabs { display:flex; gap:6px; margin:0 0 18px; border-bottom:1px solid var(--line); }
@@ -1131,9 +1201,10 @@ _INDEX = r"""<!doctype html>
   details.gloss summary { cursor:pointer; font-size:12px;
       text-transform:uppercase; letter-spacing:.07em; color:var(--muted);
       font-weight:600; }
-  details.gloss dl { margin:10px 0 0; max-width:820px; }
-  details.gloss dt { font-weight:600; margin-top:8px; }
-  details.gloss dd { margin:1px 0 0 0; color:var(--muted); }
+  details.gloss dl, div.gloss dl { margin:10px 0 0; max-width:820px; }
+  details.gloss dt, div.gloss dt { font-weight:600; margin-top:8px; }
+  details.gloss dd, div.gloss dd { margin:1px 0 0 0; color:var(--muted);
+                                   font-size:12px; }
 
 </style>
 </head>
@@ -1141,16 +1212,16 @@ _INDEX = r"""<!doctype html>
 <div class="wrap">
   <header class="app">
     <h1>__TITLE__</h1>
-    <p class="sub" id="sub" style="margin-bottom:0"></p>
   </header>
 
   <div class="tabs" role="tablist">
     <button class="tab active" data-tab="map">Map</button>
     <button class="tab" data-tab="table">Provinces table</button>
+    <button class="tab" data-tab="gloss">Glossary</button>
   </div>
 
   <section id="tab-map">
-  <div id="viewer" style="display:none">
+  <div id="viewer" class="fullbleed" style="display:none">
     <div class="toolbar">
       <label for="pickCountry">Country</label>
       <select id="pickCountry"></select>
@@ -1198,13 +1269,20 @@ _INDEX = r"""<!doctype html>
           class="info" data-info="sett_exposed">i</span></th>
       <th class="num" data-k="road_km_exposed">Road km exposed<span
           class="info" data-info="road_exposed">i</span></th>
+      <th class="num" data-k="sett_clusters">Settlement clusters<span
+          class="info" data-info="clusters">i</span></th>
+      <th class="num" data-k="road_clusters">Road clusters<span
+          class="info" data-info="clusters">i</span></th>
       <th>Map<span class="info" data-info="map_col">i</span></th>
     </tr></thead>
     <tbody></tbody>
   </table></div>
 
-  <details class="gloss"><summary>Glossary &mdash; every column, and every
-  % of what</summary><dl>
+  </section>
+
+  <section id="tab-gloss" hidden>
+  <h2>Glossary &mdash; every term, and every % of what</h2>
+  <div class="gloss"><dl>
   <dt>Unstable %</dt>
   <dd>% of the grid cells <i>inside that province's boundary</i> whose
   failure probability is &ge; 0.5. The probability itself is the share of
@@ -1224,10 +1302,15 @@ _INDEX = r"""<!doctype html>
   <dt>Most unstable (card)</dt>
   <dd>The largest Unstable % among the mapped provinces.</dd>
   <dt>Map</dt>
-  <dd>Opens that province in the viewer above; every per-province figure,
-  mechanism flag and climate scenario lives there, with its own fuller
-  glossary in the sidebar.</dd>
-  </dl></details>
+  <dd>Opens that province in the viewer on the Map tab; every per-province
+  figure, mechanism pattern and climate scenario lives there, with its own
+  fuller glossary in the sidebar.</dd>
+  <dt>Risk clusters (settlements &middot; roads)</dt>
+  <dd>Distinct concentrations of at-risk assets: exposed settlements (or
+  exposed road segments) grouped when within 2.5&nbsp;km of one another,
+  counted per province. Each province page lists its largest clusters by
+  member count.</dd>
+  </dl></div>
 
   <div class="note" id="caveat"></div>
   </section>
@@ -1250,11 +1333,6 @@ const num = (v, d) => (v === null || v === undefined)
   : v.toLocaleString(undefined, {minimumFractionDigits: d ?? 0,
                                  maximumFractionDigits: d ?? 0});
 
-document.getElementById('sub').textContent =
-  [`${META.n_completed ?? ROWS.length} of ${META.n_found ?? META.n_units_found ?? ROWS.length} provinces`,
-   META.resolution_deg ? `${META.resolution_deg} deg grid` : null,
-   META.buffer_deg ? `${META.buffer_deg} deg routing buffer` : null
-  ].filter(Boolean).join(' · ');
 
 const worst = Math.max(...ROWS.map(r => r.unstable_pct || 0), 0);
 // Bars need a non-zero denominator; the headline figure must not borrow it.
@@ -1310,6 +1388,10 @@ inside the boundary, 0-1. Relative: compare provinces, do not read as a \
 yearly chance."],
   p90: ["P90", "The 90th-percentile per-cell failure probability inside the \
 boundary - the level the worst tenth of the province's ground exceeds."],
+  clusters: ["Risk clusters", "Distinct concentrations of at-risk assets: \
+exposed settlements (or exposed 500 m road segments) grouped when within \
+2.5 km of one another, counted per province. Open the province to see its \
+largest clusters listed by member count."],
   map_col: ["Map", "'view' opens that province in the Map tab. A dash means \
 the province's page is not built yet; 'failed' carries the build error on \
 hover."],
@@ -1347,8 +1429,9 @@ document.querySelectorAll('.info').forEach(el =>
 function showTab(name) {
   document.querySelectorAll('.tab').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === name));
-  document.getElementById('tab-map').hidden = name !== 'map';
-  document.getElementById('tab-table').hidden = name !== 'table';
+  ['map', 'table', 'gloss'].forEach(t => {
+    document.getElementById('tab-' + t).hidden = t !== name;
+  });
 }
 document.querySelectorAll('.tab').forEach(b =>
   b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -1447,6 +1530,8 @@ function draw() {
       <td class="num">${num(r.p90_probability, 3)}</td>
       <td class="num">${num(r.settlements_exposed)}</td>
       <td class="num">${num(r.road_km_exposed, 0)}</td>
+      <td class="num">${num(r.sett_clusters)}</td>
+      <td class="num">${num(r.road_clusters)}</td>
       <td>${r.map ? `<span class="rowlink" data-slug="${r.slug}">view</span>`
                   : r.map_error
                   ? `<span style="color:var(--accent)" title="${esc(r.map_error)}">failed &#9432;</span>`

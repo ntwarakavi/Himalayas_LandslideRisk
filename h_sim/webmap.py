@@ -482,6 +482,13 @@ _PAGE = r"""<!doctype html>
   .pill { display:inline-block; padding:1px 6px; border-radius:9px;
           font-size:11px; background:var(--line); color:var(--muted);
           margin-left:6px; }
+  details.gloss { margin-top:16px; font-size:12px; }
+  details.gloss summary { cursor:pointer; font-size:12px;
+      text-transform:uppercase; letter-spacing:.07em; color:var(--muted);
+      font-weight:600; }
+  details.gloss dl { margin:10px 0 0; }
+  details.gloss dt { font-weight:600; margin-top:8px; }
+  details.gloss dd { margin:1px 0 0 0; color:var(--muted); }
   .mechicon { background:none; border:none; }
   .glyph { vertical-align:-2px; margin-right:6px; }
 </style>
@@ -512,6 +519,72 @@ _PAGE = r"""<!doctype html>
       <div id="stats"></div>
       <div id="compare"></div>
       <div id="worst"></div>
+
+      <details class="gloss"><summary>Glossary &mdash; every term, and
+      every % of what</summary><dl>
+      <dt>Failure probability (the raster)</dt>
+      <dd>The share of Monte Carlo soil-parameter draws that push a cell's
+      factor of safety below 1. A <i>relative</i> ranking under parameter
+      uncertainty &mdash; never an annual chance. "Unstable" anywhere on this
+      page means probability &ge; 0.5.</dd>
+      <dt>Unstable area %</dt>
+      <dd>% of the grid cells <i>inside this province's boundary</i> with
+      failure probability &ge; 0.5.</dd>
+      <dt>Mean P &middot; P90</dt>
+      <dd>Mean and 90th-percentile per-cell failure probability over the same
+      cells.</dd>
+      <dt>Exposure (the score on every asset)</dt>
+      <dd>The greater of <b>on site</b> and <b>reaching</b>, 0&ndash;1.</dd>
+      <dt>on site</dt>
+      <dd>Failure probability of the cell the asset stands on.</dd>
+      <dt>reaching</dt>
+      <dd>Of the upslope ground within 2&nbsp;km that can reach the asset
+      along an 18&deg; travel line, the fraction the model calls unstable,
+      weighted toward nearer sources (1/distance). A % <i>of that reachable
+      ground</i>, not of the province.</dd>
+      <dt>exposed</dt>
+      <dd>Score at or above <span class="glothr">0.08</span>. The threshold
+      is a screening convention, not a physical constant.</dd>
+      <dt>bands</dt>
+      <dd>The continuous score cut at 0.02 / 0.08 / 0.20 / 0.40 for the
+      legend. "Moderate" is the quantitative statement that roughly a fifth
+      of the reachable ground is called unstable.</dd>
+      <dt>worst source</dt>
+      <dd>The single most unstable reachable cell: its height above the asset
+      and its horizontal distance.</dd>
+      <dt>unstable supply</dt>
+      <dd>Expected unstable area positioned to reach the asset:
+      &Sigma; probability &times; cell area, in hectares. Separates thirty
+      threatening cells from three thousand at the same mean. Relative, like
+      everything here.</dd>
+      <dt>worst sector</dt>
+      <dd>The compass octant whose reachable ground carries the highest
+      weighted unstable fraction &mdash; which slope to walk first.</dd>
+      <dt>assessed over N cells</dt>
+      <dd>Settlements are scored over a footprint disc scaled by place type
+      (hamlet 100&nbsp;m &hellip; city 1&nbsp;km); the headline is the
+      90th-percentile cell &mdash; the exposed edge of town, not its safest
+      point and not its single worst cell.</dd>
+      <dt>share exposed (roads)</dt>
+      <dd>Exposed kilometres as a % of all road kilometres assessed in this
+      province.</dd>
+      <dt>&#9650; cut-slope</dt>
+      <dd>Ground immediately above the segment steeper than the configured
+      angle (default 35&deg;; the popup shows the measured value). A terrain
+      flag marking where the model's road-cut blind spot is &mdash; not a
+      model score.</dd>
+      <dt>&#9670; washout</dt>
+      <dd>The segment touches a drainage cell (specific catchment area above
+      the configured threshold, default 5,000&nbsp;m). Crossings there are
+      taken by flows arriving <i>along the channel</i>.</dd>
+      <dt>Climate scenarios</dt>
+      <dd>Only recharge changes: CMIP6 wettest-month precipitation for the
+      chosen pathway and window, normalised by the present-day reference.
+      Terrain, soils and thresholds are held fixed.</dd>
+      <dt>&Delta; / change</dt>
+      <dd>Difference from the present-day scenario, same units as the figure
+      it follows.</dd>
+      </dl></details>
 
       <div class="note" id="caveat"></div>
     </div>
@@ -802,6 +875,10 @@ document.getElementById('bands').innerHTML = Object.entries(BANDS)
   .map(([k, v]) => `<div><span class="chip" style="background:${v}"></span>${k}</div>`)
   .join('');
 
+document.querySelectorAll('.glothr').forEach(el => {
+  el.textContent = String(SUMMARY.exposed_threshold ?? 0.08);
+});
+
 document.getElementById('bandtoggle').addEventListener('change', ev => {
   STATE.bands = ev.target.checked;
   restyle();
@@ -1028,6 +1105,14 @@ _INDEX = r"""<!doctype html>
   .caps b { color:var(--fg); font-weight:600; }
   tr:hover td { background:var(--panel); }
   .rowlink { cursor:pointer; color:var(--accent); text-decoration:underline; }
+  details.gloss { margin-top:20px; font-size:12px; }
+  details.gloss summary { cursor:pointer; font-size:12px;
+      text-transform:uppercase; letter-spacing:.07em; color:var(--muted);
+      font-weight:600; }
+  details.gloss dl { margin:10px 0 0; max-width:820px; }
+  details.gloss dt { font-weight:600; margin-top:8px; }
+  details.gloss dd { margin:1px 0 0 0; color:var(--muted); }
+
 </style>
 </head>
 <body>
@@ -1081,6 +1166,32 @@ _INDEX = r"""<!doctype html>
     </tr></thead>
     <tbody></tbody>
   </table></div>
+
+  <details class="gloss"><summary>Glossary &mdash; every column, and every
+  % of what</summary><dl>
+  <dt>Unstable %</dt>
+  <dd>% of the grid cells <i>inside that province's boundary</i> whose
+  failure probability is &ge; 0.5. The probability itself is the share of
+  Monte Carlo soil-parameter draws that push a cell's factor of safety below
+  1 &mdash; a relative ranking, never an annual chance.</dd>
+  <dt>Mean P &middot; P90</dt>
+  <dd>Mean and 90th-percentile per-cell failure probability over the same
+  cells, 0&ndash;1.</dd>
+  <dt>Settlements exposed</dt>
+  <dd>Settlements whose exposure score is at or above 0.08 under the present
+  day. The score is the greater of the probability where the settlement
+  stands and the unstable fraction of upslope ground positioned to reach it
+  (18&deg; travel line, 2&nbsp;km, distance-weighted).</dd>
+  <dt>Road km exposed</dt>
+  <dd>Kilometres of assessed road segments at or above the same threshold,
+  each 500&nbsp;m segment scored at its most exposed point.</dd>
+  <dt>Most unstable (card)</dt>
+  <dd>The largest Unstable % among the mapped provinces.</dd>
+  <dt>Map</dt>
+  <dd>Opens that province in the viewer above; every per-province figure,
+  mechanism flag and climate scenario lives there, with its own fuller
+  glossary in the sidebar.</dd>
+  </dl></details>
 
   <div class="note" id="caveat"></div>
 </div>

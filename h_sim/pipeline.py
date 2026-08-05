@@ -1286,6 +1286,16 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
     for kind in ("settlements", "roads"):
         src = _out(cfg, f"risk_{kind}.json")
         if not os.path.exists(src):
+            # Never leave a previous run's layer lying next to a page that
+            # was built without it - a fresh index over a stale roads.js is
+            # exactly the mismatch that looks like "the roads disappeared".
+            stale = os.path.join(out_dir, f"{kind}.js")
+            if os.path.exists(stale):
+                os.remove(stale)
+                _log("webmap", f"STALE {kind}.js from a previous run removed")
+            _log("webmap", f"WARNING: no {kind} product ({os.path.basename(src)}"
+                           ") - layer omitted; run the "
+                           f"{kind} stage to restore it")
             continue
         with open(src, encoding="utf-8") as fh:
             rows = json.load(fh)
@@ -1302,6 +1312,7 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
         gj = (webmap.points_geojson(rows) if kind == "settlements"
               else webmap.lines_geojson(rows))
         dump(kind, gj)
+        _log("webmap", f"{kind}: {len(rows)} features")
         if kind == "settlements":
             # The sidebar list re-ranks itself when the scenario changes, so it
             # needs each place's whole set of scores, not just today's.

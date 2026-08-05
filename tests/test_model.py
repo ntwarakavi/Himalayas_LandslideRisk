@@ -2119,6 +2119,29 @@ def test_deleting_the_roads_product_forces_a_roads_rerun(tmp_path,
     assert seen == [("roads",)], seen
 
 
+
+
+def test_stale_layer_file_is_removed_when_product_is_missing(tmp_path):
+    """A page rebuilt after risk_roads.json was deleted must not ship the
+    previous run's roads.js - the production 'roads disappeared' state."""
+    from h_sim import config as C2, pipeline as P
+
+    cfg = C2.Config(name="stale", bbox=(84.9, 27.0, 85.3, 27.4),
+                    resolution_deg=0.004, data_dir=str(tmp_path / "raw"),
+                    work_dir=str(tmp_path / "work"),
+                    out_dir=str(tmp_path / "out"),
+                    risk_climate=["current"], n_samples=15)
+    P.run_susceptibility(cfg, mode="demo")
+    P.run_risk(cfg, mode="demo")
+    w = P.run_webmap(cfg)
+    roads_js = os.path.join(w["dir"], "roads.js")
+    assert os.path.exists(roads_js)
+
+    os.remove(os.path.join(cfg.out_dir, "stale_risk_roads.json"))
+    P.run_webmap(cfg)
+    assert not os.path.exists(roads_js), "stale roads.js survived the rebuild"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

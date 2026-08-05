@@ -1234,7 +1234,6 @@ function esc(s) {
                   .replace(/"/g, '&quot;');
 }
 const MAPPED = ROWS.filter(r => r.map && r.slug);
-const PAGE_FAILED = ROWS.filter(r => !r.map && r.map_error);
 const elCountry = document.getElementById('pickCountry');
 const elUnit = document.getElementById('pickUnit');
 const elFrame = document.getElementById('frame');
@@ -1277,17 +1276,6 @@ function select(slug, push) {
   if (push) history.replaceState(null, '', '#' + row.slug);
 }
 
-if (PAGE_FAILED.length) {
-  const v = document.createElement('div');
-  v.className = 'note';
-  v.innerHTML = `<b>${PAGE_FAILED.length} province page(s) failed to
-    build.</b> First error &mdash; ${esc(PAGE_FAILED[0].name)}:
-    <code>${esc(PAGE_FAILED[0].map_error)}</code><br>Hover "failed" in the
-    Map column for each province's error. After fixing the cause, delete
-    those provinces' <b>*_webmap.json</b> markers and rerun step9-webapp or
-    province-refresh; resume rebuilds only what is missing.`;
-  document.getElementById('viewer').before(v);
-}
 if (!MAPPED.length) {
   // A table with no maps should say why, not leave the reader wondering
   // where the product went.

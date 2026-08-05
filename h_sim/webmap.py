@@ -1104,6 +1104,32 @@ _INDEX = r"""<!doctype html>
   .caps { font-size:12px; color:var(--muted); margin:10px 2px 0; }
   .caps b { color:var(--fg); font-weight:600; }
   tr:hover td { background:var(--panel); }
+  .tabs { display:flex; gap:6px; margin:0 0 18px; border-bottom:1px solid var(--line); }
+  .tab { font:inherit; font-size:13px; padding:9px 16px; cursor:pointer;
+         background:none; border:none; color:var(--muted);
+         border-bottom:2px solid transparent; margin-bottom:-1px; }
+  .tab.active { color:var(--fg); border-bottom-color:var(--accent);
+                font-weight:600; }
+  .info { display:inline-block; cursor:pointer; color:var(--muted);
+          border:1px solid var(--line); border-radius:50%; width:15px;
+          height:15px; line-height:14px; text-align:center; font-size:10px;
+          font-style:normal; margin-left:6px; vertical-align:1px;
+          user-select:none; }
+  .info:hover { color:var(--fg); border-color:var(--muted); }
+  .card[data-info] { cursor:pointer; }
+  .card[data-info]:hover { border-color:var(--muted); }
+  .modalwrap { position:fixed; inset:0; background:rgba(0,0,0,.45);
+               display:none; align-items:center; justify-content:center;
+               z-index:50; padding:20px; }
+  .modalwrap.open { display:flex; }
+  .modal { background:var(--bg); color:var(--fg); border:1px solid var(--line);
+           border-radius:10px; max-width:520px; width:100%; padding:18px 20px;
+           box-shadow:0 12px 40px rgba(0,0,0,.35); font-size:13px;
+           line-height:1.55; }
+  .modal h3 { margin:0 0 8px; font-size:15px; }
+  .modal .close { float:right; cursor:pointer; border:none; background:none;
+                  color:var(--muted); font-size:16px; padding:0 2px; }
+  .modal .close:hover { color:var(--fg); }
   .rowlink { cursor:pointer; color:var(--accent); text-decoration:underline; }
   details.gloss { margin-top:20px; font-size:12px; }
   details.gloss summary { cursor:pointer; font-size:12px;
@@ -1122,6 +1148,12 @@ _INDEX = r"""<!doctype html>
     <p class="sub" id="sub" style="margin-bottom:0"></p>
   </header>
 
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-tab="map">Map</button>
+    <button class="tab" data-tab="table">Provinces table</button>
+  </div>
+
+  <section id="tab-map">
   <div id="viewer" style="display:none">
     <div class="toolbar">
       <label for="pickCountry">Country</label>
@@ -1129,6 +1161,7 @@ _INDEX = r"""<!doctype html>
       <label for="pickUnit">Province</label>
       <select id="pickUnit"></select>
       <a id="pickExt" target="_blank" rel="noopener">open in its own tab &#8599;</a>
+      <span class="info" data-info="viewer">i</span>
     </div>
     <div class="framewrap">
       <iframe id="frame" title="province map"></iframe>
@@ -1148,21 +1181,28 @@ _INDEX = r"""<!doctype html>
     follows the scenario selector.</p>
   </div>
 
-  <h2>Region at a glance</h2>
+  <h2>Region at a glance <span class="info" data-info="glance">i</span></h2>
   <div class="cards" id="cards"></div>
+  </section>
 
+  <section id="tab-table" hidden>
   <h2>Provinces, most unstable first</h2>
   <input id="q" placeholder="filter by province or country">
   <div class="tablewrap"><table id="t">
     <thead><tr>
       <th data-k="country">Country</th>
       <th data-k="name">Province</th>
-      <th class="num" data-k="unstable_pct">Unstable %</th>
-      <th class="num" data-k="mean_probability">Mean P</th>
-      <th class="num" data-k="p90_probability">P90</th>
-      <th class="num" data-k="settlements_exposed">Settlements exposed</th>
-      <th class="num" data-k="road_km_exposed">Road km exposed</th>
-      <th>Map</th>
+      <th class="num" data-k="unstable_pct">Unstable %<span class="info"
+          data-info="unstable_pct">i</span></th>
+      <th class="num" data-k="mean_probability">Mean P<span class="info"
+          data-info="mean_p">i</span></th>
+      <th class="num" data-k="p90_probability">P90<span class="info"
+          data-info="p90">i</span></th>
+      <th class="num" data-k="settlements_exposed">Settlements exposed<span
+          class="info" data-info="sett_exposed">i</span></th>
+      <th class="num" data-k="road_km_exposed">Road km exposed<span
+          class="info" data-info="road_exposed">i</span></th>
+      <th>Map<span class="info" data-info="map_col">i</span></th>
     </tr></thead>
     <tbody></tbody>
   </table></div>
@@ -1194,6 +1234,15 @@ _INDEX = r"""<!doctype html>
   </dl></details>
 
   <div class="note" id="caveat"></div>
+  </section>
+
+  <div class="modalwrap" id="modalwrap">
+    <div class="modal" role="dialog" aria-modal="true">
+      <button class="close" id="modalclose" aria-label="close">&#10005;</button>
+      <h3 id="modaltitle"></h3>
+      <div id="modalbody"></div>
+    </div>
+  </div>
 </div>
 <script>
 const ROWS = __ROWS__;
@@ -1217,12 +1266,14 @@ const barScale = worst || 1;
 const sum = (k) => ROWS.reduce((a, r) => a + (r[k] || 0), 0);
 
 document.getElementById('cards').innerHTML = [
-  ['Provinces mapped', num(ROWS.length)],
-  ['Most unstable', ROWS.length ? `${num(worst, 1)}%` : '—'],
-  ['Settlements exposed', num(sum('settlements_exposed'))],
-  ['Road km exposed', num(sum('road_km_exposed'))],
-].map(([k, v]) => `<div class="card"><div class="n">${v}</div>
-   <div class="k">${k}</div></div>`).join('');
+  ['Provinces mapped', num(ROWS.length), 'provinces'],
+  ['Most unstable', ROWS.length ? `${num(worst, 1)}%` : '—', 'most_unstable'],
+  ['Settlements exposed', num(sum('settlements_exposed')), 'sett_exposed'],
+  ['Road km exposed', num(sum('road_km_exposed')), 'road_exposed'],
+].map(([k, v, i]) => `<div class="card" data-info="${i}"><div class="n">${v}</div>
+   <div class="k">${k}<span class="info">i</span></div></div>`).join('');
+document.querySelectorAll('.card[data-info]').forEach(c =>
+  c.addEventListener('click', () => showInfo(c.dataset.info)));
 
 // ---- one app over every province ------------------------------------------
 // Each province's map is its own self-contained page (its rasters and asset
@@ -1233,6 +1284,79 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
                   .replace(/"/g, '&quot;');
 }
+// Click-to-explain: every card, column and control opens a small window
+// saying what the thing is - and for every percentage, % of what.
+const INFO = {
+  glance: ["Region at a glance", "Totals over every province currently in \
+the product. They grow as the run completes provinces; a dash in the table \
+means that province's stage has not finished yet."],
+  provinces: ["Provinces mapped", "How many provinces have results on this \
+page. The selection is set in the config (admin_countries); provinces from \
+deselected countries stay on disk but out of the product."],
+  most_unstable: ["Most unstable", "The largest 'Unstable %' among the \
+mapped provinces: the % of grid cells inside that one province's boundary \
+whose failure probability is at or above 0.5."],
+  sett_exposed: ["Settlements exposed", "Count of settlements with an \
+exposure score at or above 0.08 under the present day. The score is the \
+greater of the failure probability where the settlement stands and the \
+unstable fraction of upslope ground positioned to reach it (18\u00b0 travel \
+line, 2 km, distance-weighted). A screening threshold, not a physical \
+constant."],
+  road_exposed: ["Road km exposed", "Kilometres of 500 m road segments at \
+or above the same 0.08 screen, each segment scored at its most exposed \
+point."],
+  unstable_pct: ["Unstable %", "% of the grid cells inside that province's \
+boundary whose failure probability is at or above 0.5. The probability is \
+the share of Monte Carlo soil-parameter draws pushing a cell's factor of \
+safety below 1 - a relative ranking, never an annual chance."],
+  mean_p: ["Mean P", "Mean per-cell failure probability over the cells \
+inside the boundary, 0-1. Relative: compare provinces, do not read as a \
+yearly chance."],
+  p90: ["P90", "The 90th-percentile per-cell failure probability inside the \
+boundary - the level the worst tenth of the province's ground exceeds."],
+  map_col: ["Map", "'view' opens that province in the Map tab. A dash means \
+the province's page is not built yet; 'failed' carries the build error on \
+hover."],
+  viewer: ["The province viewer", "Pick a country, then a province; the \
+full interactive map loads below. Inside it: five climate scenarios \
+(present day opens by default), exposure bands with a colour toggle, \
+failure-mechanism glyphs on roads, the worst settlements, the clipped \
+boundary, three basemaps, and a glossary in its sidebar. The selection \
+lives in this page's URL hash, so a province can be linked directly."],
+};
+
+const modalwrap = document.getElementById('modalwrap');
+function showInfo(key) {
+  const e = INFO[key];
+  if (!e) return;
+  document.getElementById('modaltitle').textContent = e[0];
+  document.getElementById('modalbody').textContent = e[1];
+  modalwrap.classList.add('open');
+}
+document.getElementById('modalclose').onclick =
+  () => modalwrap.classList.remove('open');
+modalwrap.addEventListener('click', ev => {
+  if (ev.target === modalwrap) modalwrap.classList.remove('open');
+});
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') modalwrap.classList.remove('open');
+});
+document.querySelectorAll('.info').forEach(el =>
+  el.addEventListener('click', ev => {
+    ev.stopPropagation();                 // an i in a sortable header
+    showInfo(el.dataset.info);            // explains; it does not sort
+  }));
+
+// ---- tabs: the map is the product, the table is the ranking ---------------
+function showTab(name) {
+  document.querySelectorAll('.tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === name));
+  document.getElementById('tab-map').hidden = name !== 'map';
+  document.getElementById('tab-table').hidden = name !== 'table';
+}
+document.querySelectorAll('.tab').forEach(b =>
+  b.addEventListener('click', () => showTab(b.dataset.tab)));
+
 const MAPPED = ROWS.filter(r => r.map && r.slug);
 const elCountry = document.getElementById('pickCountry');
 const elUnit = document.getElementById('pickUnit');
@@ -1338,7 +1462,8 @@ document.querySelector('#t tbody').addEventListener('click', ev => {
   const slug = ev.target && ev.target.dataset && ev.target.dataset.slug;
   if (!slug) return;
   select(slug, true);
-  document.getElementById('viewer').scrollIntoView({behavior: 'smooth'});
+  showTab('map');
+  window.scrollTo({top: 0, behavior: 'smooth'});
 });
 
 document.querySelectorAll('#t th').forEach(th => th.addEventListener('click', () => {

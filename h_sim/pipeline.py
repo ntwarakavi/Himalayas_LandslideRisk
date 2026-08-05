@@ -1562,6 +1562,37 @@ def run_region(cfg: C.Config, mode: str = "download",
                 report["units"].append(json.load(fh))
             _log("skip", f"[{i}/{len(runnable)}] {unit.name} already done")
             continue
+        # A multi-stage pass also honours work done stage-by-stage: a unit
+        # whose every requested stage already has its own marker is folded
+        # into one record and skipped, so switching to province-refresh never
+        # re-runs a province that earlier step7/8/9 commands completed.
+        if resume and len(stages) > 1:
+            singles = [os.path.join(cfg.out_dir,
+                                    f"{cfg.name}_{unit.slug}_{s}.json")
+                       for s in stages]
+            if all(os.path.exists(p) for p in singles):
+                folded: Dict[str, object] = {"unit": unit.as_dict()}
+                for p in singles:
+                    try:
+                        with open(p, encoding="utf-8") as fh:
+                            rec = json.load(fh)
+                    except Exception:                     # noqa: BLE001
+                        continue
+                    for key in ("stats", "exposure", "webmap", "maps",
+                                "risk", "errors", "summary"):
+                        if not rec.get(key):
+                            continue
+                        if (key in ("stats", "exposure", "errors")
+                                and isinstance(folded.get(key), dict)):
+                            folded[key].update(rec[key])
+                        else:
+                            folded[key] = rec[key]
+                with open(marker, "w", encoding="utf-8") as fh:
+                    json.dump(folded, fh, indent=2, default=str)
+                report["units"].append(folded)
+                _log("skip", f"[{i}/{len(runnable)}] {unit.name} already "
+                             "done stage-by-stage")
+                continue
         _log("region", f"[{i}/{len(runnable)}] {unit.country} / {unit.name}")
         try:
             res = run_admin_unit(cfg, unit, mode=mode, stages=stages)

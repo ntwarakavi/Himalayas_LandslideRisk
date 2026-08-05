@@ -1888,6 +1888,43 @@ def test_run_region_delivers_progressively_and_worst_first(tmp_path,
     assert report.get("index") and os.path.exists(report["index"])
 
 
+
+
+def test_refresh_skips_provinces_finished_stage_by_stage(tmp_path,
+                                                         monkeypatch):
+    import json as J
+    from h_sim import pipeline as P
+    from h_sim.input import admin as A
+    from h_sim.input.admin import AdminUnit
+
+    geom = {"type": "Polygon", "coordinates":
+            [[[84, 27], [85, 27], [85, 28], [84, 28], [84, 27]]]}
+    unit = AdminUnit(name="Done", country="Nepal",
+                     bbox=(84.0, 27.0, 85.0, 28.0), geometry=geom)
+    cfg = C.Config(name="hkh", out_dir=str(tmp_path), work_dir=str(tmp_path),
+                   data_dir=str(tmp_path), admin_path="fake.shp",
+                   admin_elevation_res=None, admin_countries=["Nepal"])
+
+    for stage, extra in (("settlements", {"exposure": {"n_settlements": 7}}),
+                         ("roads", {"exposure": {"road_km_total": 12.0}}),
+                         ("webmap", {"webmap": "p/index.html"})):
+        J.dump({"unit": unit.as_dict(), **extra},
+               open(tmp_path / f"hkh_{unit.slug}_{stage}.json", "w"))
+
+    monkeypatch.setattr(A, "load_units", lambda *a, **k: [unit])
+    called = []
+    monkeypatch.setattr(P, "run_admin_unit",
+                        lambda *a, **k: called.append(1))
+
+    report = P.run_region(cfg, stages=("settlements", "roads", "webmap"),
+                          resume=True)
+    assert not called, "province was re-run despite being done stage-by-stage"
+    u = report["units"][0]
+    assert u["webmap"] == "p/index.html"
+    assert u["exposure"]["n_settlements"] == 7      # both stages folded
+    assert u["exposure"]["road_km_total"] == 12.0
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

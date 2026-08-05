@@ -18,9 +18,11 @@ the route to that product.
 python -m h_sim.cli step5-susceptibility --config configs/02_hkh_region.json
 ```
 
-95 states and provinces across seven of the eight member countries. Start at
-[All eight countries](#all-eight-countries); the steps before it exist to make
-that run defensible.
+One app over every mountain state and province in the selection —
+`configs/02` ships selecting **India, Nepal and Bhutan** (about half of the 95
+HKH units; set `admin_countries` to widen to all eight member countries).
+Start at [All eight countries](#all-eight-countries); the steps before it
+exist to make that run defensible.
 
 **Contents** — [The model](#the-model) · [Install](#install) ·
 [Run it](#run-it) · [All eight countries](#all-eight-countries) ·
@@ -252,13 +254,15 @@ conda activate hkh
 Verify, with no network:
 
 ```bash
-python -m pytest tests/ -q     # 77 tests, seconds
+python -m pytest tests/ -q     # 108 tests, seconds
 ./scripts/run_demo.sh          # the whole sequence on synthetic data, ~2 minutes
 ```
 
 The tests check the mechanics against exact analytic answers — `FS = 1` at the
-friction angle, mass conservation in flow routing, the saturated critical angle,
-and that applying the critical acceleration drives `FS` to exactly 1.
+friction angle, mass conservation in flow routing and in the dependence map,
+the Gumbel quantile algebra, and that applying the critical acceleration
+drives `FS` to exactly 1 — plus the exposure geometry, the download resume,
+and the app in every state it can be in.
 
 ---
 
@@ -293,7 +297,9 @@ python3 -m h_sim.cli package              --name hkh
 | 6 | `step6-climate` | **the whole region** | The same under CMIP6 scenarios |
 | 7 | `step7-settlements` | **the whole region** | Settlements and villages, now and later |
 | 8 | `step8-roads` | **the whole region** | Roads per 500 m segment, now and later |
-| 9 | `step9-webapp` | **the whole region** | A page per province, plus one ranked index |
+| 9 | `step9-webapp` | **the whole region** | A page per province, and **the app**: country and province dropdowns over an embedded viewer, plus the ranked table |
+| | `province-refresh` | **the whole region** | Deadline mode: steps 7–9 per province, worst first, the app updating after every one |
+| | `prune-excluded` | — | Delete outputs and work files for deselected countries (dry run unless `--yes`) |
 | | `package` | — | Manifest: every product and its provenance |
 
 Steps 5–9 are stages of one regional sweep, each resumable on its own, so an
@@ -513,15 +519,31 @@ outputs/hkh_<country>_<province>_risk_roads.json            every 500 m segment
 outputs/hkh_<country>_<province>_webmap/index.html          browsable page
 outputs/hkh_region_summary.json                             machine-readable
 outputs/hkh_manifest.json                                   provenance
+outputs/hkh_region/index.html                               THE APP
 ```
+
+**`outputs/hkh_region/index.html` is the product.** Country and province
+dropdowns over the selected province's full map; inside every province view:
+the climate selector (present day, opened by default, plus SSP2-4.5 and
+SSP5-8.5 over both 2021-2040 and 2041-2060), exposure bands with an on/off
+colour toggle, failure-mechanism glyphs on roads (▲ cut-slope, ◆ channel
+crossing) with exposure as the colour and mechanism as the shape, the worst
+settlements list, the clipped unit boundary, three basemaps with a light
+dataviz default, popups carrying every scenario score, the expected unstable
+supply, the worst threat sector and the settlement footprint — and a
+collapsible glossary defining every term, including what each percentage is a
+percentage of. It runs from `file://` with no server. Short on time,
+`province-refresh` builds it worst-province-first and keeps it current after
+every completed province, so an interrupted run still presents.
 
 ### Before you present it
 
 - **Provinces are comparable only because they share one parameter set.** It was
-  fitted on soil-mantled crystalline terrain in Nepal. Across Pakistan,
-  Afghanistan, Uttarakhand, Himachal, Bhutan and Myanmar there is no inventory,
-  so skill there is **unknown rather than measured**. Measured transfer within
-  the region ranges from 0.780 to 0.656.
+  fitted on soil-mantled crystalline terrain in Nepal. Away from the three
+  inventories — across Uttarakhand, Himachal, Kashmir, Bhutan, and anywhere
+  outside the default India–Nepal–Bhutan selection if you widen it — skill is
+  **unknown rather than measured**. Measured transfer within the region ranges
+  from 0.780 to 0.656.
 - **The values are relative.** Differences between pixels and between provinces
   are meaningful; the number is not an annual probability of failure.
 - **Exposure is screening, not risk.** No runout model, no vulnerability, no
@@ -660,7 +682,11 @@ Full write-up and scripts: [docs/RESULTS.md](docs/RESULTS.md),
 A technical explanation of every method in the pipeline — terrain routing,
 the stability model and its depth term, calibration protocol, the exposure
 screen, road mechanisms, and the gated-adoption rule — lives at
-[docs/METHODS.md](docs/METHODS.md).
+[docs/METHODS.md](docs/METHODS.md). Two physically motivated refinements ship
+implemented but **off** — flow-connectivity weighting of the reach score
+(`analysis/08_connectivity.py`) and slope-dependent soil depth in the fit
+(`analysis/09_soil_depth.py`) — each waiting on its own held-out verdict,
+under the same rule that keeps lithology zoning off at its measured −0.0004.
 
 **Resolution dominates everything else.**
 
@@ -777,7 +803,7 @@ analysis/                  Seven experiments behind docs/RESULTS.md
 configs/                   Five configurations; 02 is the regional product
 docs/                      Operating guide and measured results
 scripts/run_demo.sh        Offline walk through the whole sequence
-tests/                     66 tests, no network required
+tests/                     108 tests, no network required
 ```
 
 ## Data

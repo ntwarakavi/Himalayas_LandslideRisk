@@ -261,9 +261,13 @@ class Config:
     settlement_footprints: bool = True
     #: OSM highway classes to fetch. Adding residential and track multiplies
     #: the segment count by an order of magnitude.
+    #: The classified motorable network. "unclassified" (rural link roads)
+    #: roughly doubles a hill state's total; add it back here when the
+    #: product should cover every motorable road rather than the network
+    #: road departments publish statistics for.
     road_classes: List[str] = field(
         default_factory=lambda: ["motorway", "trunk", "primary", "secondary",
-                                 "tertiary", "unclassified"])
+                                 "tertiary"])
     #: Climate scenarios each settlement and road segment is scored under.
     #: The present day plus both CMIP6 windows inside the planning horizon -
     #: 2021-2040 and climate.DEFAULT_PERIOD - under an intermediate and a very

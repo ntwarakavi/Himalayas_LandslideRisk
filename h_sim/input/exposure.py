@@ -53,11 +53,17 @@ NE_ROADS_URL = ("https://naciscdn.org/naturalearth/10m/cultural/"
 #: usually a named field or a farmstead and adds noise without adding exposure.
 PLACE_CLASSES = ("city", "town", "village", "hamlet")
 
-#: OSM highway classes kept by default. Residential and track are excluded:
-#: they multiply the segment count by an order of magnitude, and a regional
-#: screening map is not the place to resolve them.
-ROAD_CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary",
-                "unclassified")
+#: OSM highway classes kept by default: the classified motorable network,
+#: comparable to NH + state highway + district road statistics. Residential,
+#: service and track were always excluded; "unclassified" (rural link roads)
+#: is excluded by default too - it roughly doubles a hill state's total and
+#: makes the ROADS panel read implausibly large against the figures road
+#: departments publish. Set config.road_classes to widen or narrow; the
+#: cache refetches automatically when a requested class was never fetched.
+ROAD_CLASSES = ("motorway", "trunk", "primary", "secondary", "tertiary")
+
+#: The classes older caches were fetched with, before the default narrowed.
+_LEGACY_CLASSES = ROAD_CLASSES + ("unclassified",)
 
 #: Rough population where OSM has no ``population`` tag. Only used to rank
 #: settlements when nothing better exists, never reported as a count.
@@ -303,11 +309,25 @@ def load_settlements(bbox: Sequence[float], data_dir: str,
 def load_roads(bbox: Sequence[float], data_dir: str, cache_key: str = "aoi",
                classes: Sequence[str] = ROAD_CLASSES,
                allow_fallback: bool = True) -> List[Road]:
-    """Roads for the AOI, cached to disk after the first fetch."""
+    """Roads for the AOI, cached to disk after the first fetch.
+
+    The cache remembers which classes it was fetched with. Asking for a
+    subset filters the cached records; asking for a class the cache never
+    fetched triggers a refetch - so changing ``road_classes`` in the config
+    does what it says without anyone deleting cache files by hand.
+    """
     path = os.path.join(data_dir, "exposure", f"roads_{cache_key}.json")
+    want = set(classes)
     if os.path.exists(path):
         with open(path, encoding="utf-8") as fh:
-            return [Road(**d) for d in json.load(fh)]
+            raw = json.load(fh)
+        if isinstance(raw, list):            # pre-metadata cache format
+            cached_classes, records = set(_LEGACY_CLASSES), raw
+        else:
+            cached_classes, records = set(raw["classes"]), raw["roads"]
+        if want <= cached_classes:
+            return [Road(**d) for d in records
+                    if d.get("highway") in want]
 
     got = fetch_roads_osm(bbox, classes)
     if got is None and allow_fallback:
@@ -317,6 +337,8 @@ def load_roads(bbox: Sequence[float], data_dir: str, cache_key: str = "aoi",
     got = got or []
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump([{"name": r.name, "highway": r.highway,
-                    "coords": r.coords, "source": r.source} for r in got], fh)
+        json.dump({"classes": sorted(want),
+                   "roads": [{"name": r.name, "highway": r.highway,
+                              "coords": r.coords, "source": r.source}
+                             for r in got]}, fh)
     return got

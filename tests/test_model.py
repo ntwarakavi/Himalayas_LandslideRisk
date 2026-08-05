@@ -2034,6 +2034,40 @@ def test_fiona_geometry_objects_serialise_after_plain_geometry():
     assert plain_geometry(None) is None
 
 
+
+
+def test_road_cache_is_class_aware(tmp_path, monkeypatch):
+    import json as J
+    from h_sim.input import exposure as E
+
+    cache = tmp_path / "exposure"
+    cache.mkdir()
+    legacy = [
+        {"name": "NH10", "highway": "primary",
+         "coords": [[85.0, 27.0], [85.1, 27.0]], "source": "osm"},
+        {"name": "link", "highway": "unclassified",
+         "coords": [[85.0, 27.1], [85.1, 27.1]], "source": "osm"},
+    ]
+    J.dump(legacy, open(cache / "roads_aoi.json", "w"))
+
+    calls = []
+    monkeypatch.setattr(E, "fetch_roads_osm",
+                        lambda bbox, classes: calls.append(tuple(classes))
+                        or [])
+
+    # narrowed default: the legacy cache is filtered, not refetched
+    got = E.load_roads((85, 27, 86, 28), str(tmp_path))
+    assert [r.highway for r in got] == ["primary"] and not calls
+
+    # widening past what the cache holds must refetch
+    E.load_roads((85, 27, 86, 28), str(tmp_path),
+                 classes=E.ROAD_CLASSES + ("unclassified", "residential"))
+    assert calls, "widened request did not refetch"
+    # and the new cache remembers its classes
+    raw = J.load(open(cache / "roads_aoi.json"))
+    assert "residential" in raw["classes"]
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

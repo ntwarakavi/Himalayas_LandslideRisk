@@ -568,6 +568,11 @@ _PAGE = r"""<!doctype html>
       (hamlet 100&nbsp;m &hellip; city 1&nbsp;km); the headline is the
       90th-percentile cell &mdash; the exposed edge of town, not its safest
       point and not its single worst cell.</dd>
+      <dt>roads: total length</dt>
+      <dd>The classified motorable network from OpenStreetMap - motorway,
+      trunk, primary, secondary, tertiary. Rural link roads
+      ("unclassified"), residential streets, service roads and tracks are
+      not counted; config.road_classes widens the definition.</dd>
       <dt>share exposed (roads)</dt>
       <dd>Exposed kilometres as a % of all road kilometres assessed in this
       province.</dd>
@@ -1408,7 +1413,9 @@ line, 2 km, distance-weighted). A screening threshold, not a physical \
 constant."],
   road_exposed: ["Road km exposed", "Kilometres of 500 m road segments at \
 or above the same 0.08 screen, each segment scored at its most exposed \
-point."],
+point. Counted over the classified motorable network (motorway to \
+tertiary); rural link roads, residential streets and tracks are not \
+included."],
   unstable_pct: ["Unstable %", "% of the grid cells inside that province's \
 boundary whose failure probability is at or above 0.5. The probability is \
 the share of Monte Carlo soil-parameter draws pushing a cell's factor of \

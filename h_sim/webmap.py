@@ -571,6 +571,12 @@ _PAGE = r"""<!doctype html>
       <dt>share exposed (roads)</dt>
       <dd>Exposed kilometres as a % of all road kilometres assessed in this
       province.</dd>
+      <dt>risk clusters (green &middot; yellow circles)</dt>
+      <dd>Enclosing circles around distinct concentrations of at-risk
+      assets: exposed settlements (green border) or exposed road segments
+      (yellow border) grouped when within 2.5&nbsp;km of one another. The
+      sidebar lists the largest by member count; singleton clusters are
+      counted but not drawn.</dd>
       <dt>dashed line: cut-slope</dt>
       <dd>Ground immediately above the segment steeper than the configured
       angle (default 35&deg;; the popup shows the measured value). A terrain
@@ -921,6 +927,26 @@ if (HAVE_MAP) {
     true);
   addData('roads', 'Roads: exposure & failure mechanism',
           combinedRoadLayer, true);
+
+  // Risk clusters as transparent shapes: an enclosing circle per cluster of
+  // two or more exposed assets - green borders for settlement clusters,
+  // yellow for road clusters - each in the layer picker.
+  const CLUSTER_STYLE = {
+    settlements: {colour: '#2e7d32', label: 'Settlement risk clusters',
+                  what: 'exposed settlements'},
+    roads: {colour: '#d4a017', label: 'Road risk clusters',
+            what: 'exposed road segments'}};
+  const CLUST = (window.HSIM_DATA || {})['clusters'] || {};
+  Object.entries(CLUSTER_STYLE).forEach(([kind, cs]) => {
+    const list = CLUST[kind] || [];
+    if (!list.length) return;
+    overlays[cs.label] = L.layerGroup(list.map(c =>
+      L.circle([c.lat, c.lon], {
+        radius: c.radius_m, color: cs.colour, weight: 2,
+        fillColor: cs.colour, fillOpacity: 0.07})
+      .bindPopup(`<b>${c.name}</b><br>${c.n} ${cs.what} in this cluster`)
+    )).addTo(map);
+  });
   map.on('zoomend', () => {
     if (roads) roads.setStyle(roadStyle);
     if (casing) casing.setStyle({opacity: casingOpacity()});

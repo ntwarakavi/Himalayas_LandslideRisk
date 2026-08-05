@@ -1158,11 +1158,24 @@ def _cluster_assets(points: List[Tuple[float, float, str]],
                 return points[i][2]
         return "(unnamed)"
 
+    shapes = []
+    for g in sorted(groups.values(), key=len, reverse=True):
+        if len(g) < 2:
+            continue
+        clat = sum(points[i][0] for i in g) / len(g)
+        clon = sum(points[i][1] for i in g) / len(g)
+        r = max(math.hypot((points[i][1] - clon) * mx,
+                           (points[i][0] - clat) * my) for i in g)
+        shapes.append({"n": len(g), "name": label(g),
+                       "lat": round(clat, 5), "lon": round(clon, 5),
+                       "radius_m": int(r + 300)})
+
     return {"n": len(groups),
             "top": [{"n": len(g), "name": label(g),
                      "lat": round(sum(points[i][0] for i in g) / len(g), 4),
                      "lon": round(sum(points[i][1] for i in g) / len(g), 4)}
-                    for g in tops if len(g) >= 2]}
+                    for g in tops if len(g) >= 2],
+            "shapes": shapes}
 
 
 def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
@@ -1299,6 +1312,8 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
              if (r.get("score") or 0) >= thr]),
     }
     summary["clusters"] = clusters
+    dump("clusters", {"settlements": clusters["settlements"].pop("shapes", []),
+                      "roads": clusters["roads"].pop("shapes", [])})
     _log("webmap", f"risk clusters: {clusters['settlements']['n']} "
                    f"settlement, {clusters['roads']['n']} road")
 

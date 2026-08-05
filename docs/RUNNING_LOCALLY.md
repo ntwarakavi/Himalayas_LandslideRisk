@@ -41,7 +41,7 @@ Check the install:
 python -m pytest tests/ -q
 ```
 
-48 tests, no network, a few seconds. They check the mechanics against exact
+101 tests, no network, a few seconds. They check the mechanics against exact
 analytic answers — FS = 1 at the friction angle, mass conservation in flow
 routing, the Newmark yield coefficient — so if they pass, the physics is wired
 up correctly.
@@ -300,16 +300,16 @@ Scenario specifications are `current`, or `<pathway>:<period>`:
 | | |
 |---|---|
 | Pathways | `ssp126` `ssp245` `ssp370` `ssp585` |
-| Periods | `2021-2040` **`2041-2060`** (default) `2061-2080` `2081-2100` |
+| Periods | **`2021-2040`** **`2041-2060`** (suite defaults; a bare `ssp` takes 2041-2060) `2061-2080` `2081-2100` |
 | GCM | `--climate-model`, default IPSL-CM6A-LR |
 
-Everything defaults to **2041-2060**, a twenty to thirty year planning horizon.
-That is the window a road alignment or a settlement plan is decided over, and it
-is what steps 7 and 8 score assets against. Later windows show a bigger signal
-and are one flag away, but a map of 2090 is not a decision anyone can act on,
-and the further out the window the more of its spread is the choice of GCM
-rather than the pathway. Name later windows with `--scenarios` when the
-question is the time course rather than the planning horizon.
+The defaults cover **both near-term windows, 2021-2040 and 2041-2060** — the
+first is what current maintenance budgets run on, the second the twenty to
+thirty year horizon an alignment or settlement plan is decided over, and the
+suite and the exposure scoring cover the same two by construction. Later
+windows show a bigger signal and are one flag away, but a map of 2090 is not a
+decision anyone can act on, and the further out the window the more of its
+spread is the choice of GCM rather than the pathway.
 
 `configs/04_hkh_climate.json` holds the window fixed and varies forcing across
 the region, so the spread between maps is the pathway alone. To vary the window
@@ -468,6 +468,36 @@ Natural Earth — trunk routes only, generalised to about 1:10 M. That fallback 
 recorded in each feature's `source` field, and a road layer of a few dozen
 segments over a whole district is the signature of it having happened. Rerun
 after deleting `data/raw/exposure/roads_<name>.json` to try Overpass again.
+
+## 8d. The regional app
+
+`step9-webapp` ends by printing the one file to open:
+
+```
+  Index   -> outputs/hkh_region/index.html
+  Open it :  file://.../outputs/hkh_region/index.html
+```
+
+**That page is the product.** A country dropdown, a province dropdown, and the
+selected province's full map embedded below — climate scenarios, exposure
+bands with their colour toggle, failure-mechanism glyphs on roads, the worst
+settlements list, the unit boundary, three basemaps — with the ranked
+provinces table underneath, whose rows select into the same view. The
+selection lives in the URL hash, so `index.html#hkh_nepal_bagmati` links a
+colleague straight to a province, and every province page still opens on its
+own via the "open in its own tab" link.
+
+It works from `file://` with no server: the per-province pages it embeds ship
+their layers as scripts, not fetches. If your browser refuses to render local
+frames (some lock local files down), the frame area offers the direct link
+after a moment — or serve the folder once with
+`python -m http.server -d outputs` and open
+`http://localhost:8000/hkh_region/`.
+
+If the page is missing, the webmap stage did not finish: check for
+`hkh_*_webmap.json` markers in `outputs/` and rerun
+`step9-webapp --config configs/02_hkh_region.json` — it resumes, skipping
+provinces already built.
 
 ## 9. Packaging the deliverables
 

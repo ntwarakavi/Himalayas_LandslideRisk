@@ -534,7 +534,10 @@ const SCENARIOS = (LAYERS.scenarios && LAYERS.scenarios.length)
   ? LAYERS.scenarios
   : [{key: 'current', label: 'present day', raster: LAYERS.raster}];
 const BASE = SUMMARY.baseline || SCENARIOS[0].key;
-const STATE = {key: SCENARIOS[0].key, bands: true};
+// The page opens on the present day, explicitly: futures are something the
+// reader selects, never something the map asserts by default.
+const START = SCENARIOS.find(s => !s.ssp) || SCENARIOS[0];
+const STATE = {key: START.key, bands: true};
 
 // Neutral styling for when band colouring is switched off: the assets stay
 // on the map as geography - where the settlements and roads are - without
@@ -560,8 +563,8 @@ if (HAVE_MAP) {
   bnds = [[BOUNDS.south, BOUNDS.west], [BOUNDS.north, BOUNDS.east]];
   map.fitBounds(bnds);
 
-  if (SCENARIOS[0].raster) {
-    rasterOverlay = L.imageOverlay(SCENARIOS[0].raster, bnds, {opacity: 0.75});
+  if (START.raster) {
+    rasterOverlay = L.imageOverlay(START.raster, bnds, {opacity: 0.75});
     overlays['Susceptibility'] = rasterOverlay.addTo(map);
   }
 } else {
@@ -822,7 +825,8 @@ document.getElementById('meta').textContent = [
 if (SCENARIOS.length > 1) {
   document.getElementById('picker').innerHTML =
     `<h2>Climate</h2><select id="scen">` + SCENARIOS.map(
-      s => `<option value="${s.key}">${s.label}</option>`).join('') +
+      s => `<option value="${s.key}"${s.key === STATE.key ? ' selected' : ''}>`
+           + `${s.label}</option>`).join('') +
     `</select><p class="sub" style="margin-top:6px" id="scenlabel"></p>`;
   document.getElementById('scen').addEventListener('change', ev => {
     STATE.key = ev.target.value;
@@ -973,8 +977,10 @@ _INDEX = r"""<!doctype html>
          font:14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
               Helvetica, Arial, sans-serif; }
   .wrap { max-width: 1180px; margin: 0 auto; }
-  h1 { font-size:22px; margin:0 0 4px; letter-spacing:-0.01em; }
-  p.sub { color:var(--muted); margin:0 0 22px; }
+  h1 { font-size:26px; margin:0 0 4px; letter-spacing:-0.01em; }
+  p.sub { color:var(--muted); margin:0 0 18px; }
+  header.app { border-bottom:2px solid var(--accent); padding-bottom:14px;
+               margin-bottom:20px; }
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.07em;
        color:var(--muted); margin:26px 0 8px; font-weight:600; }
   .cards { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); }
@@ -1000,35 +1006,65 @@ _INDEX = r"""<!doctype html>
   input { padding:7px 10px; font:inherit; font-size:13px; width:260px;
           color:var(--fg); background:var(--bg); border:1px solid var(--line);
           border-radius:4px; margin-bottom:10px; }
-  .pickrow { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
-             margin-bottom:10px; }
-  .pickrow select { padding:7px 10px; font:inherit; font-size:13px;
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+             background:var(--panel); border:1px solid var(--line);
+             border-bottom:none; border-radius:8px 8px 0 0; padding:10px 12px; }
+  .toolbar label { font-size:11px; text-transform:uppercase; color:var(--muted);
+                   letter-spacing:.05em; margin-right:-4px; }
+  .toolbar select { padding:8px 10px; font:inherit; font-size:13px;
                     color:var(--fg); background:var(--bg);
-                    border:1px solid var(--line); border-radius:4px;
+                    border:1px solid var(--line); border-radius:6px;
                     min-width:200px; }
-  .pickrow a { font-size:12px; color:var(--muted); margin-left:auto; }
-  .framewrap { border:1px solid var(--line); border-radius:6px;
-               overflow:hidden; height:64vh; min-height:380px;
-               background:var(--panel); }
+  .toolbar a { font-size:12px; color:var(--muted); margin-left:auto; }
+  .framewrap { border:1px solid var(--line); border-radius:0 0 8px 8px;
+               overflow:hidden; height:70vh; min-height:420px;
+               background:var(--panel); position:relative; }
   .framewrap iframe { width:100%; height:100%; border:0; display:block; }
+  .fallback { position:absolute; inset:0; display:none; align-items:center;
+              justify-content:center; text-align:center; padding:30px;
+              color:var(--muted); background:var(--panel); font-size:13px; }
+  .fallback a { color:var(--accent); }
+  .caps { font-size:12px; color:var(--muted); margin:10px 2px 0; }
+  .caps b { color:var(--fg); font-weight:600; }
+  tr:hover td { background:var(--panel); }
   .rowlink { cursor:pointer; color:var(--accent); text-decoration:underline; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>__TITLE__</h1>
-  <p class="sub" id="sub"></p>
-  <div class="cards" id="cards"></div>
+  <header class="app">
+    <h1>__TITLE__</h1>
+    <p class="sub" id="sub" style="margin-bottom:0"></p>
+  </header>
 
   <div id="viewer" style="display:none">
-    <h2>Province map</h2>
-    <div class="pickrow">
-      <select id="pickCountry" aria-label="country"></select>
-      <select id="pickUnit" aria-label="province"></select>
+    <div class="toolbar">
+      <label for="pickCountry">Country</label>
+      <select id="pickCountry"></select>
+      <label for="pickUnit">Province</label>
+      <select id="pickUnit"></select>
       <a id="pickExt" target="_blank" rel="noopener">open in its own tab &#8599;</a>
     </div>
-    <div class="framewrap"><iframe id="frame" title="province map"></iframe></div>
+    <div class="framewrap">
+      <iframe id="frame" title="province map"></iframe>
+      <div class="fallback" id="fallback">
+        <div>The embedded view did not load &mdash; some browsers block
+        local frames.<br>
+        <a id="fallbackLink" target="_blank" rel="noopener">Open this
+        province's map directly &#8599;</a></div>
+      </div>
+    </div>
+    <p class="caps">Inside each province view: <b>climate scenarios</b>
+    (present day and both near-term windows per pathway) &middot;
+    <b>exposure bands</b> with an on/off colour toggle &middot;
+    <b>failure-mechanism glyphs</b> on roads (&#9650; cut-slope,
+    &#9670; channel crossing) &middot; <b>worst settlements</b> list &middot;
+    the unit <b>boundary</b> &middot; three basemaps. Every layer and table
+    follows the scenario selector.</p>
   </div>
+
+  <h2>Region at a glance</h2>
+  <div class="cards" id="cards"></div>
 
   <h2>Provinces, most unstable first</h2>
   <input id="q" placeholder="filter by province or country">
@@ -1098,14 +1134,30 @@ function fillUnits(c) {
     `<option value="${r.slug}">${r.name}</option>`).join('');
 }
 
+let frameLoaded = false;
+elFrame.addEventListener('load', () => {
+  frameLoaded = true;
+  document.getElementById('fallback').style.display = 'none';
+});
+
 function select(slug, push) {
   const row = MAPPED.find(r => r.slug === slug) || MAPPED[0];
   if (!row) return;
   elCountry.value = row.country;
   fillUnits(row.country);
   elUnit.value = row.slug;
-  if (elFrame.getAttribute('src') !== row.map) elFrame.src = row.map;
+  if (elFrame.getAttribute('src') !== row.map) {
+    frameLoaded = false;
+    elFrame.src = row.map;
+    // If nothing has rendered after a beat, offer the direct link instead of
+    // an unexplained blank rectangle.
+    setTimeout(() => {
+      if (!frameLoaded)
+        document.getElementById('fallback').style.display = 'flex';
+    }, 2500);
+  }
   elExt.href = row.map;
+  document.getElementById('fallbackLink').href = row.map;
   if (push) history.replaceState(null, '', '#' + row.slug);
 }
 

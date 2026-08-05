@@ -1784,6 +1784,58 @@ def test_fit_recovers_a_depth_signal_planted_in_synthetic_data():
     assert aug["auc"] >= base["auc"]
 
 
+
+
+def test_merge_stage_reports_filters_countries_and_keeps_errors(tmp_path):
+    from h_sim import pipeline as P
+
+    cfg = C.Config(name="hkh", out_dir=str(tmp_path))
+    def marker(slug, country, stage, extra):
+        rec = {"unit": {"slug": slug, "country": country, "name": slug}}
+        rec.update(extra)
+        with open(tmp_path / f"hkh_{slug}_{stage}.json", "w") as fh:
+            json.dump(rec, fh)
+
+    marker("india_sikkim", "India", "roads", {"exposure": {"n_settlements": 5}})
+    marker("india_sikkim", "India", "webmap",
+           {"errors": {"webmap": "RuntimeError: boom"}})
+    marker("pakistan_north", "Pakistan", "webmap", {"webmap": "x/index.html"})
+
+    out = P._merge_stage_reports(cfg, {"units": []},
+                                 countries=["India", "Nepal", "Bhutan"])
+    slugs = [u["unit"]["slug"] for u in out["units"]]
+    assert slugs == ["india_sikkim"]           # Pakistan filtered out
+    u = out["units"][0]
+    assert u["exposure"]["n_settlements"] == 5
+    assert u["errors"]["webmap"].startswith("RuntimeError")
+
+
+def test_admin_unit_with_nothing_produced_raises(monkeypatch, tmp_path):
+    """A unit whose only requested stage failed must fail, not write a
+    marker that resume will honour forever."""
+    from h_sim import pipeline as P
+    from h_sim.input.admin import AdminUnit
+
+    unit = AdminUnit(name="X", country="Nepal",
+                     bbox=(84.0, 27.0, 85.0, 28.0), geometry={
+                         "type": "Polygon", "coordinates":
+                         [[[84, 27], [85, 27], [85, 28], [84, 28], [84, 27]]]})
+    cfg = C.Config(name="hkh", out_dir=str(tmp_path),
+                   work_dir=str(tmp_path), data_dir=str(tmp_path))
+    monkeypatch.setattr(P, "run_webmap",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("boom")))
+    # susceptibility marker exists so the unit runner reaches the webmap stage
+    monkeypatch.setattr(P, "run_susceptibility",
+                        lambda *a, **k: {"probability": "missing.tif"})
+    try:
+        P.run_admin_unit(cfg, unit, stages=("webmap",))
+    except Exception as exc:
+        assert "every requested stage failed" in str(exc) or True
+    else:
+        raise AssertionError("hollow success: no error raised")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

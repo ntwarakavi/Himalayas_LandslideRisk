@@ -1394,6 +1394,11 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
     # Exposure and the browsable page come last, because both read the rasters
     # this unit has just finished writing - including the clip, so a settlement
     # is never scored against a neighbouring province's ground.
+    # A stage that throws is recorded, not swallowed: partial results keep the
+    # sweep moving, but the error travels in the marker so the index and the
+    # report can say which provinces are missing what and why. If everything
+    # asked for failed, the unit failed - a marker claiming success over an
+    # empty result would make resume skip it forever.
     assets = tuple(a for a in ("settlements", "roads") if a in want)
     if assets:
         try:
@@ -1401,12 +1406,26 @@ def run_admin_unit(cfg: C.Config, unit, mode: str = "download",
             out["risk"] = {k: v for k, v in r.items() if isinstance(v, str)}
             out["exposure"] = r["stats"]
         except Exception as exc:                          # noqa: BLE001
-            _log("unit", f"{unit.name}: exposure skipped ({exc})")
+            out.setdefault("errors", {})["exposure"] = \
+                f"{type(exc).__name__}: {exc}"
+            _log("unit", f"{unit.name}: exposure FAILED "
+                         f"({type(exc).__name__}: {exc})")
     if "webmap" in want:
         try:
             out["webmap"] = run_webmap(sub)["webmap"]
         except Exception as exc:                          # noqa: BLE001
-            _log("unit", f"{unit.name}: web map skipped ({exc})")
+            out.setdefault("errors", {})["webmap"] = \
+                f"{type(exc).__name__}: {exc}"
+            _log("unit", f"{unit.name}: web map FAILED "
+                         f"({type(exc).__name__}: {exc})")
+
+    produced = {"susceptibility": "stats", "climate": "climate",
+                "hazard": "hazard", "settlements": "exposure",
+                "roads": "exposure", "webmap": "webmap"}
+    if not any(out.get(produced.get(s, s)) for s in want):
+        raise RuntimeError(
+            "every requested stage failed: "
+            + "; ".join(f"{k}: {v}" for k, v in out.get("errors", {}).items()))
     return out
 
 
@@ -1536,8 +1555,11 @@ def run_region(cfg: C.Config, mode: str = "download",
     # from, which is the point of running the region rather than a catchment.
     if report["units"]:
         try:
-            report["index"] = run_region_index(cfg, _merge_stage_reports(cfg,
-                                                                        report))
+            merged = _merge_stage_reports(
+                cfg, report,
+                countries=(countries or cfg.admin_countries
+                           or list(C.HKH_COUNTRIES)))
+            report["index"] = run_region_index(cfg, merged)
         except Exception as exc:                          # noqa: BLE001
             _log("region", f"index skipped ({exc})")
 
@@ -1546,7 +1568,9 @@ def run_region(cfg: C.Config, mode: str = "download",
 
 
 def _merge_stage_reports(cfg: C.Config,
-                         report: Dict[str, object]) -> Dict[str, object]:
+                         report: Dict[str, object],
+                         countries: Optional[Sequence[str]] = None
+                         ) -> Dict[str, object]:
     """Fold every stage that has run into one view of each province.
 
     The stages are separate commands writing separate summaries, but the index
@@ -1574,8 +1598,12 @@ def _merge_stage_reports(cfg: C.Config,
         slug = unit.get("slug")
         if not slug:
             continue
+        # Markers from countries outside the configured selection stay on
+        # disk (widening back is free) but out of the product.
+        if countries and unit.get("country") not in countries:
+            continue
         cur = merged.setdefault(slug, {"unit": unit})
-        for key in ("stats", "exposure", "webmap", "maps", "risk"):
+        for key in ("stats", "exposure", "webmap", "maps", "risk", "errors"):
             if rec.get(key):
                 if key in ("stats", "exposure") and isinstance(cur.get(key), dict):
                     cur[key].update(rec[key])

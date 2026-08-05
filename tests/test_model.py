@@ -1960,6 +1960,51 @@ def test_prune_deletes_only_excluded_countries(tmp_path):
     assert not (outd / "hkh_myanmar_chin_webmap").exists()
 
 
+
+
+def test_resume_reruns_only_the_stage_a_marker_failed_to_produce(tmp_path,
+                                                                 monkeypatch):
+    """A combined marker recording exposure but a failed webmap must lead to
+    a webmap-only rerun that keeps the exposure and clears the error."""
+    import json as J
+    from h_sim import pipeline as P
+    from h_sim.input import admin as A
+    from h_sim.input.admin import AdminUnit
+
+    geom = {"type": "Polygon", "coordinates":
+            [[[84, 27], [85, 27], [85, 28], [84, 28], [84, 27]]]}
+    unit = AdminUnit(name="Hollow", country="Nepal",
+                     bbox=(84.0, 27.0, 85.0, 28.0), geometry=geom)
+    cfg = C.Config(name="hkh", out_dir=str(tmp_path), work_dir=str(tmp_path),
+                   data_dir=str(tmp_path), admin_path="fake.shp",
+                   admin_elevation_res=None, admin_countries=["Nepal"])
+
+    tag = "_".join(sorted(("settlements", "roads", "webmap")))
+    J.dump({"unit": unit.as_dict(),
+            "exposure": {"n_settlements": 9, "road_km_total": 3.0},
+            "errors": {"webmap": "ImportError: boom"}},
+           open(tmp_path / f"hkh_{unit.slug}_{tag}.json", "w"))
+
+    monkeypatch.setattr(A, "load_units", lambda *a, **k: [unit])
+    seen = []
+    def fake_unit(cfg_, u, mode="download", stages=()):
+        seen.append(tuple(stages))
+        return {"unit": u.as_dict(), "webmap": "p/index.html"}
+    monkeypatch.setattr(P, "run_admin_unit", fake_unit)
+
+    report = P.run_region(cfg, stages=("settlements", "roads", "webmap"),
+                          resume=True)
+    assert seen == [("webmap",)]                # only the missing stage ran
+    u = report["units"][0]
+    assert u["webmap"] == "p/index.html"
+    assert u["exposure"]["n_settlements"] == 9  # prior exposure preserved
+    assert not (u.get("errors") or {}).get("webmap")   # error cleared
+    # rerunning again is now a clean skip
+    seen.clear()
+    P.run_region(cfg, stages=("settlements", "roads", "webmap"), resume=True)
+    assert seen == []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

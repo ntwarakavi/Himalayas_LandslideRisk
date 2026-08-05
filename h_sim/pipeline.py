@@ -1148,7 +1148,12 @@ def run_webmap(cfg: C.Config, susceptibility: Optional[str] = None,
             continue
         png = f"susceptibility_{scen.key}.png"
         _log("webmap", f"rendering {scen.key}")
-        b = webmap.raster_to_png(path, os.path.join(out_dir, png))
+        try:
+            b = webmap.raster_to_png(path, os.path.join(out_dir, png))
+        except Exception as exc:                          # noqa: BLE001
+            _log("webmap", f"{scen.key}: render failed "
+                           f"({type(exc).__name__}: {exc}); skipped")
+            continue
         bounds = bounds or b
         scen_layers.append({"key": scen.key, "label": scen.label,
                             "short": _short_scenario(scen),
@@ -1557,52 +1562,71 @@ def run_region(cfg: C.Config, mode: str = "download",
         tag = "_".join(sorted(stages))
         marker = os.path.join(cfg.out_dir,
                               f"{cfg.name}_{unit.slug}_{tag}.json")
-        if resume and os.path.exists(marker):
-            with open(marker, encoding="utf-8") as fh:
-                report["units"].append(json.load(fh))
+        # Resume honours what a marker actually PRODUCED, not that a file
+        # exists: a marker from a run whose webmap threw records the error
+        # but no page, and trusting it would hide the failure forever. Prior
+        # results are folded together - the combined marker plus any
+        # single-stage markers from earlier step7/8/9 commands - and only
+        # the stages still missing their product are run.
+        have: Dict[str, object] = {"unit": unit.as_dict()}
+        if resume:
+            candidates = [marker] + [
+                os.path.join(cfg.out_dir, f"{cfg.name}_{unit.slug}_{s}.json")
+                for s in stages if len(stages) > 1]
+            for p in candidates:
+                if not os.path.exists(p):
+                    continue
+                try:
+                    with open(p, encoding="utf-8") as fh:
+                        rec = json.load(fh)
+                except Exception:                         # noqa: BLE001
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                for key in ("stats", "exposure", "webmap", "maps",
+                            "risk", "errors", "summary", "climate",
+                            "hazard"):
+                    if not rec.get(key):
+                        continue
+                    if (key in ("stats", "exposure", "errors")
+                            and isinstance(have.get(key), dict)):
+                        have[key].update(rec[key])
+                    else:
+                        have[key] = rec[key]
+        missing = tuple(s for s in stages
+                        if not have.get(_STAGE_PRODUCT.get(s, s)))
+        if resume and not missing:
+            with open(marker, "w", encoding="utf-8") as fh:
+                json.dump(have, fh, indent=2, default=str)
+            report["units"].append(have)
             _log("skip", f"[{i}/{len(runnable)}] {unit.name} already done")
             continue
-        # A multi-stage pass also honours work done stage-by-stage: a unit
-        # whose every requested stage already has its own marker is folded
-        # into one record and skipped, so switching to province-refresh never
-        # re-runs a province that earlier step7/8/9 commands completed.
-        if resume and len(stages) > 1:
-            singles = [os.path.join(cfg.out_dir,
-                                    f"{cfg.name}_{unit.slug}_{s}.json")
-                       for s in stages]
-            if all(os.path.exists(p) for p in singles):
-                folded: Dict[str, object] = {"unit": unit.as_dict()}
-                for p in singles:
-                    try:
-                        with open(p, encoding="utf-8") as fh:
-                            rec = json.load(fh)
-                    except Exception:                     # noqa: BLE001
-                        continue
-                    for key in ("stats", "exposure", "webmap", "maps",
-                                "risk", "errors", "summary"):
-                        if not rec.get(key):
-                            continue
-                        if (key in ("stats", "exposure", "errors")
-                                and isinstance(folded.get(key), dict)):
-                            folded[key].update(rec[key])
-                        else:
-                            folded[key] = rec[key]
-                with open(marker, "w", encoding="utf-8") as fh:
-                    json.dump(folded, fh, indent=2, default=str)
-                report["units"].append(folded)
-                _log("skip", f"[{i}/{len(runnable)}] {unit.name} already "
-                             "done stage-by-stage")
-                continue
+        if resume and missing != tuple(stages):
+            _log("region", f"[{i}/{len(runnable)}] {unit.name}: "
+                           f"re-running only {', '.join(missing)}")
         _log("region", f"[{i}/{len(runnable)}] {unit.country} / {unit.name}")
         try:
-            res = run_admin_unit(cfg, unit, mode=mode, stages=stages)
+            res = run_admin_unit(cfg, unit, mode=mode,
+                                 stages=(missing if resume else stages))
         except Exception as exc:                          # noqa: BLE001
             _log("FAILED", f"{unit.name}: {type(exc).__name__}: {exc}")
             failed.append({"unit": unit.as_dict(), "error": str(exc)})
             continue
+        for key, val in res.items():
+            if (key in ("stats", "exposure", "errors")
+                    and isinstance(have.get(key), dict)
+                    and isinstance(val, dict)):
+                have[key].update(val)
+            else:
+                have[key] = val
+        # A stage that just succeeded clears the error it recorded before.
+        if isinstance(have.get("errors"), dict):
+            for s in ("exposure", "webmap"):
+                if have.get("webmap" if s == "webmap" else "exposure"):
+                    have["errors"].pop(s, None)
         with open(marker, "w", encoding="utf-8") as fh:
-            json.dump(res, fh, indent=2, default=str)
-        report["units"].append(res)
+            json.dump(have, fh, indent=2, default=str)
+        report["units"].append(have)
         done += 1
         _refresh_index()
         _log("app", f"{unit.name} live ({done} this run)")
@@ -1674,6 +1698,12 @@ def run_prune(cfg: C.Config, yes: bool = False) -> Dict[str, object]:
         (shutil.rmtree if os.path.isdir(p) else os.remove)(p)
     _log("prune", f"deleted {len(doomed)} entries, {total / 1e9:.2f} GB freed")
     return {"deleted": doomed, "bytes": total}
+
+
+#: What each sweep stage must have written for its marker to count as done.
+_STAGE_PRODUCT = {"susceptibility": "stats", "climate": "climate",
+                  "hazard": "hazard", "settlements": "exposure",
+                  "roads": "exposure", "webmap": "webmap"}
 
 
 def _known_unstable(cfg: C.Config, unit) -> Optional[float]:
@@ -1762,6 +1792,7 @@ def run_region_index(cfg: C.Config, report: Dict[str, object]) -> str:
             "road_km": exp.get("road_km_total"),
             "road_km_exposed": exp.get("road_km_exposed"),
             "map": (os.path.relpath(page, out_dir) if page else None),
+            "map_error": (u.get("errors") or {}).get("webmap"),
         })
     rows.sort(key=lambda r: -(r["unstable_pct"] or 0))
 

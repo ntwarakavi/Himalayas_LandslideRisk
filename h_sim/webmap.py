@@ -1229,7 +1229,12 @@ document.getElementById('cards').innerHTML = [
 // layers are per-province and lazy by construction), so the app is a picker
 // over those pages: country, then province, loaded into the frame below.
 // The selection lives in the URL hash, so a province is linkable.
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                  .replace(/"/g, '&quot;');
+}
 const MAPPED = ROWS.filter(r => r.map && r.slug);
+const PAGE_FAILED = ROWS.filter(r => !r.map && r.map_error);
 const elCountry = document.getElementById('pickCountry');
 const elUnit = document.getElementById('pickUnit');
 const elFrame = document.getElementById('frame');
@@ -1272,6 +1277,17 @@ function select(slug, push) {
   if (push) history.replaceState(null, '', '#' + row.slug);
 }
 
+if (PAGE_FAILED.length) {
+  const v = document.createElement('div');
+  v.className = 'note';
+  v.innerHTML = `<b>${PAGE_FAILED.length} province page(s) failed to
+    build.</b> First error &mdash; ${esc(PAGE_FAILED[0].name)}:
+    <code>${esc(PAGE_FAILED[0].map_error)}</code><br>Hover "failed" in the
+    Map column for each province's error. After fixing the cause, delete
+    those provinces' <b>*_webmap.json</b> markers and rerun step9-webapp or
+    province-refresh; resume rebuilds only what is missing.`;
+  document.getElementById('viewer').before(v);
+}
 if (!MAPPED.length) {
   // A table with no maps should say why, not leave the reader wondering
   // where the product went.
@@ -1324,6 +1340,8 @@ function draw() {
       <td class="num">${num(r.settlements_exposed)}</td>
       <td class="num">${num(r.road_km_exposed, 0)}</td>
       <td>${r.map ? `<span class="rowlink" data-slug="${r.slug}">view</span>`
+                  : r.map_error
+                  ? `<span style="color:var(--accent)" title="${esc(r.map_error)}">failed &#9432;</span>`
                   : '<span style="color:var(--muted)">—</span>'}</td>
     </tr>`).join('');
 }
